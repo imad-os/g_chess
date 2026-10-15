@@ -377,38 +377,94 @@
         handleInput();
     }
     
+    function drawRoundRect(x, y, w, h, r) {
+        if (w < 2 * r) r = w / 2;
+        if (h < 2 * r) r = h / 2;
+        ctx.beginPath();
+        ctx.moveTo(x+r, y);
+        ctx.arcTo(x+w, y,   x+w, y+h, r);
+        ctx.arcTo(x+w, y+h, x,   y+h, r);
+        ctx.arcTo(x,   y+h, x,   y,   r);
+        ctx.arcTo(x,   y,   x+w, y,   r);
+        ctx.closePath();
+    }
+
     function draw() {
-        var bg = config.theme === 'dark' ? '#1e1e1e' : '#f0f0f0';
-        var textCol = config.theme === 'dark' ? '#fff' : '#000';
-        var lightSq = config.theme === 'dark' ? '#556b2f' : '#f0d9b5';
-        var darkSq  = config.theme === 'dark' ? '#8b4513' : '#b58863';
+        var isDark = config.theme === 'dark';
+        var bgGradient = ctx.createLinearGradient(0, 0, W, H);
+        if (isDark) {
+            bgGradient.addColorStop(0, '#0f172a'); // slate-900
+            bgGradient.addColorStop(1, '#020617'); // slate-950
+        } else {
+            bgGradient.addColorStop(0, '#f8fafc'); // slate-50
+            bgGradient.addColorStop(1, '#e2e8f0'); // slate-200
+        }
         
-        ctx.fillStyle = bg;
+        var textCol = isDark ? '#f8fafc' : '#0f172a';
+        var textMuted = isDark ? '#94a3b8' : '#64748b';
+        var accentCol = '#3b82f6'; // blue-500
+        
+        // Modern board colors
+        var lightSq = isDark ? '#cbd5e1' : '#f1f5f9'; // slate-300 / slate-100
+        var darkSq  = isDark ? '#475569' : '#64748b'; // slate-600 / slate-500
+        
+        ctx.fillStyle = bgGradient;
         ctx.fillRect(0, 0, W, H);
         
         if (currentState === STATE.MENU || currentState === STATE.SETTINGS || currentState === STATE.MULTIPLAYER_MENU) {
+            // Title
             ctx.fillStyle = textCol;
-            ctx.font = '80px sans-serif';
+            ctx.font = 'bold 90px "Segoe UI", Roboto, Helvetica, sans-serif';
             ctx.textAlign = 'center';
-            ctx.fillText("MyPC Chess", 960, 200);
+            ctx.fillText("MyPC Chess", 960, 220);
             
-            ctx.font = '50px sans-serif';
+            ctx.font = 'bold 45px "Segoe UI", Roboto, Helvetica, sans-serif';
             var m = mainMenu;
             var idx = menuIndex;
             
             if (currentState === STATE.SETTINGS) { m = settingsMenu; idx = settingsIndex; }
             else if (currentState === STATE.MULTIPLAYER_MENU) { m = mpMenu; idx = mpIndex; }
             
+            var menuStartY = 420;
+            var btnWidth = 500;
+            var btnHeight = 80;
+            
             for (var i = 0; i < m.length; i++) {
-                ctx.fillStyle = (i === idx) ? '#ffcc00' : textCol;
-                ctx.fillText(m[i], 960, 400 + i * 80);
+                var btnY = menuStartY + i * 110;
+                
+                if (i === idx) {
+                    // Selected button background
+                    ctx.fillStyle = accentCol;
+                    drawRoundRect(960 - btnWidth/2, btnY - 55, btnWidth, btnHeight, 16);
+                    ctx.fill();
+                    ctx.fillStyle = '#ffffff';
+                } else {
+                    // Unselected button background
+                    ctx.fillStyle = isDark ? '#1e293b' : '#ffffff'; // slate-800 / white
+                    drawRoundRect(960 - btnWidth/2, btnY - 55, btnWidth, btnHeight, 16);
+                    ctx.fill();
+                    ctx.lineWidth = 2;
+                    ctx.strokeStyle = isDark ? '#334155' : '#cbd5e1'; // border
+                    ctx.stroke();
+                    ctx.fillStyle = textCol;
+                }
+                ctx.fillText(m[i], 960, btnY);
             }
             
-            ctx.fillStyle = textCol;
-            ctx.font = '30px sans-serif';
+            // Player info at bottom
+            ctx.fillStyle = textMuted;
+            ctx.font = '30px "Segoe UI", sans-serif';
             ctx.fillText(profileName, 960, 1030);
             return;
         }
+        
+        // Draw Board Background / Border
+        ctx.fillStyle = isDark ? '#1e293b' : '#ffffff';
+        drawRoundRect(BOARD_X - 20, BOARD_Y - 20, BOARD_SIZE + 40, BOARD_SIZE + 40, 12);
+        ctx.fill();
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = isDark ? '#334155' : '#cbd5e1';
+        ctx.stroke();
         
         var rx, ry, px, py, isLight, sq, piece, cName, pName, img;
         for (var y = 0; y < 8; y++) {
@@ -429,70 +485,142 @@
                 ctx.fillRect(px, py, TILE_SIZE, TILE_SIZE);
                 
                 sq = getSquareFromCursorFast(x, y);
+                
+                // Selection Highlight
                 if (sq === selectedSquare) {
-                    ctx.fillStyle = 'rgba(255, 255, 0, 0.4)';
+                    ctx.fillStyle = 'rgba(59, 130, 246, 0.4)'; // blue-500 with opacity
                     ctx.fillRect(px, py, TILE_SIZE, TILE_SIZE);
                 }
                 
+                // Draw piece
                 piece = chess ? chess.get(sq) : null;
                 if (piece) {
                     cName = piece.color === 'w' ? 'l' : 'd';
                     pName = piece.type + cName;
                     img = assets.pieces[pName];
                     if (img) {
-                        ctx.drawImage(img, px, py, TILE_SIZE, TILE_SIZE);
+                        // slight shadow for pieces to make them pop
+                        ctx.shadowColor = "rgba(0,0,0,0.3)";
+                        ctx.shadowBlur = 4;
+                        ctx.shadowOffsetY = 2;
+                        ctx.drawImage(img, px + 5, py + 5, TILE_SIZE - 10, TILE_SIZE - 10);
+                        ctx.shadowColor = "transparent";
                     }
                 }
                 
+                // Valid moves indicator (modern dot)
                 if (config.show_legal_moves && validMoves.length > 0) {
                     for(var vi=0; vi<validMoves.length; vi++) {
                         if (validMoves[vi].to === sq) {
-                            ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
-                            ctx.beginPath();
-                            ctx.arc(px + TILE_SIZE/2, py + TILE_SIZE/2, TILE_SIZE/6, 0, 2*Math.PI);
-                            ctx.fill();
+                            if (piece) {
+                                // If it's a capture, draw a ring instead of a dot
+                                ctx.strokeStyle = 'rgba(239, 68, 68, 0.6)'; // red-500
+                                ctx.lineWidth = 6;
+                                ctx.beginPath();
+                                ctx.arc(px + TILE_SIZE/2, py + TILE_SIZE/2, TILE_SIZE/2.5, 0, 2*Math.PI);
+                                ctx.stroke();
+                            } else {
+                                // Normal move dot
+                                ctx.fillStyle = 'rgba(0, 0, 0, 0.2)';
+                                if (isDark) ctx.fillStyle = 'rgba(255, 255, 255, 0.2)';
+                                ctx.beginPath();
+                                ctx.arc(px + TILE_SIZE/2, py + TILE_SIZE/2, TILE_SIZE/8, 0, 2*Math.PI);
+                                ctx.fill();
+                            }
                             break;
                         }
                     }
                 }
                 
+                // TV Cursor (modern stroke)
                 if (cursor.x === x && cursor.y === y) {
-                    ctx.strokeStyle = '#ff0000';
+                    ctx.strokeStyle = accentCol;
                     ctx.lineWidth = 6;
-                    ctx.strokeRect(px, py, TILE_SIZE, TILE_SIZE);
+                    drawRoundRect(px + 3, py + 3, TILE_SIZE - 6, TILE_SIZE - 6, 8);
+                    ctx.stroke();
                 }
             }
         }
         
-        ctx.fillStyle = textCol;
-        ctx.font = '40px sans-serif';
+        // UI Side Panels (Player info)
         ctx.textAlign = 'left';
+        ctx.font = 'bold 36px "Segoe UI", sans-serif';
         
-        if (currentState === STATE.GAME_OVER) {
-            ctx.fillStyle = 'rgba(0,0,0,0.7)';
-            ctx.fillRect(0, 440, W, 200);
-            ctx.fillStyle = '#fff';
-            ctx.textAlign = 'center';
-            ctx.font = '60px sans-serif';
-            var txt = "Game Over!";
-            if (chess.in_checkmate()) {
-                txt = (chess.turn() === 'w' ? "Black" : "White") + " wins by checkmate!";
-            } else if (chess.in_draw() || chess.in_stalemate()) {
-                txt = "Draw!";
-            }
-            ctx.fillText(txt, 960, 560);
-            ctx.font = '30px sans-serif';
-            ctx.fillText("Press OK to return to menu", 960, 620);
+        var msgStr = " to move";
+        var topName = (playerColor === 'w') ? "Black" : "White";
+        var bottomName = (playerColor === 'w') ? "White" : "Black";
+        
+        if (currentState === STATE.PLAYING_ONLINE) {
+            topName = (playerColor === 'w') ? remotePlayerName : profileName;
+            bottomName = (playerColor === 'w') ? profileName : remotePlayerName;
+        } else if (currentState === STATE.PLAYING_AI) {
+            topName = "AI (Elo " + config.ai_elo + ")";
+            bottomName = profileName;
+        } else if (currentState === STATE.PLAYING_LOCAL) {
+            topName = "Player 2";
+            bottomName = profileName;
+        }
+        
+        // Top Player (Opponent)
+        ctx.fillStyle = isDark ? '#1e293b' : '#ffffff';
+        drawRoundRect(BOARD_X, BOARD_Y - 100, 300, 60, 10);
+        ctx.fill();
+        ctx.fillStyle = textCol;
+        ctx.fillText(topName, BOARD_X + 20, BOARD_Y - 58);
+        
+        // Bottom Player (You)
+        ctx.fillStyle = isDark ? '#1e293b' : '#ffffff';
+        drawRoundRect(BOARD_X, BOARD_Y + BOARD_SIZE + 40, 300, 60, 10);
+        ctx.fill();
+        ctx.fillStyle = textCol;
+        ctx.fillText(bottomName, BOARD_X + 20, BOARD_Y + BOARD_SIZE + 82);
+        
+        // Turn indicator
+        ctx.fillStyle = textMuted;
+        ctx.font = '28px "Segoe UI", sans-serif';
+        var isMyTurn = (chess.turn() === playerColor);
+        if (currentState !== STATE.PLAYING_ONLINE) isMyTurn = true; // For local/AI, always show turn dynamically
+        
+        if (chess.turn() === 'w') {
+            ctx.fillText("White to move", BOARD_X + BOARD_SIZE - 200, BOARD_Y + BOARD_SIZE + 80);
         } else {
-            var msgStr = " to move";
-            if (currentState === STATE.PLAYING_ONLINE) {
-                var p1 = playerColor === 'w' ? profileName : remotePlayerName;
-                var p2 = playerColor === 'b' ? profileName : remotePlayerName;
-                msgStr = (chess.turn() === 'w' ? p1 + " (White)" : p2 + " (Black)") + msgStr;
-            } else {
-                msgStr = (chess.turn() === 'w' ? "White" : "Black") + msgStr;
+            ctx.fillText("Black to move", BOARD_X + BOARD_SIZE - 200, BOARD_Y - 60);
+        }
+
+        // Game Over Overlay
+        if (currentState === STATE.GAME_OVER) {
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.75)';
+            ctx.fillRect(0, 0, W, H);
+            
+            ctx.fillStyle = isDark ? '#1e293b' : '#ffffff';
+            drawRoundRect(W/2 - 350, H/2 - 200, 700, 400, 20);
+            ctx.fill();
+            
+            ctx.fillStyle = textCol;
+            ctx.textAlign = 'center';
+            ctx.font = 'bold 70px "Segoe UI", sans-serif';
+            
+            var txt = "Game Over!";
+            var subTxt = "";
+            if (chess.in_checkmate()) {
+                txt = (chess.turn() === 'w' ? "Black" : "White") + " Wins!";
+                subTxt = "by checkmate";
+            } else if (chess.in_draw() || chess.in_stalemate()) {
+                txt = "It's a Draw!";
             }
-            ctx.fillText(msgStr, 50, 100);
+            
+            ctx.fillText(txt, W/2, H/2 - 20);
+            ctx.fillStyle = textMuted;
+            ctx.font = '30px "Segoe UI", sans-serif';
+            if (subTxt) ctx.fillText(subTxt, W/2, H/2 + 30);
+            
+            // OK Button hint
+            ctx.fillStyle = accentCol;
+            drawRoundRect(W/2 - 150, H/2 + 80, 300, 60, 12);
+            ctx.fill();
+            ctx.fillStyle = '#ffffff';
+            ctx.font = 'bold 28px "Segoe UI", sans-serif';
+            ctx.fillText("Press OK", W/2, H/2 + 120);
         }
     }
     
