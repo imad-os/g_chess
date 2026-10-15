@@ -1,12 +1,12 @@
 {
   "mypc": 1,
   "id": "mypc-chess",
-  "name": "MyPC Chess",
+  "name": "Chess",
   "description": "Modern Chess with Local and Online Multiplayer",
   "type": "game",
   "entry": "index.html",
   "icon": "assets/pieces/nl.svg",
-  "version": "1.0.0",
+  "version": "1.0.2",
   "scores": true,
   "config": {
     "show_legal_moves": true,
