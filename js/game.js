@@ -10,6 +10,7 @@
         PLAYING_ONLINE: 3,
         SETTINGS: 4,
         GAME_OVER: 5,
+        PAUSED: 7,
         MULTIPLAYER_MENU: 6
     };
     
@@ -53,6 +54,10 @@
     var menuIndex = 0;
     
     var mpMenu = ["Host Game", "Join Game", "Back"];
+    
+    var pauseMenu = ["Resume", "Restart", "Quit to Menu"];
+    var pauseIndex = 0;
+    var stateBeforePause = STATE.MENU;
     var mpIndex = 0;
     
     var settingsMenu = ["Theme: Dark", "Pieces: Classic", "Show Moves: On", "AI Elo: 1000", "Back"];
@@ -311,11 +316,9 @@
         } else if (currentState === STATE.PLAYING_AI || currentState === STATE.PLAYING_LOCAL || currentState === STATE.PLAYING_ONLINE) {
             if (cancel) {
                 lastInputTime = now;
-                currentState = STATE.MENU;
-                if (onlineSession) {
-                    onlineSession.close();
-                    onlineSession = null;
-                }
+                stateBeforePause = currentState;
+                pauseIndex = 0;
+                currentState = STATE.PAUSED;
             } else if (dX !== 0 || dY !== 0) {
                 var cX = cursor.x;
                 var cY = cursor.y;
@@ -355,6 +358,40 @@
                     if (piece && piece.color === chess.turn()) {
                         selectedSquare = sq;
                         validMoves = chess.moves({ square: sq, verbose: true });
+                    }
+                }
+            }
+        } else if (currentState === STATE.PAUSED) {
+            if (cancel) {
+                lastInputTime = now;
+                currentState = stateBeforePause;
+            } else if (dY !== 0) {
+                pauseIndex = (pauseIndex + dY + pauseMenu.length) % pauseMenu.length;
+                lastInputTime = now;
+            } else if (confirm) {
+                lastInputTime = now;
+                if (pauseIndex === 0) {
+                    // Resume
+                    currentState = stateBeforePause;
+                } else if (pauseIndex === 1) {
+                    // Restart
+                    if (stateBeforePause === STATE.PLAYING_ONLINE) {
+                        // For online, restart isn't trivial without sending a restart network request.
+                        // We will just fall back to menu for online restart for now, or just send a fen reset.
+                        // Sending fen reset to start a new game:
+                        startNewGame(STATE.PLAYING_ONLINE);
+                        if (onlineSession && isHost) {
+                            onlineSession.peers[0].send({ type: 'start', fen: chess.fen() });
+                        }
+                    } else {
+                        startNewGame(stateBeforePause);
+                    }
+                } else if (pauseIndex === 2) {
+                    // Quit to Menu
+                    currentState = STATE.MENU;
+                    if (onlineSession) {
+                        onlineSession.close();
+                        onlineSession = null;
                     }
                 }
             }
@@ -588,39 +625,69 @@
         }
 
         // Game Over Overlay
-        if (currentState === STATE.GAME_OVER) {
+        if (currentState === STATE.GAME_OVER || currentState === STATE.PAUSED) {
             ctx.fillStyle = 'rgba(0, 0, 0, 0.75)';
             ctx.fillRect(0, 0, W, H);
             
-            ctx.fillStyle = isDark ? '#1e293b' : '#ffffff';
-            drawRoundRect(W/2 - 350, H/2 - 200, 700, 400, 20);
-            ctx.fill();
-            
-            ctx.fillStyle = textCol;
-            ctx.textAlign = 'center';
-            ctx.font = 'bold 70px "Segoe UI", sans-serif';
-            
-            var txt = "Game Over!";
-            var subTxt = "";
-            if (chess.in_checkmate()) {
-                txt = (chess.turn() === 'w' ? "Black" : "White") + " Wins!";
-                subTxt = "by checkmate";
-            } else if (chess.in_draw() || chess.in_stalemate()) {
-                txt = "It's a Draw!";
+            if (currentState === STATE.GAME_OVER) {
+                ctx.fillStyle = isDark ? '#1e293b' : '#ffffff';
+                drawRoundRect(W/2 - 350, H/2 - 200, 700, 400, 20);
+                ctx.fill();
+                
+                ctx.fillStyle = textCol;
+                ctx.textAlign = 'center';
+                ctx.font = 'bold 70px "Segoe UI", sans-serif';
+                
+                var txt = "Game Over!";
+                var subTxt = "";
+                if (chess.in_checkmate()) {
+                    txt = (chess.turn() === 'w' ? "Black" : "White") + " Wins!";
+                    subTxt = "by checkmate";
+                } else if (chess.in_draw() || chess.in_stalemate()) {
+                    txt = "It's a Draw!";
+                }
+                
+                ctx.fillText(txt, W/2, H/2 - 20);
+                ctx.fillStyle = textMuted;
+                ctx.font = '30px "Segoe UI", sans-serif';
+                if (subTxt) ctx.fillText(subTxt, W/2, H/2 + 30);
+                
+                // OK Button hint
+                ctx.fillStyle = accentCol;
+                drawRoundRect(W/2 - 150, H/2 + 80, 300, 60, 12);
+                ctx.fill();
+                ctx.fillStyle = '#ffffff';
+                ctx.font = 'bold 28px "Segoe UI", sans-serif';
+                ctx.fillText("Press OK", W/2, H/2 + 120);
+            } else if (currentState === STATE.PAUSED) {
+                ctx.fillStyle = isDark ? '#1e293b' : '#ffffff';
+                drawRoundRect(W/2 - 300, H/2 - 250, 600, 500, 20);
+                ctx.fill();
+                
+                ctx.fillStyle = textCol;
+                ctx.textAlign = 'center';
+                ctx.font = 'bold 60px "Segoe UI", sans-serif';
+                ctx.fillText("Paused", W/2, H/2 - 130);
+                
+                ctx.font = 'bold 40px "Segoe UI", sans-serif';
+                var btnWidthP = 400;
+                var btnHeightP = 70;
+                for (var pi = 0; pi < pauseMenu.length; pi++) {
+                    var btnYP = (H/2 - 40) + pi * 90;
+                    if (pi === pauseIndex) {
+                        ctx.fillStyle = accentCol;
+                        drawRoundRect(W/2 - btnWidthP/2, btnYP - 50, btnWidthP, btnHeightP, 12);
+                        ctx.fill();
+                        ctx.fillStyle = '#ffffff';
+                    } else {
+                        ctx.fillStyle = isDark ? '#334155' : '#e2e8f0';
+                        drawRoundRect(W/2 - btnWidthP/2, btnYP - 50, btnWidthP, btnHeightP, 12);
+                        ctx.fill();
+                        ctx.fillStyle = textCol;
+                    }
+                    ctx.fillText(pauseMenu[pi], W/2, btnYP);
+                }
             }
-            
-            ctx.fillText(txt, W/2, H/2 - 20);
-            ctx.fillStyle = textMuted;
-            ctx.font = '30px "Segoe UI", sans-serif';
-            if (subTxt) ctx.fillText(subTxt, W/2, H/2 + 30);
-            
-            // OK Button hint
-            ctx.fillStyle = accentCol;
-            drawRoundRect(W/2 - 150, H/2 + 80, 300, 60, 12);
-            ctx.fill();
-            ctx.fillStyle = '#ffffff';
-            ctx.font = 'bold 28px "Segoe UI", sans-serif';
-            ctx.fillText("Press OK", W/2, H/2 + 120);
         }
     }
     
