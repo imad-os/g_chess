@@ -1,0 +1,28 @@
+{
+  "mypc": 1,
+  "id": "mypc-chess",
+  "name": "MyPC Chess",
+  "description": "Modern Chess with Local and Online Multiplayer",
+  "type": "game",
+  "entry": "index.html",
+  "icon": "assets/pieces/nl.svg",
+  "version": "1.0.0",
+  "scores": true,
+  "config": {
+    "show_legal_moves": true,
+    "theme": "dark",
+    "piece_theme": "classic",
+    "ai_elo": 1000
+  },
+  "touch": {
+    "buttons": [
+      { "label": "OK", "action": "ok" },
+      { "label": "B", "action": "run" }
+    ],
+    "catalog": [
+      { "label": "OK", "action": "ok" },
+      { "label": "B", "action": "run" },
+      { "label": "C", "action": "cancel" }
+    ]
+  }
+}
