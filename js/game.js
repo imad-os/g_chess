@@ -5,6 +5,9 @@
     // Game States
     var STATE = {
         MENU: 0,
+        SETTINGS_DISPLAY: 8,
+        SETTINGS_AI: 9,
+        ANALYSIS_VIEW: 10,
         PLAYING_AI: 1,
         PLAYING_LOCAL: 2,
         PLAYING_ONLINE: 3,
@@ -121,6 +124,69 @@
     // Networking
     var onlineSession = null;
     var isHost = false;
+
+    // Analysis
+    var analysisHistory = [];
+    var analysisIndex = 0;
+    var analysisScores = [];
+    var isAnalyzing = false;
+    var analysisWorker = null;
+
+    function startAnalysis() {
+        if (!stockfishWorker || chess.history().length === 0) return;
+        currentState = STATE.ANALYSIS_VIEW;
+        
+        analysisHistory = chess.history({ verbose: true });
+        analysisIndex = analysisHistory.length;
+        analysisScores = new Array(analysisHistory.length + 1).fill(0);
+        
+        // Use a background worker to evaluate the entire game quickly without blocking the thread
+        if (!analysisWorker) {
+            analysisWorker = new Worker('js/stockfish.js');
+        }
+        
+        var movesToEval = [];
+        var tempChess = new Chess();
+        movesToEval.push(tempChess.fen());
+        for (var i=0; i<analysisHistory.length; i++) {
+            tempChess.move(analysisHistory[i]);
+            movesToEval.push(tempChess.fen());
+        }
+        
+        var evalIdx = 0;
+        analysisWorker.onmessage = function(e) {
+            var line = e.data;
+            if (line.indexOf('info depth 12') === 0 && line.indexOf('score cp') !== -1) {
+                var match = line.match(/score cp (-?\d+)/);
+                if (match) {
+                    var score = parseInt(match[1], 10) / 100.0;
+                    // Stockfish score is relative to side to move, let's normalize to white's perspective
+                    var isWhiteToMove = (evalIdx % 2 === 0);
+                    analysisScores[evalIdx] = isWhiteToMove ? score : -score;
+                }
+            } else if (line.indexOf('info depth 12') === 0 && line.indexOf('score mate') !== -1) {
+                var matchMate = line.match(/score mate (-?\d+)/);
+                if (matchMate) {
+                    var mate = parseInt(matchMate[1], 10);
+                    var isWhiteToMove = (evalIdx % 2 === 0);
+                    var mateScore = mate > 0 ? 100 : -100;
+                    analysisScores[evalIdx] = isWhiteToMove ? mateScore : -mateScore;
+                }
+            } else if (line.indexOf('bestmove') === 0) {
+                evalIdx++;
+                if (evalIdx < movesToEval.length) {
+                    analysisWorker.postMessage('position fen ' + movesToEval[evalIdx]);
+                    analysisWorker.postMessage('go depth 12');
+                }
+            }
+        };
+        
+        analysisWorker.postMessage('uci');
+        analysisWorker.postMessage('setoption name Skill Level value 20');
+        analysisWorker.postMessage('position fen ' + movesToEval[0]);
+        analysisWorker.postMessage('go depth 12');
+    }
+
 
     function startMultiplayerHost() {
         if (!MyPC.multiplayer || !MyPC.multiplayer.supported) return;
@@ -277,6 +343,7 @@
     }
     
     function handleGameOver() {
+        pauseIndex = 0; // reset selector for game over screen
         if (currentState === STATE.PLAYING_AI) {
             var eloChange = 0;
             if (chess.in_checkmate()) {
@@ -300,10 +367,27 @@
         if (MyPC.isDown('up', true)) dY = -1;
         if (MyPC.isDown('down', true)) dY = 1;
         
-        var confirm = MyPC.isDown('confirm') || MyPC.isDown('jump');
+        
+        var confirm = MyPC.isDown('confirm') || MyPC.isDown('jump') || mouseClicked;
         var cancel = MyPC.isDown('cancel');
+        if (mouseClicked) mouseClicked = false;
+
+        
         
         if (currentState === STATE.MENU) {
+            // Hover logic
+            if (mouseX > 0 || mouseY > 0) {
+                var menuStartY = 420;
+                var btnHeight = 80;
+                for (var i=0; i<mainMenu.length; i++) {
+                    var btnY = menuStartY + i * 110 - 55;
+                    if (mouseY > btnY && mouseY < btnY + btnHeight && mouseX > 960 - 250 && mouseX < 960 + 250) {
+                        if (menuIndex !== i) lastInputTime = now;
+                        menuIndex = i;
+                    }
+                }
+            }
+
             if (dX !== 0) {
                 // If pressing left/right on menu, change AI elo to showcase setting easily for testing
                 if (menuIndex === 0) {
@@ -330,6 +414,16 @@
                 }
             }
         } else if (currentState === STATE.MULTIPLAYER_MENU) {
+            if (mouseX > 0 || mouseY > 0) {
+                var menuStartY = 420;
+                var btnHeight = 80;
+                for (var i=0; i<mpMenu.length; i++) {
+                    var btnY = menuStartY + i * 110 - 55;
+                    if (mouseY > btnY && mouseY < btnY + btnHeight && mouseX > 960 - 250 && mouseX < 960 + 250) {
+                        mpIndex = i;
+                    }
+                }
+            }
             if (cancel) {
                 lastInputTime = now;
                 currentState = STATE.MENU;
@@ -343,54 +437,122 @@
                 else if (mpIndex === 2) currentState = STATE.MENU;
             }
         } else if (currentState === STATE.SETTINGS) {
+            if (mouseX > 0 || mouseY > 0) {
+                var menuStartY = 420;
+                var btnHeight = 80;
+                for (var i=0; i<settingsMenu.length; i++) {
+                    var btnY = menuStartY + i * 110 - 55;
+                    if (mouseY > btnY && mouseY < btnY + btnHeight && mouseX > 960 - 250 && mouseX < 960 + 250) {
+                        settingsIndex = i;
+                    }
+                }
+            }
             if (dY !== 0) {
                 settingsIndex = (settingsIndex + dY + settingsMenu.length) % settingsMenu.length;
                 lastInputTime = now;
             } else if (confirm) {
                 lastInputTime = now;
                 if (settingsIndex === 0) {
-                    config.theme = config.theme === "dark" ? "light" : "dark";
+                    currentState = STATE.SETTINGS_DISPLAY;
                     updateSettingsMenuText();
                 } else if (settingsIndex === 1) {
-                    config.piece_theme = config.piece_theme === "classic" ? "modern" : "classic";
+                    currentState = STATE.SETTINGS_AI;
                     updateSettingsMenuText();
                 } else if (settingsIndex === 2) {
-                    config.show_legal_moves = !config.show_legal_moves;
-                    updateSettingsMenuText();
-                } else if (settingsIndex === 3) {
-                    // Handled by dX logic below for Settings
-                } else if (settingsIndex === 4) {
-                    // Handled by dX logic
-                } else if (settingsIndex === 5) {
-                    // Handled by dX logic
-                } else if (settingsIndex === 6) {
                     MyPC.save('config', config);
                     currentState = STATE.MENU;
                 }
+            } else if (cancel) {
+                lastInputTime = now;
+                MyPC.save('config', config);
+                currentState = STATE.MENU;
+            }
+        } else if (currentState === STATE.SETTINGS_DISPLAY) {
+            if (mouseX > 0 || mouseY > 0) {
+                var menuStartY = 420;
+                var btnHeight = 80;
+                for (var i=0; i<displaySettingsMenu.length; i++) {
+                    var btnY = menuStartY + i * 110 - 55;
+                    if (mouseY > btnY && mouseY < btnY + btnHeight && mouseX > 960 - 250 && mouseX < 960 + 250) {
+                        displaySettingsIndex = i;
+                    }
+                }
+            }
+            if (dY !== 0) {
+                displaySettingsIndex = (displaySettingsIndex + dY + displaySettingsMenu.length) % displaySettingsMenu.length;
+                lastInputTime = now;
+            } else if (confirm) {
+                lastInputTime = now;
+                if (displaySettingsIndex === 0) {
+                    config.theme = config.theme === "dark" ? "light" : "dark";
+                    updateSettingsMenuText();
+                } else if (displaySettingsIndex === 1) {
+                    config.piece_theme = config.piece_theme === "classic" ? "modern" : "classic";
+                    updateSettingsMenuText();
+                } else if (displaySettingsIndex === 2) {
+                    config.show_legal_moves = !config.show_legal_moves;
+                    updateSettingsMenuText();
+                } else if (displaySettingsIndex === 3) {
+                    MyPC.save('config', config);
+                    if (stateBeforePause !== STATE.MENU && stateBeforePause !== 0 && stateBeforePause) {
+                        currentState = STATE.PAUSED; // go back to pause menu if accessed from game
+                    } else {
+                        currentState = STATE.SETTINGS;
+                    }
+                }
+            } else if (cancel) {
+                lastInputTime = now;
+                MyPC.save('config', config);
+                if (stateBeforePause !== STATE.MENU && stateBeforePause !== 0 && stateBeforePause) {
+                    currentState = STATE.PAUSED;
+                } else {
+                    currentState = STATE.SETTINGS;
+                }
+            }
+        } else if (currentState === STATE.SETTINGS_AI) {
+            if (mouseX > 0 || mouseY > 0) {
+                var menuStartY = 420;
+                var btnHeight = 80;
+                for (var i=0; i<aiSettingsMenu.length; i++) {
+                    var btnY = menuStartY + i * 110 - 55;
+                    if (mouseY > btnY && mouseY < btnY + btnHeight && mouseX > 960 - 250 && mouseX < 960 + 250) {
+                        aiSettingsIndex = i;
+                    }
+                }
+            }
+            if (dY !== 0) {
+                aiSettingsIndex = (aiSettingsIndex + dY + aiSettingsMenu.length) % aiSettingsMenu.length;
+                lastInputTime = now;
+            } else if (confirm) {
+                lastInputTime = now;
+                if (aiSettingsIndex === 3) {
+                    MyPC.save('config', config);
+                    currentState = STATE.SETTINGS;
+                }
+            } else if (cancel) {
+                lastInputTime = now;
+                MyPC.save('config', config);
+                currentState = STATE.SETTINGS;
             } else if (dX !== 0) {
-                if (settingsIndex === 3) {
+                if (aiSettingsIndex === 0) {
                     config.ai_elo += dX * 100;
                     if (config.ai_elo < 400) config.ai_elo = 400;
                     if (config.ai_elo > 3000) config.ai_elo = 3000;
                     updateSettingsMenuText();
                     lastInputTime = now;
-                } else if (settingsIndex === 4) {
+                } else if (aiSettingsIndex === 1) {
                     config.ai_depth += dX;
                     if (config.ai_depth < 1) config.ai_depth = 1;
                     if (config.ai_depth > 20) config.ai_depth = 20;
                     updateSettingsMenuText();
                     lastInputTime = now;
-                } else if (settingsIndex === 5) {
+                } else if (aiSettingsIndex === 2) {
                     config.ai_time += dX * 100;
                     if (config.ai_time < 100) config.ai_time = 100;
                     if (config.ai_time > 10000) config.ai_time = 10000;
                     updateSettingsMenuText();
                     lastInputTime = now;
                 }
-            } else if (cancel) {
-                lastInputTime = now;
-                MyPC.save('config', config);
-                currentState = STATE.MENU;
             }
         } else if (currentState === STATE.PLAYING_AI || currentState === STATE.PLAYING_LOCAL || currentState === STATE.PLAYING_ONLINE) {
             if (cancel) {
@@ -441,6 +603,16 @@
                 }
             }
         } else if (currentState === STATE.PAUSED) {
+            if (mouseX > 0 || mouseY > 0) {
+                var btnWidthP = 400;
+                var btnHeightP = 70;
+                for (var pi = 0; pi < pauseMenu.length; pi++) {
+                    var btnYP = (H/2 - 40) + pi * 90;
+                    if (mouseY > btnYP - 50 && mouseY < btnYP - 50 + btnHeightP && mouseX > W/2 - btnWidthP/2 && mouseX < W/2 + btnWidthP/2) {
+                        pauseIndex = pi;
+                    }
+                }
+            }
             if (cancel) {
                 lastInputTime = now;
                 currentState = stateBeforePause;
@@ -466,6 +638,10 @@
                         startNewGame(stateBeforePause);
                     }
                 } else if (pauseIndex === 2) {
+                    // Game Settings
+                    currentState = STATE.SETTINGS_DISPLAY;
+                    updateSettingsMenuText();
+                } else if (pauseIndex === 3) {
                     // Quit to Menu
                     currentState = STATE.MENU;
                     if (onlineSession) {
@@ -475,20 +651,51 @@
                 }
             }
         } else if (currentState === STATE.GAME_OVER) {
-            if (confirm || cancel) {
+            if (mouseX > 0 || mouseY > 0) {
+                if (mouseY > H/2 + 60 && mouseY < H/2 + 120 && mouseX > W/2 - 200 && mouseX < W/2 + 200) pauseIndex = 0;
+                if (mouseY > H/2 + 130 && mouseY < H/2 + 190 && mouseX > W/2 - 200 && mouseX < W/2 + 200) pauseIndex = 1;
+            }
+            if (dY !== 0) {
+                pauseIndex = (pauseIndex + dY + 2) % 2;
+                lastInputTime = now;
+            } else if (confirm) {
+                lastInputTime = now;
+                if (pauseIndex === 0) {
+                    currentState = STATE.MENU;
+                } else {
+                    startAnalysis();
+                }
+            } else if (cancel) {
                 lastInputTime = now;
                 currentState = STATE.MENU;
+            }
+        } else if (currentState === STATE.ANALYSIS_VIEW) {
+            if (cancel) {
+                lastInputTime = now;
+                currentState = STATE.MENU;
+            } else if (dX !== 0) {
+                lastInputTime = now;
+                analysisIndex += dX;
+                if (analysisIndex < 0) analysisIndex = 0;
+                if (analysisIndex > analysisHistory.length) analysisIndex = analysisHistory.length;
+                
+                // load state up to this index
+                chess.reset();
+                for (var j=0; j<analysisIndex; j++) {
+                    chess.move(analysisHistory[j]);
+                }
             }
         }
     }
     
     function updateSettingsMenuText() {
-        settingsMenu[0] = "Theme: " + (config.theme === "dark" ? "Dark" : "Light");
-        settingsMenu[1] = "Pieces: " + (config.piece_theme === "classic" ? "Classic" : "Modern");
-        settingsMenu[2] = "Show Moves: " + (config.show_legal_moves ? "On" : "Off");
-        settingsMenu[3] = "AI Elo: " + config.ai_elo;
-        settingsMenu[4] = "AI Depth: " + config.ai_depth;
-        settingsMenu[5] = "AI Time(ms): " + config.ai_time;
+        displaySettingsMenu[0] = "Theme: " + (config.theme === "dark" ? "Dark" : "Light");
+        displaySettingsMenu[1] = "Pieces: " + (config.piece_theme === "classic" ? "Classic" : "Modern");
+        displaySettingsMenu[2] = "Show Moves: " + (config.show_legal_moves ? "On" : "Off");
+        
+        aiSettingsMenu[0] = "AI Elo: " + config.ai_elo;
+        aiSettingsMenu[1] = "AI Depth: " + config.ai_depth;
+        aiSettingsMenu[2] = "AI Time(ms): " + config.ai_time;
     }
     
     function update() {
@@ -529,7 +736,7 @@
         ctx.fillStyle = bgGradient;
         ctx.fillRect(0, 0, W, H);
         
-        if (currentState === STATE.MENU || currentState === STATE.SETTINGS || currentState === STATE.MULTIPLAYER_MENU) {
+        if (currentState === STATE.MENU || currentState === STATE.SETTINGS || currentState === STATE.SETTINGS_DISPLAY || currentState === STATE.SETTINGS_AI || currentState === STATE.MULTIPLAYER_MENU) {
             // Title
             ctx.fillStyle = textCol;
             ctx.font = 'bold 90px "Segoe UI", Roboto, Helvetica, sans-serif';
@@ -541,6 +748,8 @@
             var idx = menuIndex;
             
             if (currentState === STATE.SETTINGS) { m = settingsMenu; idx = settingsIndex; }
+            else if (currentState === STATE.SETTINGS_DISPLAY) { m = displaySettingsMenu; idx = displaySettingsIndex; }
+            else if (currentState === STATE.SETTINGS_AI) { m = aiSettingsMenu; idx = aiSettingsIndex; }
             else if (currentState === STATE.MULTIPLAYER_MENU) { m = mpMenu; idx = mpIndex; }
             
             var menuStartY = 420;
@@ -710,37 +919,122 @@
             ctx.fillStyle = 'rgba(0, 0, 0, 0.75)';
             ctx.fillRect(0, 0, W, H);
             
-            if (currentState === STATE.GAME_OVER) {
-                ctx.fillStyle = isDark ? '#1e293b' : '#ffffff';
-                drawRoundRect(W/2 - 350, H/2 - 200, 700, 400, 20);
-                ctx.fill();
+            if (currentState === STATE.ANALYSIS_VIEW) {
+            ctx.fillStyle = textCol;
+            ctx.font = 'bold 36px "Segoe UI", sans-serif';
+            ctx.textAlign = 'left';
+            ctx.fillText("Post-Game Analysis", 50, 100);
+            
+            // Draw Eval Bar
+            var barHeight = BOARD_SIZE;
+            var barWidth = 30;
+            var barX = BOARD_X - 60;
+            var barY = BOARD_Y;
+            
+            ctx.fillStyle = '#1e293b'; // Black bar
+            ctx.fillRect(barX, barY, barWidth, barHeight);
+            
+            var score = analysisScores[analysisIndex] || 0;
+            // clamp score between -5 and 5 for the visual bar
+            var cScore = Math.max(-5, Math.min(5, score));
+            var fillHeight = ((cScore + 5) / 10) * barHeight;
+            
+            ctx.fillStyle = '#f8fafc'; // White bar part
+            ctx.fillRect(barX, barY + (barHeight - fillHeight), barWidth, fillHeight);
+            
+            ctx.lineWidth = 2;
+            ctx.strokeStyle = textMuted;
+            ctx.strokeRect(barX, barY, barWidth, barHeight);
+            
+            // Show score text
+            ctx.fillStyle = textCol;
+            ctx.font = '20px "Segoe UI", sans-serif';
+            ctx.fillText(score > 0 ? "+" + score.toFixed(1) : score.toFixed(1), barX - 10, barY + barHeight + 30);
+            
+            // Analysis Controls
+            ctx.fillStyle = isDark ? '#1e293b' : '#ffffff';
+            drawRoundRect(BOARD_X, BOARD_Y + BOARD_SIZE + 40, BOARD_SIZE, 80, 10);
+            ctx.fill();
+            
+            ctx.fillStyle = textCol;
+            ctx.font = 'bold 30px "Segoe UI", sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText("< Left/Right to Step moves. Esc to Menu >", BOARD_X + BOARD_SIZE/2, BOARD_Y + BOARD_SIZE + 90);
+            
+            // Determine Move quality if > 0
+            if (analysisIndex > 0 && analysisScores[analysisIndex-1] !== undefined && analysisScores[analysisIndex] !== undefined) {
+                var prevScore = analysisScores[analysisIndex-1];
+                var curScore = analysisScores[analysisIndex];
                 
-                ctx.fillStyle = textCol;
-                ctx.textAlign = 'center';
-                ctx.font = 'bold 70px "Segoe UI", sans-serif';
+                // If it was white's move, we expect curScore >= prevScore.
+                // Actually if it's white's move, prevScore is eval before move. curScore is eval after. 
+                // A drop means white made a bad move.
+                var diff = (analysisIndex % 2 !== 0) ? (curScore - prevScore) : (prevScore - curScore);
                 
-                var txt = "Game Over!";
-                var subTxt = "";
-                if (chess.in_checkmate()) {
-                    txt = (chess.turn() === 'w' ? "Black" : "White") + " Wins!";
-                    subTxt = "by checkmate";
-                } else if (chess.in_draw() || chess.in_stalemate()) {
-                    txt = "It's a Draw!";
+                var quality = "Book/Good";
+                var qCol = '#22c55e'; // green
+                
+                if (diff < -2.0) { quality = "Blunder ??"; qCol = '#ef4444'; }
+                else if (diff < -1.0) { quality = "Mistake ?"; qCol = '#f97316'; }
+                else if (diff < -0.5) { quality = "Inaccuracy ?!"; qCol = '#eab308'; }
+                else if (diff > 0.2) { quality = "Excellent !"; qCol = '#3b82f6'; }
+                
+                var moveTxt = analysisHistory[analysisIndex-1].san;
+                ctx.fillStyle = qCol;
+                ctx.fillText("Move: " + moveTxt + " (" + quality + ")", BOARD_X + BOARD_SIZE + 200, BOARD_Y + BOARD_SIZE/2);
+            }
+        }
+        
+        if (currentState === STATE.GAME_OVER) {
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.75)';
+            ctx.fillRect(0, 0, W, H);
+            
+            ctx.fillStyle = isDark ? '#1e293b' : '#ffffff';
+            drawRoundRect(W/2 - 350, H/2 - 200, 700, 400, 20);
+            ctx.fill();
+            
+            ctx.fillStyle = textCol;
+            ctx.textAlign = 'center';
+            ctx.font = 'bold 70px "Segoe UI", sans-serif';
+            
+            var txt = "Game Over!";
+            var subTxt = "";
+            if (chess.in_checkmate()) {
+                txt = (chess.turn() === 'w' ? "Black" : "White") + " Wins!";
+                subTxt = "by checkmate";
+            } else if (chess.in_draw() || chess.in_stalemate()) {
+                txt = "It's a Draw!";
+            }
+            
+            ctx.fillText(txt, W/2, H/2 - 20);
+            ctx.fillStyle = textMuted;
+            ctx.font = '30px "Segoe UI", sans-serif';
+            if (subTxt) ctx.fillText(subTxt, W/2, H/2 + 30);
+            
+            // Draw options
+            ctx.fillStyle = (pauseIndex === 0) ? accentCol : (isDark ? '#334155' : '#e2e8f0');
+            drawRoundRect(W/2 - 200, H/2 + 60, 400, 60, 12);
+            ctx.fill();
+            ctx.fillStyle = (pauseIndex === 0) ? '#ffffff' : textCol;
+            ctx.font = 'bold 28px "Segoe UI", sans-serif';
+            ctx.fillText("Return to Menu", W/2, H/2 + 100);
+
+            ctx.fillStyle = (pauseIndex === 1) ? accentCol : (isDark ? '#334155' : '#e2e8f0');
+            drawRoundRect(W/2 - 200, H/2 + 130, 400, 60, 12);
+            ctx.fill();
+            ctx.fillStyle = (pauseIndex === 1) ? '#ffffff' : textCol;
+            ctx.fillText("Analyze Game", W/2, H/2 + 170);
+        } else if (currentState === STATE.PAUSED) {
+            if (mouseX > 0 || mouseY > 0) {
+                var btnWidthP = 400;
+                var btnHeightP = 70;
+                for (var pi = 0; pi < pauseMenu.length; pi++) {
+                    var btnYP = (H/2 - 40) + pi * 90;
+                    if (mouseY > btnYP - 50 && mouseY < btnYP - 50 + btnHeightP && mouseX > W/2 - btnWidthP/2 && mouseX < W/2 + btnWidthP/2) {
+                        pauseIndex = pi;
+                    }
                 }
-                
-                ctx.fillText(txt, W/2, H/2 - 20);
-                ctx.fillStyle = textMuted;
-                ctx.font = '30px "Segoe UI", sans-serif';
-                if (subTxt) ctx.fillText(subTxt, W/2, H/2 + 30);
-                
-                // OK Button hint
-                ctx.fillStyle = accentCol;
-                drawRoundRect(W/2 - 150, H/2 + 80, 300, 60, 12);
-                ctx.fill();
-                ctx.fillStyle = '#ffffff';
-                ctx.font = 'bold 28px "Segoe UI", sans-serif';
-                ctx.fillText("Press OK", W/2, H/2 + 120);
-            } else if (currentState === STATE.PAUSED) {
+            }
                 ctx.fillStyle = isDark ? '#1e293b' : '#ffffff';
                 drawRoundRect(W/2 - 300, H/2 - 250, 600, 500, 20);
                 ctx.fill();
@@ -780,6 +1074,45 @@
         draw();
     }
     
+    
+    var mouseX = 0, mouseY = 0;
+    var mouseClicked = false;
+
+    function handleMouseMove(e) {
+        var rect = canvas.getBoundingClientRect();
+        var s = Math.min(window.innerWidth / W, window.innerHeight / H) * (window.devicePixelRatio || 1);
+        var scaleX = canvas.width / rect.width;
+        var scaleY = canvas.height / rect.height;
+        
+        mouseX = (e.clientX - rect.left) * scaleX / (canvas.width / W);
+        mouseY = (e.clientY - rect.top) * scaleY / (canvas.height / H);
+        
+        // If playing, update cursor
+        if (currentState === STATE.PLAYING_AI || currentState === STATE.PLAYING_LOCAL || currentState === STATE.PLAYING_ONLINE) {
+            if (mouseX >= BOARD_X && mouseX < BOARD_X + BOARD_SIZE &&
+                mouseY >= BOARD_Y && mouseY < BOARD_Y + BOARD_SIZE) {
+                
+                var cx = Math.floor((mouseX - BOARD_X) / TILE_SIZE);
+                var cy = Math.floor((mouseY - BOARD_Y) / TILE_SIZE);
+                
+                if (playerColor === 'b' && currentState === STATE.PLAYING_ONLINE) {
+                    cx = 7 - cx;
+                    cy = 7 - cy;
+                }
+                
+                cursor.x = cx;
+                cursor.y = cy;
+            }
+        }
+    }
+
+    function handleMouseDown(e) {
+        mouseClicked = true;
+    }
+
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mousedown', handleMouseDown);
+
     function startLoop() { 
         if (!raf) { last = 0; acc = 0; raf = requestAnimationFrame(frame); } 
         if (audioCtx && audioCtx.state === 'suspended') {
