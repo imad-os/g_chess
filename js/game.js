@@ -46,8 +46,61 @@
         show_legal_moves: true,
         theme: "dark",
         ai_elo: 1000,
+        ai_depth: 10,
+        ai_time: 1000,
         piece_theme: "classic" // classic for now, just to show setting
     };
+
+    var stockfishWorker = null;
+    var stockfishReady = false;
+
+    function initStockfish() {
+        stockfishWorker = new Worker('js/stockfish.js');
+        stockfishWorker.onmessage = function(event) {
+            var line = event.data;
+            if (line === 'uciok') {
+                stockfishReady = true;
+            } else if (line.indexOf('bestmove') === 0) {
+                var match = line.match(/^bestmove ([a-h][1-8][a-h][1-8][qrbn]?)/);
+                if (match && match[1]) {
+                    // Match looks like 'e2e4' or 'e7e8q'
+                    var from = match[1].substring(0, 2);
+                    var to = match[1].substring(2, 4);
+                    var promotion = match[1].length > 4 ? match[1][4] : undefined;
+                    
+                    var moveObj = { from: from, to: to };
+                    if (promotion) moveObj.promotion = promotion;
+                    
+                    if (currentState === STATE.PLAYING_AI) {
+                        makeMove(moveObj);
+                    }
+                }
+            }
+        };
+        stockfishWorker.postMessage('uci');
+    }
+    
+    function requestAIMove() {
+        if (!stockfishWorker || !stockfishReady) {
+            // Fallback to original simple AI if SF isn't ready
+            var moveSan = AI.calculateBestMove(chess, config.ai_elo);
+            if (moveSan) {
+                makeMove(moveSan);
+            }
+            return;
+        }
+        
+        // Update skill level 0-20 mapped from 400-3000 Elo loosely
+        var eloRange = 2600;
+        var skill = Math.max(0, Math.min(20, Math.round(((config.ai_elo - 400) / eloRange) * 20)));
+        stockfishWorker.postMessage('setoption name Skill Level value ' + skill);
+        stockfishWorker.postMessage('setoption name UCI_LimitStrength value true');
+        stockfishWorker.postMessage('setoption name UCI_Elo value ' + config.ai_elo);
+
+        stockfishWorker.postMessage('position fen ' + chess.fen());
+        stockfishWorker.postMessage('go depth ' + config.ai_depth + ' movetime ' + config.ai_time);
+    }
+
     
     // Menus
     var mainMenu = ["Play vs AI", "Couch Play", "Online", "Settings"];
@@ -60,7 +113,7 @@
     var stateBeforePause = STATE.MENU;
     var mpIndex = 0;
     
-    var settingsMenu = ["Theme: Dark", "Pieces: Classic", "Show Moves: On", "AI Elo: 1000", "Back"];
+    var settingsMenu = ["Theme: Dark", "Pieces: Classic", "Show Moves: On", "AI Elo: 1000", "AI Depth: 10", "AI Time(ms): 1000", "Back"];
     var settingsIndex = 0;
     
     var lastInputTime = 0;
@@ -211,7 +264,7 @@
                 currentState = STATE.GAME_OVER;
                 handleGameOver();
             } else if (currentState === STATE.PLAYING_AI && chess.turn() === 'b') {
-                setTimeout(makeAIMove, 100);
+                setTimeout(requestAIMove, 100);
             } else if (currentState === STATE.PLAYING_ONLINE) {
                 if (onlineSession) {
                     var peer = isHost ? onlineSession.peers[0] : onlineSession;
@@ -223,11 +276,7 @@
     }
     
     function makeAIMove() {
-        if (currentState !== STATE.PLAYING_AI || chess.game_over()) return;
-        var moveSan = AI.calculateBestMove(chess, config.ai_elo);
-        if (moveSan) {
-            makeMove(moveSan);
-        }
+        // Obsolete, see requestAIMove
     }
     
     function handleGameOver() {
@@ -258,6 +307,16 @@
         var cancel = MyPC.isDown('cancel');
         
         if (currentState === STATE.MENU) {
+            if (dX !== 0) {
+                // If pressing left/right on menu, change AI elo to showcase setting easily for testing
+                if (menuIndex === 0) {
+                    config.ai_elo += dX * 100;
+                    if (config.ai_elo < 400) config.ai_elo = 400;
+                    if (config.ai_elo > 3000) config.ai_elo = 3000;
+                    updateSettingsMenuText();
+                    lastInputTime = now;
+                }
+            }
             if (dY !== 0) {
                 menuIndex = (menuIndex + dY + mainMenu.length) % mainMenu.length;
                 lastInputTime = now;
@@ -302,11 +361,34 @@
                     config.show_legal_moves = !config.show_legal_moves;
                     updateSettingsMenuText();
                 } else if (settingsIndex === 3) {
-                    config.ai_elo = config.ai_elo === 1000 ? 1500 : (config.ai_elo === 1500 ? 500 : 1000);
-                    updateSettingsMenuText();
+                    // Handled by dX logic below for Settings
                 } else if (settingsIndex === 4) {
+                    // Handled by dX logic
+                } else if (settingsIndex === 5) {
+                    // Handled by dX logic
+                } else if (settingsIndex === 6) {
                     MyPC.save('config', config);
                     currentState = STATE.MENU;
+                }
+            } else if (dX !== 0) {
+                if (settingsIndex === 3) {
+                    config.ai_elo += dX * 100;
+                    if (config.ai_elo < 400) config.ai_elo = 400;
+                    if (config.ai_elo > 3000) config.ai_elo = 3000;
+                    updateSettingsMenuText();
+                    lastInputTime = now;
+                } else if (settingsIndex === 4) {
+                    config.ai_depth += dX;
+                    if (config.ai_depth < 1) config.ai_depth = 1;
+                    if (config.ai_depth > 20) config.ai_depth = 20;
+                    updateSettingsMenuText();
+                    lastInputTime = now;
+                } else if (settingsIndex === 5) {
+                    config.ai_time += dX * 100;
+                    if (config.ai_time < 100) config.ai_time = 100;
+                    if (config.ai_time > 10000) config.ai_time = 10000;
+                    updateSettingsMenuText();
+                    lastInputTime = now;
                 }
             } else if (cancel) {
                 lastInputTime = now;
@@ -408,6 +490,8 @@
         settingsMenu[1] = "Pieces: " + (config.piece_theme === "classic" ? "Classic" : "Modern");
         settingsMenu[2] = "Show Moves: " + (config.show_legal_moves ? "On" : "Off");
         settingsMenu[3] = "AI Elo: " + config.ai_elo;
+        settingsMenu[4] = "AI Depth: " + config.ai_depth;
+        settingsMenu[5] = "AI Time(ms): " + config.ai_time;
     }
     
     function update() {
@@ -740,6 +824,7 @@
             
             updateSettingsMenuText();
             loadPieceImages();
+            initStockfish();
         },
         onStart: function() {
             if (!audioCtx) {
