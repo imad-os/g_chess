@@ -82,11 +82,8 @@
     
     function requestAIMove() {
         if (!stockfishWorker || !stockfishReady) {
-            // Fallback to original simple AI if SF isn't ready
-            var moveSan = AI.calculateBestMove(chess, config.ai_elo);
-            if (moveSan) {
-                makeMove(moveSan);
-            }
+            // Wait for worker to load
+            setTimeout(requestAIMove, 500);
             return;
         }
         
