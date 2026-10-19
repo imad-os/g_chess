@@ -32,10 +32,21 @@
     var cursorObj = {x: 0, y: 0};
     var FILES = "abcdefgh";
     
+
+    // Pointer and input
+    var pointerX = W / 2;
+    var pointerY = H / 2;
+    var pointerRadius = 15;
+    var isPointerDown = false;
+    
+    // Internal Mouse tracking
+    var mouseX = 0, mouseY = 0;
+    var mouseClicked = false;
+    
     // Cursors and selections
-    var cursor = { x: 4, y: 6 }; // x: file (0=a), y: rank (0=8)
     var selectedSquare = null;
     var validMoves = []; // target squares for selected piece
+
     
     var audioCtx = null;
     var sounds = {};
