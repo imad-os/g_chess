@@ -29,7 +29,7 @@
     var TILE_SIZE = BOARD_SIZE / 8;
     
     // Pre-allocated objects for loop allocation reduction
-    var cursorObj = {x: 0, y: 0};
+    
     var FILES = "abcdefgh";
     
 
@@ -373,8 +373,7 @@
         currentState = state;
         selectedSquare = null;
         validMoves = [];
-        cursor.x = 4;
-        cursor.y = 6;
+
         playerColor = 'w';
     }
     
@@ -926,12 +925,7 @@
                 }
                 
                 // TV Cursor (modern stroke)
-                if (cursor.x === x && cursor.y === y) {
-                    ctx.strokeStyle = accentCol;
-                    ctx.lineWidth = 6;
-                    drawRoundRect(px + 3, py + 3, TILE_SIZE - 6, TILE_SIZE - 6, 8);
-                    ctx.stroke();
-                }
+
             }
         }
         
@@ -1173,9 +1167,7 @@
                     cx = 7 - cx;
                     cy = 7 - cy;
                 }
-                
-                cursor.x = cx;
-                cursor.y = cy;
+
             }
         }
     }
