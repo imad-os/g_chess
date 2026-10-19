@@ -113,8 +113,14 @@
     var stateBeforePause = STATE.MENU;
     var mpIndex = 0;
     
-    var settingsMenu = ["Theme: Dark", "Pieces: Classic", "Show Moves: On", "AI Elo: 1000", "AI Depth: 10", "AI Time(ms): 1000", "Back"];
+    var settingsMenu = ["Display Settings", "AI Settings", "Back"];
     var settingsIndex = 0;
+    
+    var displaySettingsMenu = ["Theme: Dark", "Pieces: Classic", "Show Moves: On", "Back"];
+    var displaySettingsIndex = 0;
+
+    var aiSettingsMenu = ["AI Elo: 1000", "AI Depth: 10", "AI Time(ms): 1000", "Back"];
+    var aiSettingsIndex = 0;
     
     var lastInputTime = 0;
     
