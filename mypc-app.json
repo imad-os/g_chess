@@ -6,14 +6,13 @@
   "type": "game",
   "entry": "index.html",
   "icon": "assets/pieces/nl.svg",
-  "version": "2.0.0",
+  "version": "2.5.0",
   "scores": true,
   "config": {
     "show_legal_moves": true,
     "theme": "dark",
-    "piece_theme": "classic",
+    "piece_theme": "moern",
     "ai_elo": 1000
   },
-  "touch": {
-  }
+  "touch": {}
 }
