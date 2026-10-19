@@ -115,8 +115,14 @@
     var stateBeforePause = STATE.MENU;
     var mpIndex = 0;
     
-    var settingsMenu = ["Theme: Dark", "Pieces: Classic", "Show Moves: On", "AI Elo: 1000", "AI Depth: 10", "AI Time(ms): 1000", "Back"];
+    var settingsMenu = ["Display Settings", "AI Settings", "Back"];
     var settingsIndex = 0;
+    
+    var displaySettingsMenu = ["Theme: Dark", "Pieces: Classic", "Show Moves: On", "Back"];
+    var displaySettingsIndex = 0;
+
+    var aiSettingsMenu = ["AI Elo: 1000", "AI Depth: 10", "AI Time(ms): 1000", "Back"];
+    var aiSettingsIndex = 0;
     
     var lastInputTime = 0;
     
@@ -791,6 +797,24 @@
         
         ctx.fillStyle = bgGradient;
         ctx.fillRect(0, 0, W, H);
+        if (isDark) {
+            bgGradient.addColorStop(0, '#0f172a'); // slate-900
+            bgGradient.addColorStop(1, '#020617'); // slate-950
+        } else {
+            bgGradient.addColorStop(0, '#f8fafc'); // slate-50
+            bgGradient.addColorStop(1, '#e2e8f0'); // slate-200
+        }
+        
+        var textCol = isDark ? '#f8fafc' : '#0f172a';
+        var textMuted = isDark ? '#94a3b8' : '#64748b';
+        var accentCol = '#3b82f6'; // blue-500
+        
+        // Modern board colors
+        var lightSq = isDark ? '#cbd5e1' : '#f1f5f9'; // slate-300 / slate-100
+        var darkSq  = isDark ? '#475569' : '#64748b'; // slate-600 / slate-500
+        
+        ctx.fillStyle = bgGradient;
+        ctx.fillRect(0, 0, W, H);
         
         if (currentState === STATE.MENU || currentState === STATE.SETTINGS || currentState === STATE.SETTINGS_DISPLAY || currentState === STATE.SETTINGS_AI || currentState === STATE.MULTIPLAYER_MENU) {
             // Title
@@ -1120,6 +1144,14 @@
                 }
             }
         }
+            // Draw Free-Floating Pointer
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+        ctx.beginPath();
+        ctx.arc(pointerX, pointerY, pointerRadius, 0, 2*Math.PI);
+        ctx.fill();
+        ctx.strokeStyle = '#000000';
+        ctx.lineWidth = 2;
+        ctx.stroke();
     }
     
     function frame(ts) {
