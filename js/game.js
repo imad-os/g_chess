@@ -432,199 +432,149 @@
     
     function handleInput() {
         var now = performance.now();
-        if (now - lastInputTime < 150) return;
         
-        var dX = 0, dY = 0;
-        if (MyPC.isDown('left', true)) dX = -1;
-        if (MyPC.isDown('right', true)) dX = 1;
-        if (MyPC.isDown('up', true)) dY = -1;
-        if (MyPC.isDown('down', true)) dY = 1;
+        var pointerSpeed = 15;
+        if (MyPC.isDown('left', true)) pointerX -= pointerSpeed;
+        if (MyPC.isDown('right', true)) pointerX += pointerSpeed;
+        if (MyPC.isDown('up', true)) pointerY -= pointerSpeed;
+        if (MyPC.isDown('down', true)) pointerY += pointerSpeed;
         
-        
+        pointerX = Math.max(0, Math.min(W, pointerX));
+        pointerY = Math.max(0, Math.min(H, pointerY));
+
         var confirm = MyPC.isDown('confirm') || MyPC.isDown('jump') || mouseClicked;
         var cancel = MyPC.isDown('cancel');
         if (mouseClicked) mouseClicked = false;
+        
+        if (now - lastInputTime < 150) return;
+        
+        function isHovering(bx, by, bw, bh) {
+            return (pointerX >= bx && pointerX <= bx + bw && pointerY >= by && pointerY <= by + bh);
+        }
 
-        
-        
         if (currentState === STATE.MENU) {
-            // Hover logic
-            if (mouseX > 0 || mouseY > 0) {
-                var menuStartY = 420;
-                var btnHeight = 80;
-                for (var i=0; i<mainMenu.length; i++) {
-                    var btnY = menuStartY + i * 110 - 55;
-                    if (mouseY > btnY && mouseY < btnY + btnHeight && mouseX > 960 - 250 && mouseX < 960 + 250) {
-                        if (menuIndex !== i) lastInputTime = now;
-                        menuIndex = i;
+            var menuStartY = 420;
+            var btnHeight = 80;
+            var btnWidth = 500;
+            for (var i=0; i<mainMenu.length; i++) {
+                var btnY = menuStartY + i * 110 - 55;
+                if (isHovering(960 - btnWidth/2, btnY, btnWidth, btnHeight)) {
+                    menuIndex = i;
+                    if (confirm) {
+                        lastInputTime = now;
+                        if (menuIndex === 0) startNewGame(STATE.PLAYING_AI);
+                        else if (menuIndex === 1) startNewGame(STATE.PLAYING_LOCAL);
+                        else if (menuIndex === 2) currentState = STATE.MULTIPLAYER_MENU;
+                        else if (menuIndex === 3) {
+                            currentState = STATE.SETTINGS_DISPLAY;
+                            updateSettingsMenuText();
+                        }
                     }
-                }
-            }
-
-            if (dX !== 0) {
-                // If pressing left/right on menu, change AI elo to showcase setting easily for testing
-                if (menuIndex === 0) {
-                    config.ai_elo += dX * 100;
-                    if (config.ai_elo < 400) config.ai_elo = 400;
-                    if (config.ai_elo > 3000) config.ai_elo = 3000;
-                    updateSettingsMenuText();
-                    lastInputTime = now;
-                }
-            }
-            if (dY !== 0) {
-                menuIndex = (menuIndex + dY + mainMenu.length) % mainMenu.length;
-                lastInputTime = now;
-            } else if (confirm) {
-                lastInputTime = now;
-                if (menuIndex === 0) startNewGame(STATE.PLAYING_AI);
-                else if (menuIndex === 1) startNewGame(STATE.PLAYING_LOCAL);
-                else if (menuIndex === 2) {
-                    currentState = STATE.MULTIPLAYER_MENU;
-                }
-                else if (menuIndex === 3) {
-                    currentState = STATE.SETTINGS;
-                    updateSettingsMenuText();
                 }
             }
         } else if (currentState === STATE.MULTIPLAYER_MENU) {
-            if (mouseX > 0 || mouseY > 0) {
-                var menuStartY = 420;
-                var btnHeight = 80;
-                for (var i=0; i<mpMenu.length; i++) {
-                    var btnY = menuStartY + i * 110 - 55;
-                    if (mouseY > btnY && mouseY < btnY + btnHeight && mouseX > 960 - 250 && mouseX < 960 + 250) {
-                        mpIndex = i;
-                    }
-                }
-            }
             if (cancel) {
                 lastInputTime = now;
                 currentState = STATE.MENU;
-            } else if (dY !== 0) {
-                mpIndex = (mpIndex + dY + mpMenu.length) % mpMenu.length;
-                lastInputTime = now;
-            } else if (confirm) {
-                lastInputTime = now;
-                if (mpIndex === 0) startMultiplayerHost();
-                else if (mpIndex === 1) startMultiplayerJoin();
-                else if (mpIndex === 2) currentState = STATE.MENU;
-            }
-        } else if (currentState === STATE.SETTINGS) {
-            if (mouseX > 0 || mouseY > 0) {
+            } else {
                 var menuStartY = 420;
                 var btnHeight = 80;
-                for (var i=0; i<settingsMenu.length; i++) {
+                var btnWidth = 500;
+                for (var i=0; i<mpMenu.length; i++) {
                     var btnY = menuStartY + i * 110 - 55;
-                    if (mouseY > btnY && mouseY < btnY + btnHeight && mouseX > 960 - 250 && mouseX < 960 + 250) {
-                        settingsIndex = i;
+                    if (isHovering(960 - btnWidth/2, btnY, btnWidth, btnHeight)) {
+                        mpIndex = i;
+                        if (confirm) {
+                            lastInputTime = now;
+                            if (mpIndex === 0) startMultiplayerHost();
+                            else if (mpIndex === 1) startMultiplayerJoin();
+                            else if (mpIndex === 2) currentState = STATE.MENU;
+                        }
                     }
                 }
-            }
-            if (dY !== 0) {
-                settingsIndex = (settingsIndex + dY + settingsMenu.length) % settingsMenu.length;
-                lastInputTime = now;
-            } else if (confirm) {
-                lastInputTime = now;
-                if (settingsIndex === 0) {
-                    currentState = STATE.SETTINGS_DISPLAY;
-                    updateSettingsMenuText();
-                } else if (settingsIndex === 1) {
-                    currentState = STATE.SETTINGS_AI;
-                    updateSettingsMenuText();
-                } else if (settingsIndex === 2) {
-                    MyPC.save('config', config);
-                    currentState = STATE.MENU;
-                }
-            } else if (cancel) {
-                lastInputTime = now;
-                MyPC.save('config', config);
-                currentState = STATE.MENU;
             }
         } else if (currentState === STATE.SETTINGS_DISPLAY) {
-            if (mouseX > 0 || mouseY > 0) {
-                var menuStartY = 420;
-                var btnHeight = 80;
-                for (var i=0; i<displaySettingsMenu.length; i++) {
-                    var btnY = menuStartY + i * 110 - 55;
-                    if (mouseY > btnY && mouseY < btnY + btnHeight && mouseX > 960 - 250 && mouseX < 960 + 250) {
-                        displaySettingsIndex = i;
-                    }
-                }
-            }
-            if (dY !== 0) {
-                displaySettingsIndex = (displaySettingsIndex + dY + displaySettingsMenu.length) % displaySettingsMenu.length;
-                lastInputTime = now;
-            } else if (confirm) {
-                lastInputTime = now;
-                if (displaySettingsIndex === 0) {
-                    config.theme = config.theme === "dark" ? "light" : "dark";
-                    updateSettingsMenuText();
-                } else if (displaySettingsIndex === 1) {
-                    config.piece_theme = config.piece_theme === "classic" ? "modern" : "classic";
-                    updateSettingsMenuText();
-                } else if (displaySettingsIndex === 2) {
-                    config.show_legal_moves = !config.show_legal_moves;
-                    updateSettingsMenuText();
-                } else if (displaySettingsIndex === 3) {
-                    MyPC.save('config', config);
-                    if (stateBeforePause !== STATE.MENU && stateBeforePause !== 0 && stateBeforePause) {
-                        currentState = STATE.PAUSED; // go back to pause menu if accessed from game
-                    } else {
-                        currentState = STATE.SETTINGS;
-                    }
-                }
-            } else if (cancel) {
+            if (cancel) {
                 lastInputTime = now;
                 MyPC.save('config', config);
                 if (stateBeforePause !== STATE.MENU && stateBeforePause !== 0 && stateBeforePause) {
                     currentState = STATE.PAUSED;
                 } else {
-                    currentState = STATE.SETTINGS;
+                    currentState = STATE.MENU;
                 }
-            }
-        } else if (currentState === STATE.SETTINGS_AI) {
-            if (mouseX > 0 || mouseY > 0) {
+            } else {
                 var menuStartY = 420;
                 var btnHeight = 80;
-                for (var i=0; i<aiSettingsMenu.length; i++) {
+                var btnWidth = 500;
+                
+                if (isHovering(960 + 20, 280, 200, 60)) {
+                    if (confirm) {
+                        lastInputTime = now;
+                        currentState = STATE.SETTINGS_AI;
+                    }
+                }
+                
+                for (var i=0; i<displaySettingsMenu.length; i++) {
                     var btnY = menuStartY + i * 110 - 55;
-                    if (mouseY > btnY && mouseY < btnY + btnHeight && mouseX > 960 - 250 && mouseX < 960 + 250) {
-                        aiSettingsIndex = i;
+                    if (isHovering(960 - btnWidth/2, btnY, btnWidth, btnHeight)) {
+                        displaySettingsIndex = i;
+                        if (confirm) {
+                            lastInputTime = now;
+                            if (displaySettingsIndex === 0) {
+                                config.theme = config.theme === "dark" ? "light" : "dark";
+                            } else if (displaySettingsIndex === 1) {
+                                config.piece_theme = config.piece_theme === "classic" ? "modern" : "classic";
+                            } else if (displaySettingsIndex === 2) {
+                                config.show_legal_moves = !config.show_legal_moves;
+                            } else if (displaySettingsIndex === 3) {
+                                MyPC.save('config', config);
+                                if (stateBeforePause !== STATE.MENU && stateBeforePause !== 0 && stateBeforePause) {
+                                    currentState = STATE.PAUSED;
+                                } else {
+                                    currentState = STATE.MENU;
+                                }
+                            }
+                            updateSettingsMenuText();
+                        }
                     }
                 }
             }
-            if (dY !== 0) {
-                aiSettingsIndex = (aiSettingsIndex + dY + aiSettingsMenu.length) % aiSettingsMenu.length;
-                lastInputTime = now;
-            } else if (confirm) {
-                lastInputTime = now;
-                if (aiSettingsIndex === 3) {
-                    MyPC.save('config', config);
-                    currentState = STATE.SETTINGS;
-                }
-            } else if (cancel) {
+        } else if (currentState === STATE.SETTINGS_AI) {
+            if (cancel) {
                 lastInputTime = now;
                 MyPC.save('config', config);
-                currentState = STATE.SETTINGS;
-            } else if (dX !== 0) {
-                if (aiSettingsIndex === 0) {
-                    config.ai_elo += dX * 100;
-                    if (config.ai_elo < 400) config.ai_elo = 400;
-                    if (config.ai_elo > 3000) config.ai_elo = 3000;
-                    updateSettingsMenuText();
-                    lastInputTime = now;
-                } else if (aiSettingsIndex === 1) {
-                    config.ai_depth += dX;
-                    if (config.ai_depth < 1) config.ai_depth = 1;
-                    if (config.ai_depth > 20) config.ai_depth = 20;
-                    updateSettingsMenuText();
-                    lastInputTime = now;
-                } else if (aiSettingsIndex === 2) {
-                    config.ai_time += dX * 100;
-                    if (config.ai_time < 100) config.ai_time = 100;
-                    if (config.ai_time > 10000) config.ai_time = 10000;
-                    updateSettingsMenuText();
-                    lastInputTime = now;
+                currentState = STATE.MENU;
+            } else {
+                var menuStartY = 420;
+                var btnHeight = 80;
+                var btnWidth = 500;
+                
+                if (isHovering(960 - 220, 280, 200, 60)) {
+                    if (confirm) {
+                        lastInputTime = now;
+                        currentState = STATE.SETTINGS_DISPLAY;
+                    }
+                }
+                
+                for (var i=0; i<aiSettingsMenu.length; i++) {
+                    var btnY = menuStartY + i * 110 - 55;
+                    if (isHovering(960 - btnWidth/2, btnY, btnWidth, btnHeight)) {
+                        aiSettingsIndex = i;
+                        if (confirm) {
+                            lastInputTime = now;
+                            if (aiSettingsIndex === 0) {
+                                config.ai_elo = config.ai_elo === 3000 ? 400 : config.ai_elo + 200;
+                            } else if (aiSettingsIndex === 1) {
+                                config.ai_depth = config.ai_depth >= 20 ? 1 : config.ai_depth + 1;
+                            } else if (aiSettingsIndex === 2) {
+                                config.ai_time = config.ai_time >= 10000 ? 100 : config.ai_time + 500;
+                            } else if (aiSettingsIndex === 3) {
+                                MyPC.save('config', config);
+                                currentState = STATE.MENU;
+                            }
+                            updateSettingsMenuText();
+                        }
+                    }
                 }
             }
         } else if (currentState === STATE.PLAYING_AI || currentState === STATE.PLAYING_LOCAL || currentState === STATE.PLAYING_ONLINE) {
@@ -633,25 +583,17 @@
                 stateBeforePause = currentState;
                 pauseIndex = 0;
                 currentState = STATE.PAUSED;
-            } else if (dX !== 0 || dY !== 0) {
-                var cX = cursor.x;
-                var cY = cursor.y;
-                if (playerColor === 'b' && currentState === STATE.PLAYING_ONLINE) {
-                    cX -= dX;
-                    cY -= dY;
-                } else {
-                    cX += dX;
-                    cY += dY;
-                }
-                cursor.x = Math.max(0, Math.min(7, cX));
-                cursor.y = Math.max(0, Math.min(7, cY));
-                lastInputTime = now;
             } else if (confirm) {
                 lastInputTime = now;
                 
                 if (currentState === STATE.PLAYING_ONLINE && chess.turn() !== playerColor) return;
                 
-                var sq = getSquareFromCursorFast(cursor.x, cursor.y);
+                var sq = getSquareFromPointerFast(pointerX, pointerY);
+                if (!sq) {
+                    selectedSquare = null;
+                    validMoves = [];
+                    return;
+                }
                 var piece = chess.get(sq);
                 
                 if (selectedSquare) {
@@ -676,91 +618,124 @@
                 }
             }
         } else if (currentState === STATE.PAUSED) {
-            if (mouseX > 0 || mouseY > 0) {
+            if (cancel) {
+                lastInputTime = now;
+                currentState = stateBeforePause;
+            } else {
                 var btnWidthP = 400;
                 var btnHeightP = 70;
                 for (var pi = 0; pi < pauseMenu.length; pi++) {
                     var btnYP = (H/2 - 40) + pi * 90;
-                    if (mouseY > btnYP - 50 && mouseY < btnYP - 50 + btnHeightP && mouseX > W/2 - btnWidthP/2 && mouseX < W/2 + btnWidthP/2) {
+                    if (isHovering(W/2 - btnWidthP/2, btnYP - 50, btnWidthP, btnHeightP)) {
                         pauseIndex = pi;
-                    }
-                }
-            }
-            if (cancel) {
-                lastInputTime = now;
-                currentState = stateBeforePause;
-            } else if (dY !== 0) {
-                pauseIndex = (pauseIndex + dY + pauseMenu.length) % pauseMenu.length;
-                lastInputTime = now;
-            } else if (confirm) {
-                lastInputTime = now;
-                if (pauseIndex === 0) {
-                    // Resume
-                    currentState = stateBeforePause;
-                } else if (pauseIndex === 1) {
-                    // Restart
-                    if (stateBeforePause === STATE.PLAYING_ONLINE) {
-                        // For online, restart isn't trivial without sending a restart network request.
-                        // We will just fall back to menu for online restart for now, or just send a fen reset.
-                        // Sending fen reset to start a new game:
-                        startNewGame(STATE.PLAYING_ONLINE);
-                        if (onlineSession && isHost) {
-                            onlineSession.peers[0].send({ type: 'start', fen: chess.fen() });
+                        if (confirm) {
+                            lastInputTime = now;
+                            if (pauseIndex === 0) {
+                                currentState = stateBeforePause;
+                            } else if (pauseIndex === 1) {
+                                if (stateBeforePause === STATE.PLAYING_ONLINE) {
+                                    startNewGame(STATE.PLAYING_ONLINE);
+                                    if (onlineSession && isHost) {
+                                        onlineSession.peers[0].send({ type: 'start', fen: chess.fen() });
+                                    }
+                                } else {
+                                    startNewGame(stateBeforePause);
+                                }
+                            } else if (pauseIndex === 2) {
+                                currentState = STATE.SETTINGS_DISPLAY;
+                                updateSettingsMenuText();
+                            } else if (pauseIndex === 3) {
+                                currentState = STATE.MENU;
+                                if (onlineSession) {
+                                    onlineSession.close();
+                                    onlineSession = null;
+                                }
+                            }
                         }
-                    } else {
-                        startNewGame(stateBeforePause);
-                    }
-                } else if (pauseIndex === 2) {
-                    // Game Settings
-                    currentState = STATE.SETTINGS_DISPLAY;
-                    updateSettingsMenuText();
-                } else if (pauseIndex === 3) {
-                    // Quit to Menu
-                    currentState = STATE.MENU;
-                    if (onlineSession) {
-                        onlineSession.close();
-                        onlineSession = null;
                     }
                 }
             }
         } else if (currentState === STATE.GAME_OVER) {
-            if (mouseX > 0 || mouseY > 0) {
-                if (mouseY > H/2 + 60 && mouseY < H/2 + 120 && mouseX > W/2 - 200 && mouseX < W/2 + 200) pauseIndex = 0;
-                if (mouseY > H/2 + 130 && mouseY < H/2 + 190 && mouseX > W/2 - 200 && mouseX < W/2 + 200) pauseIndex = 1;
-            }
-            if (dY !== 0) {
-                pauseIndex = (pauseIndex + dY + 2) % 2;
-                lastInputTime = now;
-            } else if (confirm) {
-                lastInputTime = now;
-                if (pauseIndex === 0) {
-                    currentState = STATE.MENU;
-                } else {
-                    startAnalysis();
-                }
-            } else if (cancel) {
-                lastInputTime = now;
-                currentState = STATE.MENU;
-            }
-        } else if (currentState === STATE.ANALYSIS_VIEW) {
             if (cancel) {
                 lastInputTime = now;
                 currentState = STATE.MENU;
-            } else if (dX !== 0) {
+            } else {
+                if (isHovering(W/2 - 200, H/2 + 60, 400, 60)) {
+                    pauseIndex = 0;
+                    if (confirm) {
+                        lastInputTime = now;
+                        currentState = STATE.MENU;
+                    }
+                }
+                if (isHovering(W/2 - 200, H/2 + 130, 400, 60)) {
+                    pauseIndex = 1;
+                    if (confirm) {
+                        lastInputTime = now;
+                        startAnalysis();
+                    }
+                }
+            }
+        } else if (currentState === STATE.ANALYSIS_STATS) {
+            if (cancel) {
                 lastInputTime = now;
-                analysisIndex += dX;
-                if (analysisIndex < 0) analysisIndex = 0;
-                if (analysisIndex > analysisHistory.length) analysisIndex = analysisHistory.length;
-                
-                // load state up to this index
-                chess.reset();
-                for (var j=0; j<analysisIndex; j++) {
-                    chess.move(analysisHistory[j]);
+                currentState = STATE.MENU;
+            } else if (confirm) {
+                var bY = H/2 + 200;
+                if (isHovering(W/2 - 300, bY, 280, 60)) {
+                    lastInputTime = now;
+                    currentState = STATE.ANALYSIS_VIEW;
+                    analysisIndex = 0;
+                    chess.reset();
+                }
+                else if (learnList.length > 0 && isHovering(W/2 + 20, bY, 280, 60)) {
+                    lastInputTime = now;
+                    currentState = STATE.ANALYSIS_LEARN;
+                    learnIndex = 0;
+                    analysisIndex = learnList[learnIndex];
+                    chess.reset();
+                    for(var j=0; j<analysisIndex; j++) chess.move(analysisHistory[j]);
+                }
+                else if (isHovering(W/2 - 150, bY + 80, 300, 60)) {
+                    lastInputTime = now;
+                    currentState = STATE.MENU;
+                }
+            }
+        } else if (currentState === STATE.ANALYSIS_VIEW || currentState === STATE.ANALYSIS_LEARN) {
+            if (cancel) {
+                lastInputTime = now;
+                currentState = STATE.ANALYSIS_STATS;
+            } else if (confirm) {
+                lastInputTime = now;
+                if (isHovering(BOARD_X + BOARD_SIZE/2 - 250, BOARD_Y + BOARD_SIZE + 60, 200, 60)) {
+                    if (currentState === STATE.ANALYSIS_VIEW) {
+                        analysisIndex--;
+                        if (analysisIndex < 0) analysisIndex = 0;
+                    } else {
+                        learnIndex--;
+                        if (learnIndex < 0) learnIndex = 0;
+                        analysisIndex = learnList[learnIndex];
+                    }
+                    chess.reset();
+                    for(var j=0; j<analysisIndex; j++) chess.move(analysisHistory[j]);
+                }
+                if (isHovering(BOARD_X + BOARD_SIZE/2 + 50, BOARD_Y + BOARD_SIZE + 60, 200, 60)) {
+                    if (currentState === STATE.ANALYSIS_VIEW) {
+                        analysisIndex++;
+                        if (analysisIndex > analysisHistory.length) analysisIndex = analysisHistory.length;
+                    } else {
+                        learnIndex++;
+                        if (learnIndex >= learnList.length) learnIndex = learnList.length - 1;
+                        analysisIndex = learnList[learnIndex];
+                    }
+                    chess.reset();
+                    for(var j=0; j<analysisIndex; j++) chess.move(analysisHistory[j]);
+                }
+                if (isHovering(BOARD_X + BOARD_SIZE + 60, 100, 200, 60)) {
+                    currentState = STATE.ANALYSIS_STATS;
                 }
             }
         }
     }
-    
     function updateSettingsMenuText() {
         displaySettingsMenu[0] = "Theme: " + (config.theme === "dark" ? "Dark" : "Light");
         displaySettingsMenu[1] = "Pieces: " + (config.piece_theme === "classic" ? "Classic" : "Modern");
