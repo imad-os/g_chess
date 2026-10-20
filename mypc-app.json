@@ -1,7 +1,7 @@
 {
   "mypc": 1,
   "id": "mypc-chess",
-  "name": "MyPC Chess",
+  "name": "Chess",
   "description": "Modern Chess with Local and Online Multiplayer",
   "type": "game",
   "entry": "index.html",

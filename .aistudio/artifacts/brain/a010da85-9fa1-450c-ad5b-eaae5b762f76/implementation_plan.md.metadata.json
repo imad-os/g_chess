@@ -1,0 +1,6 @@
+{
+  "summary": "Implementation plan for hiding the live evaluation bar during play, adding saved match history with PGN/text import and sample games for instant analysis, and integrating a full Lichess Online Suite (white menu button, 12-tile time format matchmaking grid with rated toggle, tactical puzzles, Lichess game history browser, and user stats/streaks).",
+  "updatedAt": "2026-10-20T10:21:40.614618382Z",
+  "requestFeedback": true,
+  "userFacing": true
+}

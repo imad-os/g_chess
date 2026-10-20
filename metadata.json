@@ -1,0 +1,8 @@
+{
+  "name": "Chess",
+  "description": "Modern Chess with Stockfish AI, Local & Online Multiplayer, and Post-Game Analysis",
+  "prompt": "Modern Chess game with Stockfish AI, Local and Online multiplayer, analysis and Elo rating",
+  "capabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
