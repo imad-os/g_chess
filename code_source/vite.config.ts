@@ -4,7 +4,7 @@ import tailwindcss from '@tailwindcss/vite';
 
 // Builds from code_source/ directly into the repository root (../)
 export default defineConfig({
-  base: '/',
+  base: './',
   plugins: [react(), tailwindcss()],
   build: {
     outDir: '../',

@@ -154,3 +154,12 @@ export interface PeerSession {
   onClose: (fn: () => void) => void;
   close: () => void;
 }
+
+export interface ChatMessage {
+  id: string;
+  sender: string;
+  text: string;
+  timestamp: string;
+  isSystem?: boolean;
+}
+

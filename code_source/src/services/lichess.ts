@@ -61,6 +61,9 @@ export interface ActiveLichessGameState {
   status: string;
   winner?: 'white' | 'black';
   rated: boolean;
+  speed?: string;
+  clockInitialSec?: number;
+  clockIncrementSec?: number;
 }
 
 class LichessService {
@@ -493,7 +496,8 @@ class LichessService {
     gameId: string,
     myUserId: string,
     onUpdate: (state: ActiveLichessGameState) => void,
-    onError: (err: string) => void
+    onError: (err: string) => void,
+    onChatLine?: (sender: string, text: string) => void
   ) {
     this.stopGameStream();
     const controller = new AbortController();
@@ -569,6 +573,9 @@ class LichessService {
                 status: msg.state?.status || 'started',
                 winner: msg.state?.winner,
                 rated: !!msg.rated,
+                speed: msg.speed || msg.perf?.name || 'rapid',
+                clockInitialSec: msg.clock?.initial ? Math.round(msg.clock.initial / 1000) : undefined,
+                clockIncrementSec: msg.clock?.increment ? Math.round(msg.clock.increment / 1000) : undefined,
               };
               onUpdate({ ...currentState });
             } else if (msg.type === 'gameState') {
@@ -581,6 +588,10 @@ class LichessService {
                 winner: msg.winner ?? currentState.winner,
               };
               onUpdate({ ...currentState });
+            } else if (msg.type === 'chatLine' && onChatLine) {
+              if (msg.username && msg.text) {
+                onChatLine(msg.username, msg.text);
+              }
             }
           } catch {}
         }
@@ -616,6 +627,52 @@ class LichessService {
   }
 
   /**
+   * Send a chat message in an active Lichess Board game
+   */
+  public async sendBoardChat(gameId: string, text: string, room: 'player' | 'spectator' = 'player'): Promise<boolean> {
+    const body = new URLSearchParams();
+    body.set('room', room);
+    body.set('text', text);
+    const res = await myPCService.proxyFetch(
+      `${LICHESS_BASE}/api/board/game/${encodeURIComponent(gameId)}/chat`,
+      {
+        method: 'POST',
+        headers: this.getHeaders('application/json', 'application/x-www-form-urlencoded'),
+        body: body.toString(),
+      }
+    );
+    return res.ok;
+  }
+
+  /**
+   * Offer or accept draw in an active Lichess Board game
+   */
+  public async offerBoardDraw(gameId: string): Promise<boolean> {
+    const res = await myPCService.proxyFetch(
+      `${LICHESS_BASE}/api/board/game/${encodeURIComponent(gameId)}/draw/yes`,
+      {
+        method: 'POST',
+        headers: this.getHeaders('application/json'),
+      }
+    );
+    return res.ok;
+  }
+
+  /**
+   * Abort an active Lichess Board game
+   */
+  public async abortBoardGame(gameId: string): Promise<boolean> {
+    const res = await myPCService.proxyFetch(
+      `${LICHESS_BASE}/api/board/game/${encodeURIComponent(gameId)}/abort`,
+      {
+        method: 'POST',
+        headers: this.getHeaders('application/json'),
+      }
+    );
+    return res.ok;
+  }
+
+  /**
    * Resign an active Lichess Board game
    */
   public async resignBoardGame(gameId: string): Promise<boolean> {
@@ -631,3 +688,4 @@ class LichessService {
 }
 
 export const lichessService = new LichessService();
+

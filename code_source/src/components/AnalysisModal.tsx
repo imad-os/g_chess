@@ -378,6 +378,7 @@ export const AnalysisModal: React.FC<AnalysisModalProps> = ({
               settings={settings}
               disabled={true}
               arrows={activeArrows}
+              sizeVariant="analysis"
               onSquareClick={() => {}}
             />
           </div>

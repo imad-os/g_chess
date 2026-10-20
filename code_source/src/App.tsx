@@ -8,9 +8,15 @@ import {
   AnalysisSummary,
   SavedGameRecord,
   MoveRecord,
+  ChatMessage,
 } from './types/chess';
 import { ChessBoard } from './components/ChessBoard';
-import { GameHUD } from './components/GameHUD';
+import {
+  LeftArenaPanel,
+  RightArenaPanel,
+  BottomCrosstableBar,
+  ArenaHUDProps,
+} from './components/GameHUD';
 import { PromotionModal } from './components/PromotionModal';
 import { PauseModal } from './components/PauseModal';
 import { GameOverModal } from './components/GameOverModal';
@@ -23,7 +29,7 @@ import { soundManager } from './services/sound';
 import { stockfishService } from './services/stockfish';
 import { myPCService } from './services/mypc';
 import { lichessService, ActiveLichessGameState } from './services/lichess';
-import { Bot, Users, Wifi, Sliders, ChevronRight, History, Globe } from 'lucide-react';
+import { Bot, Users, Wifi, Sliders, ChevronRight, History } from 'lucide-react';
 
 export const App: React.FC = () => {
   // App state
@@ -61,6 +67,7 @@ export const App: React.FC = () => {
 
   // Chess instance & move state
   const [chess, setChess] = useState<Chess>(() => new Chess());
+  const [initialFen, setInitialFen] = useState<string>('startpos');
   const [playerColor, setPlayerColor] = useState<Color>('w');
   const [flipped, setFlipped] = useState<boolean>(false);
   const [selectedSquare, setSelectedSquare] = useState<Square | null>(null);
@@ -68,6 +75,9 @@ export const App: React.FC = () => {
   const [lastMove, setLastMove] = useState<{ from: Square; to: Square } | null>(null);
   const [cursorSquare, setCursorSquare] = useState<Square | null>('e2');
   const [pendingPromotion, setPendingPromotion] = useState<{ from: Square; to: Square } | null>(null);
+
+  // Move inspection state (null = live position, 0..N = inspecting historical ply)
+  const [viewPly, setViewPly] = useState<number | null>(null);
 
   // History & Analysis state
   const [gameHistory, setGameHistory] = useState<MoveRecord[]>([]);
@@ -77,6 +87,13 @@ export const App: React.FC = () => {
   const [analyzing, setAnalyzing] = useState<boolean>(false);
   const [analysisProgress, setAnalysisProgress] = useState<number>(0);
 
+  // Chat & Notes state
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [matchNotes, setMatchNotes] = useState<string>(() =>
+    myPCService.load<string>('match_notes', '')
+  );
+  const chatInputRef = useRef<HTMLInputElement>(null);
+
   // Guard ref to avoid duplicate saving of the same finished game
   const currentMatchSavedRef = useRef<boolean>(false);
   const gameHistoryRef = useRef<MoveRecord[]>([]);
@@ -84,9 +101,15 @@ export const App: React.FC = () => {
     gameHistoryRef.current = gameHistory;
   }, [gameHistory]);
 
-  // Lichess Live Game state
+  // Clocks & Match Metadata state
   const [activeLichessGameId, setActiveLichessGameId] = useState<string | null>(null);
-  const [lichessClocks, setLichessClocks] = useState<{ wtime: number; btime: number } | null>(null);
+  const [matchClocks, setMatchClocks] = useState<{ wtime: number; btime: number }>({
+    wtime: 600000,
+    btime: 600000,
+  });
+  const [timeControlLabel, setTimeControlLabel] = useState<string>('10+0');
+  const [speedLabel, setSpeedLabel] = useState<string>('Rapid');
+  const [ratedMatch, setRatedMatch] = useState<boolean>(true);
 
   // Game over state
   const [gameOverInfo, setGameOverInfo] = useState<{
@@ -120,6 +143,11 @@ export const App: React.FC = () => {
         const loadedHistory = myPCService.load<SavedGameRecord[]>('saved_games', []);
         if (Array.isArray(loadedHistory)) {
           setSavedGames(loadedHistory);
+        }
+
+        const loadedNotes = myPCService.load<string>('match_notes', '');
+        if (typeof loadedNotes === 'string') {
+          setMatchNotes(loadedNotes);
         }
 
         const savedConfig = myPCService.load<Partial<GameSettings>>('config', {});
@@ -165,7 +193,28 @@ export const App: React.FC = () => {
     soundManager.setMusicEnabled(settings.music_enabled);
   }, [settings.sound_enabled, settings.music_enabled]);
 
-  // Helper to archive a finished game into persistent history (works for AI, Local, Online Host & Guest, Lichess)
+  const appendChatMessage = useCallback(
+    (sender: string, text: string, isSystem: boolean = false) => {
+      setChatMessages((prev) => [
+        ...prev,
+        {
+          id: `msg_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+          sender,
+          text,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          isSystem,
+        },
+      ]);
+    },
+    []
+  );
+
+  const handleChangeNotes = useCallback((notes: string) => {
+    setMatchNotes(notes);
+    myPCService.save('match_notes', notes);
+  }, []);
+
+  // Helper to archive a finished game into persistent history
   const archiveCompletedGame = useCallback(
     (
       movesList: MoveRecord[],
@@ -179,7 +228,9 @@ export const App: React.FC = () => {
       currentMatchSavedRef.current = true;
 
       const myActiveLabel =
-        mode === 'lichess' ? lichessUsername || lichessService.getUsername() || 'Lichess Player' : profileName;
+        mode === 'lichess'
+          ? lichessUsername || lichessService.getUsername() || 'Lichess Player'
+          : profileName;
 
       const whitePlayer =
         mode === 'local'
@@ -239,7 +290,12 @@ export const App: React.FC = () => {
       soundManager.playSound('click');
       lichessService.stopGameStream();
       setActiveLichessGameId(null);
-      setLichessClocks(null);
+      setMatchClocks({ wtime: 600000, btime: 600000 });
+      setTimeControlLabel('10+0');
+      setSpeedLabel('Rapid');
+      setRatedMatch(mode === 'ai');
+      setInitialFen('startpos');
+      setViewPly(null);
       currentMatchSavedRef.current = false;
 
       const newChess = new Chess();
@@ -255,6 +311,20 @@ export const App: React.FC = () => {
       gameHistoryRef.current = [];
       setAnalysisSummary(null);
       setOpponentElo(settings.ai_elo);
+      setChatMessages([
+        {
+          id: `sys_${Date.now()}`,
+          sender: 'System',
+          text:
+            mode === 'ai'
+              ? `Match started vs Stockfish AI (Elo ${settings.ai_elo}).`
+              : mode === 'online'
+              ? `Connected to Wi-Fi peer match.`
+              : `Couch Play match started.`,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          isSystem: true,
+        },
+      ]);
       setAppState('playing');
     },
     [settings.ai_elo]
@@ -303,7 +373,6 @@ export const App: React.FC = () => {
           myPCService.submitScore(updatedElo, { player: profileName });
         }
 
-        // Save completed game to history (for AI, Local, Online Host & Guest, Lichess)
         archiveCompletedGame(movesSnapshot, currentMode, winner, reason, pColor, oppName);
 
         setGameOverInfo({
@@ -324,6 +393,9 @@ export const App: React.FC = () => {
   // Make move execution
   const executeMove = useCallback(
     (from: Square, to: Square, promotion?: string, isRemoteSync: boolean = false) => {
+      // Snap back to live view when any move is made
+      setViewPly(null);
+
       // If Lichess live game and this is a local player move, send to Lichess Board API
       if (gameMode === 'lichess' && activeLichessGameId && !isRemoteSync) {
         const uci = `${from}${to}${promotion || ''}`;
@@ -431,11 +503,22 @@ export const App: React.FC = () => {
       setActiveLichessGameId(gameId);
       setGameMode('lichess');
       setChess(new Chess());
+      setInitialFen('startpos');
+      setViewPly(null);
       setGameHistory([]);
       gameHistoryRef.current = [];
       setSelectedSquare(null);
       setValidMoves([]);
       setLastMove(null);
+      setChatMessages([
+        {
+          id: `sys_${Date.now()}`,
+          sender: 'System',
+          text: `Connected to Lichess game #${gameId}.`,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          isSystem: true,
+        },
+      ]);
       setAppState('playing');
 
       if (myUsername) {
@@ -452,7 +535,19 @@ export const App: React.FC = () => {
           if (state.myRating) setMyLichessRating(state.myRating);
           setRemotePlayerName(state.opponentName);
           if (state.opponentRating) setOpponentElo(state.opponentRating);
-          setLichessClocks({ wtime: state.wtime, btime: state.btime });
+          setMatchClocks({ wtime: state.wtime, btime: state.btime });
+          setRatedMatch(state.rated);
+          if (state.speed) {
+            setSpeedLabel(state.speed.charAt(0).toUpperCase() + state.speed.slice(1));
+          }
+          if (state.clockInitialSec !== undefined) {
+            const mins = Math.max(1, Math.round(state.clockInitialSec / 60));
+            const inc = state.clockIncrementSec ?? Math.round((state.winc || 0) / 1000);
+            setTimeControlLabel(`${mins}+${inc}`);
+          }
+          if (state.initialFen) {
+            setInitialFen(state.initialFen);
+          }
 
           // Reconstruct board from UCI moves string
           const rebChess =
@@ -516,32 +611,73 @@ export const App: React.FC = () => {
         },
         () => {
           // Stream closed or errored
+        },
+        (sender, text) => {
+          appendChatMessage(sender, text);
         }
       );
     },
-    [archiveCompletedGame]
+    [archiveCompletedGame, appendChatMessage]
   );
 
-  // Live Lichess clock countdown ticker (1 second interval while playing)
+  // Live clock countdown ticker (1 second interval while playing across all modes)
   useEffect(() => {
-    if (appState !== 'playing' || gameMode !== 'lichess' || !lichessClocks) return;
+    if (appState !== 'playing') return;
+    // Start ticking once at least 1 move is played or in Lichess mode
     const timer = setInterval(() => {
       const turn = chess.turn();
-      setLichessClocks((prev) => {
-        if (!prev) return prev;
-        return {
-          wtime: turn === 'w' ? Math.max(0, prev.wtime - 1000) : prev.wtime,
-          btime: turn === 'b' ? Math.max(0, prev.btime - 1000) : prev.btime,
-        };
-      });
+      setMatchClocks((prev) => ({
+        wtime: turn === 'w' ? Math.max(0, prev.wtime - 1000) : prev.wtime,
+        btime: turn === 'b' ? Math.max(0, prev.btime - 1000) : prev.btime,
+      }));
     }, 1000);
     return () => clearInterval(timer);
-  }, [appState, gameMode, lichessClocks, chess]);
+  }, [appState, chess]);
+
+  // Compute displayed board when inspecting historical moves (viewPly) vs live game
+  const displayedBoardState = useMemo(() => {
+    if (viewPly === null || viewPly >= gameHistory.length) {
+      return {
+        boardChess: chess,
+        boardLastMove: lastMove,
+        isInspectingHistory: false,
+      };
+    }
+
+    const temp =
+      initialFen && initialFen !== 'startpos' ? new Chess(initialFen) : new Chess();
+    let inspectedLastMove: { from: Square; to: Square } | null = null;
+    const limit = Math.max(0, Math.min(viewPly, gameHistory.length));
+    for (let i = 0; i < limit; i++) {
+      const m = gameHistory[i];
+      try {
+        const res = temp.move({
+          from: m.from,
+          to: m.to,
+          promotion: m.promotion || 'q',
+        });
+        if (res) {
+          inspectedLastMove = { from: m.from as Square, to: m.to as Square };
+        }
+      } catch {}
+    }
+
+    return {
+      boardChess: temp,
+      boardLastMove: inspectedLastMove,
+      isInspectingHistory: true,
+    };
+  }, [viewPly, gameHistory, chess, lastMove, initialFen]);
 
   // Handle board square click
   const handleSquareClick = useCallback(
     (square: Square) => {
       if (appState !== 'playing') return;
+      // If inspecting historical moves, snap back to live board first
+      if (viewPly !== null) {
+        setViewPly(null);
+        return;
+      }
       if (
         (gameMode === 'online' || gameMode === 'lichess' || gameMode === 'ai') &&
         chess.turn() !== playerColor
@@ -604,7 +740,7 @@ export const App: React.FC = () => {
         );
       }
     },
-    [appState, gameMode, chess, playerColor, selectedSquare, validMoves, executeMove]
+    [appState, viewPly, gameMode, chess, playerColor, selectedSquare, validMoves, executeMove]
   );
 
   // Promotion choice confirmed
@@ -626,6 +762,7 @@ export const App: React.FC = () => {
     }
 
     soundManager.playSound('move');
+    setViewPly(null);
     setChess((prevChess) => {
       const nextChess = new Chess(prevChess.fen());
       if (gameMode === 'ai') {
@@ -675,7 +812,6 @@ export const App: React.FC = () => {
       lichessService.resignBoardGame(activeLichessGameId);
     }
 
-    // Notify peer in Wi-Fi multiplayer so joined/host peer also archives the game
     if (gameMode === 'online' && onlineSession) {
       const peer = isHost ? onlineSession.peers?.[0] : onlineSession;
       if (peer?.send) {
@@ -729,7 +865,134 @@ export const App: React.FC = () => {
     archiveCompletedGame,
   ]);
 
-  // Trigger post-game analysis for any move list (current game, saved history, imported PGN, or Lichess old game)
+  // Offer Draw handler
+  const handleOfferDraw = useCallback(() => {
+    soundManager.playSound('click');
+    if (gameMode === 'lichess' && activeLichessGameId) {
+      lichessService.offerBoardDraw(activeLichessGameId);
+      appendChatMessage('System', 'Draw offer sent to Lichess opponent.', true);
+      return;
+    }
+    if (gameMode === 'online' && onlineSession) {
+      const peer = isHost ? onlineSession.peers?.[0] : onlineSession;
+      if (peer?.send) {
+        peer.send({ type: 'chat', sender: profileName, text: 'offered a draw (½).' });
+      }
+      appendChatMessage('System', 'Draw offer sent to opponent.', true);
+      return;
+    }
+    // In local or AI mode, conclude by draw agreement if >= 2 moves played
+    const oppLabel = gameMode === 'ai' ? 'Stockfish AI' : 'Player 2';
+    archiveCompletedGame(
+      gameHistoryRef.current,
+      gameMode,
+      'draw',
+      'Draw by Mutual Agreement',
+      playerColor,
+      oppLabel
+    );
+    setGameOverInfo({
+      winner: 'draw',
+      reason: 'Draw by Mutual Agreement',
+    });
+    setAppState('game_over');
+  }, [
+    gameMode,
+    activeLichessGameId,
+    onlineSession,
+    isHost,
+    profileName,
+    playerColor,
+    archiveCompletedGame,
+    appendChatMessage,
+  ]);
+
+  // Abort or Restart match handler
+  const handleAbortOrRestart = useCallback(() => {
+    soundManager.playSound('click');
+    if (gameMode === 'lichess' && activeLichessGameId) {
+      if (gameHistoryRef.current.length < 2) {
+        lichessService.abortBoardGame(activeLichessGameId);
+        lichessService.stopGameStream();
+        setAppState('lichess_hub');
+      } else {
+        appendChatMessage(
+          'System',
+          'Game cannot be aborted after move 1. Use Resign (⚑) or Offer Draw (½).',
+          true
+        );
+      }
+      return;
+    }
+    startNewGame(gameMode, playerColor);
+  }, [gameMode, activeLichessGameId, playerColor, startNewGame, appendChatMessage]);
+
+  // Add +15 seconds to opponent clock
+  const handleGiveMoreTime = useCallback(() => {
+    soundManager.playSound('click');
+    const oppColor: Color = playerColor === 'w' ? 'b' : 'w';
+    setMatchClocks((prev) => ({
+      wtime: oppColor === 'w' ? prev.wtime + 15000 : prev.wtime,
+      btime: oppColor === 'b' ? prev.btime + 15000 : prev.btime,
+    }));
+    appendChatMessage('System', '+15 seconds added to opponent clock.', true);
+  }, [playerColor, appendChatMessage]);
+
+  // Send Chat Message across Lichess, Online P2P, or AI/Local modes
+  const handleSendChat = useCallback(
+    (text: string) => {
+      const clean = text.trim();
+      if (!clean) return;
+      soundManager.playSound('select');
+
+      const myActiveLabel =
+        gameMode === 'lichess'
+          ? lichessUsername || lichessService.getUsername() || 'Lichess Player'
+          : profileName;
+
+      if (gameMode === 'lichess' && activeLichessGameId) {
+        lichessService.sendBoardChat(activeLichessGameId, clean);
+        // Lichess echoes chatLine on stream, or we optimistically append if needed
+        appendChatMessage(myActiveLabel, clean);
+        return;
+      }
+
+      appendChatMessage(myActiveLabel, clean);
+
+      if (gameMode === 'online' && onlineSession) {
+        const peer = isHost ? onlineSession.peers?.[0] : onlineSession;
+        if (peer?.send) {
+          peer.send({ type: 'chat', sender: myActiveLabel, text: clean });
+        }
+      } else if (gameMode === 'ai') {
+        setTimeout(() => {
+          const lower = clean.toLowerCase();
+          let reply = 'Good move! Let us see how this position develops.';
+          if (lower.includes('hi') || lower.includes('hello')) {
+            reply = 'Hello! Good luck and have fun!';
+          } else if (lower.includes('good luck') || lower === 'gl') {
+            reply = 'Thank you! Good luck to you too!';
+          } else if (lower.includes('have fun') || lower === 'hf') {
+            reply = 'Have fun! May the best tactics win.';
+          } else if (lower.includes('you too') || lower === 'u2') {
+            reply = 'Thanks!';
+          }
+          appendChatMessage('Stockfish AI', reply);
+        }, 450);
+      }
+    },
+    [
+      gameMode,
+      lichessUsername,
+      profileName,
+      activeLichessGameId,
+      onlineSession,
+      isHost,
+      appendChatMessage,
+    ]
+  );
+
+  // Trigger post-game analysis for any move list
   const startAnalysisForMoves = useCallback(
     (movesToAnalyze: MoveRecord[], returnTo: AppState = 'menu', myColorForAnalysis: Color = 'w') => {
       soundManager.playSound('click');
@@ -817,7 +1080,11 @@ export const App: React.FC = () => {
           soundManager.playSound('click');
           setAppState(settingsReturnState);
         }
-      } else if (appState === 'history' || appState === 'lichess_hub' || appState === 'multiplayer_menu') {
+      } else if (
+        appState === 'history' ||
+        appState === 'lichess_hub' ||
+        appState === 'multiplayer_menu'
+      ) {
         if (action === 'cancel') {
           soundManager.playSound('click');
           setAppState('menu');
@@ -836,12 +1103,16 @@ export const App: React.FC = () => {
     ]
   );
 
-  // Global Keyboard listener for shortcuts (Flip, Pause, Resign, Undo)
+  // Global Keyboard listener for shortcuts (Flip, Pause, Resign, Undo, 'm' for chat focus, ArrowLeft/Right for move history)
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      // Ignore if typing inside an input or textarea
       const tag = (e.target as HTMLElement)?.tagName;
-      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+      if (tag === 'INPUT' || tag === 'TEXTAREA') {
+        if (e.key === 'Escape') {
+          (e.target as HTMLElement)?.blur();
+        }
+        return;
+      }
       if (appState === 'settings') return;
 
       if (e.key === 'Escape') {
@@ -864,6 +1135,11 @@ export const App: React.FC = () => {
 
       if (appState === 'playing') {
         const k = e.key.toLowerCase();
+        if (k === 'm') {
+          e.preventDefault();
+          chatInputRef.current?.focus();
+          return;
+        }
         if (k === settings.shortcuts.flip) {
           e.preventDefault();
           soundManager.playSound('select');
@@ -892,7 +1168,7 @@ export const App: React.FC = () => {
     myPCService.save('config', newSettings);
   };
 
-  // Online Multiplayer Handlers (MyPC local Wi-Fi peer - saves history for BOTH Host & Joined user)
+  // Online Multiplayer Handlers (MyPC local Wi-Fi peer - saves history & supports live chat)
   const handleHostMultiplayer = async () => {
     try {
       soundManager.playSound('click');
@@ -910,6 +1186,8 @@ export const App: React.FC = () => {
         peer.onMessage((msg: any) => {
           if (msg.type === 'move') {
             executeMove(msg.move.from, msg.move.to, msg.move.promotion, true);
+          } else if (msg.type === 'chat' && msg.text) {
+            appendChatMessage(msg.sender || guestName, msg.text);
           } else if (msg.type === 'resign') {
             soundManager.playSound('end');
             const w: 'w' | 'b' = msg.winner || 'w';
@@ -958,6 +1236,8 @@ export const App: React.FC = () => {
         } else if (msg.type === 'start') {
           if (msg.hostName) setRemotePlayerName(msg.hostName);
           setChess(new Chess(msg.fen));
+        } else if (msg.type === 'chat' && msg.text) {
+          appendChatMessage(msg.sender || hostName, msg.text);
         } else if (msg.type === 'resign') {
           soundManager.playSound('end');
           const w: 'w' | 'b' = msg.winner || 'b';
@@ -996,21 +1276,73 @@ export const App: React.FC = () => {
     (gameMode === 'ai' || gameMode === 'local') && gameHistory.length > 0;
 
   const opponentClockMs =
-    gameMode === 'lichess' && lichessClocks
-      ? playerColor === 'w'
-        ? lichessClocks.btime
-        : lichessClocks.wtime
-      : undefined;
+    playerColor === 'w' ? matchClocks.btime : matchClocks.wtime;
   const myClockMs =
-    gameMode === 'lichess' && lichessClocks
-      ? playerColor === 'w'
-        ? lichessClocks.wtime
-        : lichessClocks.btime
-      : undefined;
+    playerColor === 'w' ? matchClocks.wtime : matchClocks.btime;
+
+  const activeMyName =
+    gameMode === 'lichess'
+      ? lichessUsername || lichessService.getUsername() || 'Lichess Player'
+      : profileName;
+
+  const activeOpponentName =
+    gameMode === 'ai'
+      ? 'Stockfish AI'
+      : gameMode === 'online' || gameMode === 'lichess'
+      ? remotePlayerName
+      : 'Player 2';
+
+  const sharedArenaProps: ArenaHUDProps = {
+    chess: displayedBoardState.boardChess,
+    gameMode,
+    playerColor,
+    profileName: activeMyName,
+    opponentName: activeOpponentName,
+    myElo: gameMode === 'lichess' ? myLichessRating : myElo,
+    aiElo: gameMode === 'lichess' ? opponentElo : settings.ai_elo,
+    opponentClockMs,
+    myClockMs,
+    timeControlLabel,
+    ratedMatch,
+    speedLabel,
+    flipped,
+    soundEnabled: settings.sound_enabled,
+    musicEnabled: settings.music_enabled,
+    fontScale: settings.font_scale,
+    shortcuts: settings.shortcuts,
+    moves: gameHistory,
+    viewPly,
+    onSelectPly: (ply) => {
+      soundManager.playSound('select');
+      setViewPly(ply);
+    },
+    chatMessages,
+    onSendChat: handleSendChat,
+    matchNotes,
+    onChangeNotes: handleChangeNotes,
+    savedGames,
+    canUndo,
+    onUndo: handleUndo,
+    onOfferDraw: handleOfferDraw,
+    onAbortOrRestart: handleAbortOrRestart,
+    onGiveMoreTime: gameMode !== 'lichess' ? handleGiveMoreTime : undefined,
+    onToggleSound: () =>
+      handleSaveSettings({ ...settings, sound_enabled: !settings.sound_enabled }),
+    onToggleMusic: () =>
+      handleSaveSettings({ ...settings, music_enabled: !settings.music_enabled }),
+    onFlipBoard: () => setFlipped((prev) => !prev),
+    onOpenSettings: () => openSettings('playing'),
+    onPause: () => {
+      soundManager.playSound('click');
+      setAppState('paused');
+    },
+    onResign: handleResign,
+    chatInputRef,
+  };
 
   return (
     <div
-      className={`relative w-screen h-screen flex flex-col items-center justify-between p-2 sm:p-4 bg-gradient-to-b from-slate-900 via-slate-950 to-black overflow-hidden select-none ${scaleClass}`}
+      className={`relative w-screen h-screen flex flex-col items-center justify-between p-1.5 sm:p-3 bg-[#161512] overflow-hidden select-none ${scaleClass}`}
     >
       {/* Main Menu State */}
       {appState === 'menu' && (
@@ -1211,62 +1543,41 @@ export const App: React.FC = () => {
         </div>
       )}
 
-      {/* Playing Board State - Viewport Fitted (NO EvaluationBar here; EvaluationBar is strictly in AnalysisModal) */}
+      {/* Playing Board State - 3-Column Widescreen TV Arena (Matching Reference Screenshot) */}
       {appState === 'playing' && (
-        <div className="my-auto flex flex-col items-center justify-between max-w-3xl w-full h-full max-h-screen py-1 px-2 box-border gap-1 overflow-hidden">
-          <GameHUD
-            chess={chess}
-            gameMode={gameMode}
-            playerColor={playerColor}
-            profileName={
-              gameMode === 'lichess'
-                ? lichessUsername || lichessService.getUsername() || 'Lichess Player'
-                : profileName
-            }
-            opponentName={
-              gameMode === 'ai'
-                ? `Stockfish AI`
-                : gameMode === 'online' || gameMode === 'lichess'
-                ? remotePlayerName
-                : 'Player 2'
-            }
-            myElo={gameMode === 'lichess' ? myLichessRating : myElo}
-            aiElo={gameMode === 'lichess' ? opponentElo : settings.ai_elo}
-            opponentClockMs={opponentClockMs}
-            myClockMs={myClockMs}
-            flipped={flipped}
-            soundEnabled={settings.sound_enabled}
-            musicEnabled={settings.music_enabled}
-            fontScale={settings.font_scale}
-            shortcuts={settings.shortcuts}
-            canUndo={canUndo}
-            onUndo={handleUndo}
-            onToggleSound={() =>
-              handleSaveSettings({ ...settings, sound_enabled: !settings.sound_enabled })
-            }
-            onToggleMusic={() =>
-              handleSaveSettings({ ...settings, music_enabled: !settings.music_enabled })
-            }
-            onFlipBoard={() => setFlipped((prev) => !prev)}
-            onOpenSettings={() => openSettings('playing')}
-            onPause={() => {
-              soundManager.playSound('click');
-              setAppState('paused');
-            }}
-            onResign={handleResign}
-          />
+        <div className="w-full h-full max-w-[1720px] mx-auto grid grid-cols-1 lg:grid-cols-[290px_auto_310px] xl:grid-cols-[330px_auto_350px] items-center justify-center gap-3 xl:gap-5 px-1 sm:px-3 overflow-y-auto lg:overflow-hidden">
+          {/* LEFT COLUMN: Match Details Card + Live Chat Room & Notes */}
+          <div className="hidden lg:flex flex-col h-full max-h-[90vh] py-1">
+            <LeftArenaPanel {...sharedArenaProps} />
+          </div>
 
-          <div className="flex items-center justify-center w-full flex-1 min-h-0 overflow-hidden my-auto">
+          {/* CENTER COLUMN: Near-Fullscreen ChessBoard + Outer Coordinates + Bottom Head-to-Head Crosstable */}
+          <div className="flex flex-col items-center justify-center h-full max-h-[96vh] py-0.5">
             <ChessBoard
-              chess={chess}
+              chess={displayedBoardState.boardChess}
               flipped={flipped}
-              selectedSquare={selectedSquare}
-              validMoves={validMoves}
-              lastMove={lastMove}
-              cursorSquare={cursorSquare}
+              selectedSquare={displayedBoardState.isInspectingHistory ? null : selectedSquare}
+              validMoves={displayedBoardState.isInspectingHistory ? [] : validMoves}
+              lastMove={displayedBoardState.boardLastMove}
+              cursorSquare={displayedBoardState.isInspectingHistory ? null : cursorSquare}
               settings={settings}
+              sizeVariant="arena"
               onSquareClick={handleSquareClick}
             />
+
+            <div className="w-full max-w-[min(81vh,48vw)] xl:max-w-[min(83vh,50vw)] hidden lg:block">
+              <BottomCrosstableBar
+                profileName={activeMyName}
+                opponentName={activeOpponentName}
+                savedGames={savedGames}
+                onFocusChat={() => chatInputRef.current?.focus()}
+              />
+            </div>
+          </div>
+
+          {/* RIGHT COLUMN: Digital Clocks, Opponent/Player Info, 2-Column Move History & Action Controls */}
+          <div className="flex flex-col justify-center w-full max-w-[500px] lg:max-w-none mx-auto h-full max-h-[90vh] py-1">
+            <RightArenaPanel {...sharedArenaProps} />
           </div>
         </div>
       )}

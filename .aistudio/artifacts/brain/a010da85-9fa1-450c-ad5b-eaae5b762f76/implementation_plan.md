@@ -1,120 +1,84 @@
-# Implementation Plan: Game History, Instant Analysis Import & Lichess Online Suite
+# Widescreen TV Arena & Lichess-Style 3-Column Match Layout
 
-This update refines the in-game board presentation by restricting the evaluation bar strictly to Post-Game Analysis, introduces persistent Match History & PGN/Text Import (with one-click sample games) for instant analysis testing, and adds a complete **Lichess Online Suite** accessible via a prominent white button on the main menu.
+Transform the active gameplay view into a widescreen 3-column TV arena modeled directly after the Lichess desktop/TV reference layout, maximizing board height on large displays while utilizing the left, right, and bottom zones for live match metadata, opponent chat/notes, digital player clocks, move history navigation, and head-to-head series records.
 
 ## User Review & Critical Decisions
 
 > [!IMPORTANT]
-> The following decisions were confirmed by the user:
-> - **Evaluation Bar Visibility**: Hidden during active gameplay (`Play vs AI`, `Couch Play`, `Local Wi-Fi`, and `Lichess Live`); displayed **exclusively** in Analysis Mode.
-> - **Lichess Authentication**: Personal API Access Tokens are read from and saved directly to the player's profile storage (`MyPC.load` / `MyPC.save` under `'lichess_token'`), with automatic support for `MyPC.app_config.lichess_token` if pre-configured.
-> - **Lichess Matchmaking Grid**: Features the classic 12-tile Lichess pairing grid (`1+0`, `2+1`, `3+0`, `3+2`, `5+0`, `5+3`, `10+0`, `10+5`, `15+10`, `30+0`, `30+20`, and `CUSTOM`) with a **Rated / Casual** toggle.
-> - **Game History & Text Import**: Automatically saves completed games (including for both Host and Guest in multiplayer), allows running analysis from any saved game, and supports PGN/move text import alongside pre-loaded classic sample games for one-click analysis testing on TV.
+> All Phase 1 preferences have been locked in for implementation across the active match interface:
+
+- **Confirmed Decision 1 (All Game Modes)**: The 3-column widescreen TV arena layout will be used across all game modes (`lichess`, `ai`, `local`, and `online` multiplayer), adapting the metadata card and controls dynamically for each mode.
+- **Confirmed Decision 2 (Live Chat & Notes Panel)**: The left column will provide a tabbed **Chat room** and **Notes** panel—supporting live Lichess game chat (`chatLine` events + `/api/board/game/{gameId}/chat`), MyPC P2P online multiplayer chat, one-click quick-chat buttons (`HI`, `GL`, `HF`, `U2`), and persistent private match notes across all modes.
+- **Confirmed Decision 3 (Board Coordinates)**: Rank numbers (`1–8`) and file letters (`a–h`) will be displayed both along the outer right and bottom borders of the board frame (matching the screenshot) and inside the corner squares for quick visual scanning.
 
 ---
 
 ## 1. Overview & Core Concept
 
-1. **Distraction-Free Gameplay**: Removing the live evaluation bar during active play ensures an authentic, focused chess experience while keeping the full evaluation bar in Post-Game Analysis.
-2. **Saved Games & Instant Analysis Testing**:
-   - Every completed game across AI, Couch Play, Local Wi-Fi Multiplayer (both Host and Joined player), and Lichess is automatically archived in the user's profile history.
-   - A dedicated **History & Import** hub allows browsing past games, importing any PGN or move text (`1. e4 e5 ...`), or selecting one-click famous sample games (e.g., *Morphy's Opera Game*, *Anderssen's Immortal Game*, *Scholar's Mate Blunder Test*) to immediately launch and test the analysis engine.
-3. **Lichess Integration Hub**:
-   - Accessible from a high-contrast **white "Lichess" button** on the main menu.
-   - Routes API requests through the MyPC SDK local proxy (`MyPC.fetch` / `MyPC.proxy`) when available on the TV runtime, with automatic standard CORS fallback.
-   - Includes 4 integrated views: **Quick Pairing Grid** (Rated & Casual + Custom/AI), **Daily & Tactical Puzzles**, **My Lichess Games** (with one-click local analysis), and **Player Stats, Records & Streaks**.
+- **What It Does**: Replaces the narrow single-column top/bottom HUD layout on widescreen viewports with a full-viewport 3-column arena where the chessboard scales up to ~84–88% of the screen height in the center, flanked by a Left Match Info & Chat/Notes column and a Right Digital Clocks, Move List & Controls column, plus a Head-to-Head Crosstable bar underneath the board.
+- **Target Audience / Persona**: TV, couch, and widescreen desktop chess players using mouse, keyboard shortcuts, or TV remote/gamepad navigation.
+- **Key Value**: Eliminates wasted horizontal screen space on 16:9 widescreen displays, makes the chess pieces and coordinates dramatically larger and clearer from across a room, and surfaces real-time move history, clocks, chat, and head-to-head scores without cluttering the board.
 
 ---
 
 ## 2. User Experience & Visual Design
 
-### Key User Flows
-1. **Main Menu**:
-   - Features the new **white "Lichess" button** (`bg-white text-slate-950 hover:bg-slate-200 font-extrabold`) alongside *Play vs AI*, *Couch Play*, *Local Wi-Fi Multiplayer*, *Game History & Analysis*, and *Settings*.
-2. **Game History & Import Flow**:
-   - **Saved Games Tab**: Displays chronological cards showing White vs. Black, game mode badge, result (`1-0`, `0-1`, `½-½`), date, ply count, and an **"Analyze Game"** button.
-   - **Import / Sample Games Tab**: Provides a text area for pasting PGN or algebraic moves (`1. e4 e5 2. Nf3...`) plus 4 one-click sample game buttons so TV users can test Post-Game Analysis without typing.
-3. **Lichess Hub Flow**:
-   - **Account & Token Bar**: Displays connected Lichess username, status indicator, and a button to set/update the Personal API Access Token (saved to `MyPC.save('lichess_token')`).
-   - **Tab 1 — Play (12-Tile Grid)**:
-     - Rated / Casual toggle switch at top.
-     - 3×4 grid matching Lichess:
-       - Row 1: `1+0 Bullet`, `2+1 Bullet`, `3+0 Blitz`
-       - Row 2: `3+2 Blitz`, `5+0 Blitz`, `5+3 Blitz`
-       - Row 3: `10+0 Rapid`, `10+5 Rapid`, `15+10 Rapid`
-       - Row 4: `30+0 Classical`, `30+20 Classical`, `Custom` (minutes, increment, Rated/Casual, or Lichess AI Level 1–8).
-   - **Tab 2 — Puzzles**:
-     - Loads the Lichess Daily Puzzle or next tactical puzzle.
-     - Interactive board prompts the player to find the best move sequence, updating puzzle streak count and showing tactical themes.
-   - **Tab 3 — My Lichess Games**:
-     - Streams the player's recent games from Lichess (`NDJSON` format), displaying opponent, time control, rating diff, and result, with an **"Analyze"** button on every game.
-   - **Tab 4 — Stats, Records & Streaks**:
-     - Displays rating cards for Bullet, Blitz, Rapid, Classical, and Puzzles, plus total wins/draws/losses, win rate percentages, and current/longest streaks.
+- **Key User Flows**:
+  1. **Entering a Match (Any Mode)**: Launching a Lichess match, Stockfish AI game, Local 2-Player game, or Online P2P game opens the 3-column widescreen arena (`lg:grid-cols-[300px_auto_320px]` / `xl:grid-cols-[320px_auto_340px]`).
+  2. **Left Column (Match Info + Chat Room / Notes)**:
+     - **Top Match Card**: Displays the speed/mode icon (Bullet, Blitz, Rapid, Classical, AI Bot, Couch, or Wi-Fi P2P), time control and rated status (e.g., `10+0 · Rated · Rapid` or `Stockfish AI · Casual`), elapsed/start status, and both players' color indicators, usernames, and ratings.
+     - **Chat Room & Notes Tabs**: Interactive tab bar switching between live opponent chat (with `Please be nice in the chat!` input and 1-click `HI`, `GL`, `HF`, `U2` buttons at the bottom) and personal match notes.
+  3. **Center Column (Maximized ChessBoard + Outer Coordinates + Head-to-Head Bar)**:
+     - **Near-Full-Height Board**: Scales up to `min(83vh, 52vw)` on widescreen displays with crisp outer coordinate gutters along the right edge (`1–8` aligned to each rank) and bottom edge (`a–h` or `h–a` when flipped, aligned to each file) in addition to subtle in-square corner labels.
+     - **Bottom Crosstable / Head-to-Head Strip**: Positioned directly beneath the board, displaying historical series tallies (`Wins / Draws / Losses` and total score) between the current user and the current opponent (computed from saved games history and live session results).
+  4. **Right Column (Digital Clocks, Player Bars, Move History & Match Actions)**:
+     - **Opponent Clock & Bar (Top)**: Large tabular digital timer (`01:00`), active turn indicator dot, opponent username, rating, material advantage (`+2`), and captured piece icons.
+     - **Move History & Replay Controls**: Navigation toolbar (`|<<`, `<`, `>`, `>>|`, Flip Board, Audio/Settings) above a 2-column scrollable algebraic move table (`1. e4 e5`, `2. Nf3 Nc6`) allowing players to step through earlier board positions during or after play.
+     - **Match Action Bar**: Clean icon action buttons for Abort (`✕`), Offer Draw / Undo (`½` / Undo), Resign (`⚑`), and Pause, followed by the player's own status bar, turn prompt banner, and large bottom digital clock (`01:00`).
+
+- **Visual Identity & Theme**:
+  - *Aesthetic Direction*: Authentic Lichess dark-arena aesthetic paired with crisp high-contrast TV legibility.
+  - *Color Palette & Mood*: Deep charcoal/slate arena canvas (`#161512` / `bg-slate-950`), elevated structural panels (`#262421` / `bg-slate-900/95`), subtle borders (`border-slate-800`), warm active-move highlights, and emerald status banners (`#629924` / `bg-emerald-600`).
+  - *Typography & Hierarchy*: Monospace tabular numerals (`font-mono tabular-nums`) for digital clocks, ratings, and move indices; clean sans-serif player headers.
 
 ---
 
 ## 3. Key Product Decisions & Trade-Offs
 
-- **Decision 1: Dual Host & Guest History Saving in Multiplayer**:
-  - *Chosen Approach*: When a multiplayer game concludes (by checkmate, draw, or resignation), the move/resign payload is synchronized across the peer connection before closing, and both Host and Guest trigger `saveCompletedGame()` to persist the match in their profile storage.
-- **Decision 2: MyPC Proxy + NDJSON Stream Handling for Lichess**:
-  - *Chosen Approach*: Build a dedicated `lichessService` that checks for `MyPC.proxy` / `MyPC.fetch` to bypass any TV WebView CORS constraints, while supporting streaming `application/x-ndjson` responses used by Lichess's Board seek, live game stream, and game export endpoints.
-- **Decision 3: Lichess Board API Time Control Handling**:
-  - *Chosen Approach*: Lichess's `/api/board/seek` endpoint natively pairs Rapid and Classical time controls (`>= 10+0`) for human tokens. If a player clicks a faster preset (`1+0` to `5+3`) and Lichess returns a time-control restriction message, the UI clearly explains the Lichess Board API rule and offers an instant 1-click switch to `10+0 Rated` or a real-time Lichess challenge.
+- **Decision 1: Historical Ply Inspection Without Breaking Live State**
+  - *Chosen Approach*: Clicking `<` / `>` or any move in the right-hand move list lets the player inspect historical plies on the board while a live game continues; making a new move or clicking `>>|` immediately snaps back to the live board state.
+  - *Why*: Matches Lichess's exact right-panel move navigation behavior while keeping the live `chess` instance authoritative.
+- **Decision 2: Unified Chat Transport Across Lichess & Online P2P**
+  - *Chosen Approach*: Extend `lichessService.streamBoardGame` to parse incoming `chatLine` NDJSON events and add `sendBoardChat(gameId, text)` (`POST /api/board/game/{gameId}/chat`), while routing `online` multiplayer chat over `onlineSession.sendMessage({ type: 'chat', text, sender })`.
+  - *Why*: Delivers real two-way chat with opponents in both Lichess and MyPC Online Multiplayer using the exact same UI component and quick-chat buttons (`HI`, `GL`, `HF`, `U2`).
 
 ---
 
-## 4. Technical Architecture & Component Mapping
+## 4. Technical Architecture & Data Strategy *(Technical Reference)*
 
 ```
-┌──────────────────────────────────────────────────────────────────────┐
-│                               App.tsx                                │
-│  States: menu | playing | paused | game_over | history | lichess     │
-│          | analysis_stats | analysis_view | analysis_learn | settings│
-└───────┬──────────────────────────┬───────────────────────────┬───────┘
-        │                          │                           │
-┌───────▼────────┐        ┌────────▼─────────┐        ┌────────▼─────────┐
-│ HistoryModal   │        │   LichessHub     │        │  AnalysisModal   │
-│ - Saved Games  │        │ - 12-Tile Grid   │        │ - EvalBar (ONLY  │
-│ - PGN Import   │        │ - Live Stream    │        │   shown here!)   │
-│ - Sample Games │        │ - Tactical Puzzle│        │ - Move Stepper   │
-└───────┬────────┘        │ - Old Games List │        │ - Mistake Trainer│
-        │                 │ - Stats & Streaks│        └────────▲─────────┘
-        │                 └────────┬─────────┘                 │
-        └──────────────────────────┴───────────────────────────┘
-                     (Any game can launch Analysis)
+┌───────────────────────────────────────────────────────────────────────────────────┐
+│                          App.tsx (Active Match Arena)                             │
+├─────────────────────────┬───────────────────────────────┬─────────────────────────┤
+│   Left Arena Column     │      Center Arena Column      │   Right Arena Column    │
+│ ┌─────────────────────┐ │ ┌───────────────────────────┐ │ ┌─────────────────────┐ │
+│ │ Match Info Card     │ │ │ ChessBoard (Up to 83vh)   │ │ │ Opponent Clock      │ │
+│ │ • Format & Mode     │ │ │ • 8x8 Grid + Best Arrows  │ │ │ Opponent Bar + Caps │ │
+│ │ • White & Black Elo │ │ │ • Corner & Outer Border   │ │ ├─────────────────────┤ │
+│ └─────────────────────┘ │ │   Ranks (1-8) & Files(a-h)│ │ │ Move Nav (|<< < > >>)│ │
+│ ┌─────────────────────┐ │ └───────────────────────────┘ │ │ 2-Col SAN Move List │ │
+│ │ Chat Room | Notes   │ │ ┌───────────────────────────┐ │ │ Action Bar (X ½ ⚑)  │ │
+│ │ • Live Messages     │ │ │ Head-to-Head Crosstable   │ │ ├─────────────────────┤ │
+│ │ • Input + QuickChat │ │ │ • Player vs Opponent Wins │ │ │ Player Bar + Banner │ │
+│ │   [HI] [GL] [HF][U2]│ │ └───────────────────────────┘ │ │ Player Clock        │ │
+│ └─────────────────────┘ │                               │ └─────────────────────┘ │
+└─────────────────────────┴───────────────────────────────┴─────────────────────────┘
 ```
 
-### Data Models
-```typescript
-export interface SavedGameRecord {
-  id: string;
-  date: string;
-  mode: 'ai' | 'local' | 'online' | 'lichess' | 'imported';
-  white: string;
-  black: string;
-  result: '1-0' | '0-1' | '1/2-1/2';
-  reason: string;
-  pgn: string;
-  moves: { from: string; to: string; san: string; promotion?: string }[];
-}
-
-export interface LichessUserStats {
-  id: string;
-  username: string;
-  perfs: {
-    bullet?: { rating: number; games: number; rd: number; prog: number };
-    blitz?: { rating: number; games: number; rd: number; prog: number };
-    rapid?: { rating: number; games: number; rd: number; prog: number };
-    classical?: { rating: number; games: number; rd: number; prog: number };
-    puzzle?: { rating: number; games: number; rd: number; prog: number };
-  };
-  count?: {
-    all: number;
-    rated: number;
-    win: number;
-    loss: number;
-    draw: number;
-  };
-}
-```
+- **Data Model & State**:
+  - `ChatMessage`: `{ id: string; sender: string; text: string; timestamp: string; isSystem?: boolean }`
+  - `viewPly`: `number | null` (null = live latest position; number = inspecting historical ply `0..gameHistory.length`)
+  - `matchNotes`: `string` persisted per session/storage for the `Notes` tab
+  - `headToHead`: Computed dynamically from `savedGames` matching the current opponent name (`myWins`, `opponentWins`, `draws`).
+- **Build & Packaging**:
+  - After implementing and verifying all components in `code_source/`, compile the production bundle into the repository root (`/`), ensure relative paths in root `index.html`, bump `mypc-app.json` version to `3.0.0`, and register all updated build artifacts for GitHub sync.

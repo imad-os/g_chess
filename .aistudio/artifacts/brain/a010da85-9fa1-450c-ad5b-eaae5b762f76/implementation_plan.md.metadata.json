@@ -1,6 +1,6 @@
 {
-  "summary": "Implementation plan for hiding the live evaluation bar during play, adding saved match history with PGN/text import and sample games for instant analysis, and integrating a full Lichess Online Suite (white menu button, 12-tile time format matchmaking grid with rated toggle, tactical puzzles, Lichess game history browser, and user stats/streaks).",
-  "updatedAt": "2026-10-20T10:21:40.614618382Z",
+  "summary": "Implementation plan for the Lichess-inspired 3-column widescreen TV layout across all game modes, including a near-fullscreen ChessBoard with outer border rank/file coordinates, a left Game Details + Live Chat/Notes column, a right Player Clocks + Move History + Controls panel, and a bottom Head-to-Head Crosstable scoreboard.",
+  "updatedAt": "2026-10-20T12:10:08.496403453Z",
   "requestFeedback": true,
   "userFacing": true
 }
