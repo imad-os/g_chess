@@ -19,7 +19,7 @@ interface ChessBoardProps {
   settings: GameSettings;
   disabled?: boolean;
   arrows?: BoardArrow[];
-  sizeVariant?: 'arena' | 'analysis';
+  sizeVariant?: 'arena' | 'vertical' | 'analysis';
   onSquareClick: (sq: Square) => void;
 }
 
@@ -106,7 +106,9 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
 
   const boardSizeClass =
     sizeVariant === 'arena'
-      ? 'w-[min(62vh,86vw)] h-[min(62vh,86vw)] lg:w-[min(81vh,48vw)] lg:h-[min(81vh,48vw)] xl:w-[min(83vh,50vw)] xl:h-[min(83vh,50vw)]'
+      ? 'w-[min(81vh,48vw)] h-[min(81vh,48vw)] xl:w-[min(83vh,50vw)] xl:h-[min(83vh,50vw)]'
+      : sizeVariant === 'vertical'
+      ? 'w-[min(90vw,43vh)] h-[min(90vw,43vh)] sm:w-[min(86vw,46vh)] sm:h-[min(86vw,46vh)]'
       : 'w-[min(54vh,84vw,460px)] h-[min(54vh,84vw,460px)] sm:w-[min(56vh,72vw,500px)] sm:h-[min(56vh,72vw,500px)]';
 
   return (

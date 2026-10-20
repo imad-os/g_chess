@@ -15,6 +15,9 @@ import {
   LeftArenaPanel,
   RightArenaPanel,
   BottomCrosstableBar,
+  VerticalTopSection,
+  VerticalBottomSection,
+  MobileChatModal,
   ArenaHUDProps,
 } from './components/GameHUD';
 import { PromotionModal } from './components/PromotionModal';
@@ -93,6 +96,29 @@ export const App: React.FC = () => {
     myPCService.load<string>('match_notes', '')
   );
   const chatInputRef = useRef<HTMLInputElement>(null);
+  const [mobileChatOpen, setMobileChatOpen] = useState<boolean>(false);
+  const [lastSeenChatCount, setLastSeenChatCount] = useState<number>(0);
+
+  // Detect vertical screens (phones, portrait tablets, or narrow viewports)
+  const [isVerticalScreen, setIsVerticalScreen] = useState<boolean>(() =>
+    typeof window !== 'undefined'
+      ? window.innerWidth < 1024 || window.innerHeight > window.innerWidth
+      : false
+  );
+
+  useEffect(() => {
+    const handleResize = () => {
+      setIsVerticalScreen(window.innerWidth < 1024 || window.innerHeight > window.innerWidth);
+    };
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  useEffect(() => {
+    if (mobileChatOpen) {
+      setLastSeenChatCount(chatMessages.length);
+    }
+  }, [mobileChatOpen, chatMessages.length]);
 
   // Guard ref to avoid duplicate saving of the same finished game
   const currentMatchSavedRef = useRef<boolean>(false);
@@ -1137,7 +1163,12 @@ export const App: React.FC = () => {
         const k = e.key.toLowerCase();
         if (k === 'm') {
           e.preventDefault();
-          chatInputRef.current?.focus();
+          if (isVerticalScreen) {
+            setMobileChatOpen(true);
+            setTimeout(() => chatInputRef.current?.focus(), 80);
+          } else {
+            chatInputRef.current?.focus();
+          }
           return;
         }
         if (k === settings.shortcuts.flip) {
@@ -1160,7 +1191,7 @@ export const App: React.FC = () => {
 
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [appState, settings.shortcuts, handleResign, handleUndo]);
+  }, [appState, settings.shortcuts, handleResign, handleUndo, isVerticalScreen]);
 
   // Save modified settings
   const handleSaveSettings = (newSettings: GameSettings) => {
@@ -1543,44 +1574,85 @@ export const App: React.FC = () => {
         </div>
       )}
 
-      {/* Playing Board State - 3-Column Widescreen TV Arena (Matching Reference Screenshot) */}
-      {appState === 'playing' && (
-        <div className="w-full h-full max-w-[1720px] mx-auto grid grid-cols-1 lg:grid-cols-[290px_auto_310px] xl:grid-cols-[330px_auto_350px] items-center justify-center gap-3 xl:gap-5 px-1 sm:px-3 overflow-y-auto lg:overflow-hidden">
-          {/* LEFT COLUMN: Match Details Card + Live Chat Room & Notes */}
-          <div className="hidden lg:flex flex-col h-full max-h-[90vh] py-1">
-            <LeftArenaPanel {...sharedArenaProps} />
-          </div>
+      {/* Playing Board State - Adaptive Vertical Phone Screen vs 3-Column Widescreen TV Arena */}
+      {appState === 'playing' &&
+        (isVerticalScreen ? (
+          <div className="w-full h-full max-w-[540px] mx-auto flex flex-col justify-between gap-1.5 px-1 py-0.5 overflow-hidden">
+            {/* TOP SPACE: Match Info & Utilities + Opponent Info & Opponent Digital Clock */}
+            <VerticalTopSection {...sharedArenaProps} />
 
-          {/* CENTER COLUMN: Near-Fullscreen ChessBoard + Outer Coordinates + Bottom Head-to-Head Crosstable */}
-          <div className="flex flex-col items-center justify-center h-full max-h-[96vh] py-0.5">
-            <ChessBoard
-              chess={displayedBoardState.boardChess}
-              flipped={flipped}
-              selectedSquare={displayedBoardState.isInspectingHistory ? null : selectedSquare}
-              validMoves={displayedBoardState.isInspectingHistory ? [] : validMoves}
-              lastMove={displayedBoardState.boardLastMove}
-              cursorSquare={displayedBoardState.isInspectingHistory ? null : cursorSquare}
-              settings={settings}
-              sizeVariant="arena"
-              onSquareClick={handleSquareClick}
-            />
-
-            <div className="w-full max-w-[min(81vh,48vw)] xl:max-w-[min(83vh,50vw)] hidden lg:block">
-              <BottomCrosstableBar
-                profileName={activeMyName}
-                opponentName={activeOpponentName}
-                savedGames={savedGames}
-                onFocusChat={() => chatInputRef.current?.focus()}
+            {/* CENTER: ChessBoard with Outer Coordinates */}
+            <div className="flex items-center justify-center shrink-0 py-0.5">
+              <ChessBoard
+                chess={displayedBoardState.boardChess}
+                flipped={flipped}
+                selectedSquare={displayedBoardState.isInspectingHistory ? null : selectedSquare}
+                validMoves={displayedBoardState.isInspectingHistory ? [] : validMoves}
+                lastMove={displayedBoardState.boardLastMove}
+                cursorSquare={displayedBoardState.isInspectingHistory ? null : cursorSquare}
+                settings={settings}
+                sizeVariant="vertical"
+                onSquareClick={handleSquareClick}
               />
             </div>
-          </div>
 
-          {/* RIGHT COLUMN: Digital Clocks, Opponent/Player Info, 2-Column Move History & Action Controls */}
-          <div className="flex flex-col justify-center w-full max-w-[500px] lg:max-w-none mx-auto h-full max-h-[90vh] py-1">
-            <RightArenaPanel {...sharedArenaProps} />
+            {/* BOTTOM SPACE: Player Info & Digital Clock + Turn Banner + Move History + Controls + Chat Button */}
+            <VerticalBottomSection
+              {...sharedArenaProps}
+              onOpenChatModal={() => {
+                soundManager.playSound('click');
+                setMobileChatOpen(true);
+              }}
+              unreadChatCount={Math.max(0, chatMessages.length - lastSeenChatCount)}
+            />
+
+            {/* Chat Room & Notes Overlay Modal when clicking the Chat Button */}
+            <MobileChatModal
+              {...sharedArenaProps}
+              isOpen={mobileChatOpen}
+              onClose={() => {
+                soundManager.playSound('click');
+                setMobileChatOpen(false);
+              }}
+            />
           </div>
-        </div>
-      )}
+        ) : (
+          <div className="w-full h-full max-w-[1720px] mx-auto grid grid-cols-[290px_auto_310px] xl:grid-cols-[330px_auto_350px] items-center justify-center gap-3 xl:gap-5 px-3 overflow-hidden">
+            {/* LEFT COLUMN: Match Details Card + Live Chat Room & Notes */}
+            <div className="flex flex-col h-full max-h-[90vh] py-1">
+              <LeftArenaPanel {...sharedArenaProps} />
+            </div>
+
+            {/* CENTER COLUMN: Near-Fullscreen ChessBoard + Outer Coordinates + Bottom Head-to-Head Crosstable */}
+            <div className="flex flex-col items-center justify-center h-full max-h-[96vh] py-0.5">
+              <ChessBoard
+                chess={displayedBoardState.boardChess}
+                flipped={flipped}
+                selectedSquare={displayedBoardState.isInspectingHistory ? null : selectedSquare}
+                validMoves={displayedBoardState.isInspectingHistory ? [] : validMoves}
+                lastMove={displayedBoardState.boardLastMove}
+                cursorSquare={displayedBoardState.isInspectingHistory ? null : cursorSquare}
+                settings={settings}
+                sizeVariant="arena"
+                onSquareClick={handleSquareClick}
+              />
+
+              <div className="w-full max-w-[min(81vh,48vw)] xl:max-w-[min(83vh,50vw)]">
+                <BottomCrosstableBar
+                  profileName={activeMyName}
+                  opponentName={activeOpponentName}
+                  savedGames={savedGames}
+                  onFocusChat={() => chatInputRef.current?.focus()}
+                />
+              </div>
+            </div>
+
+            {/* RIGHT COLUMN: Digital Clocks, Opponent/Player Info, 2-Column Move History & Action Controls */}
+            <div className="flex flex-col justify-center w-full h-full max-h-[90vh] py-1">
+              <RightArenaPanel {...sharedArenaProps} />
+            </div>
+          </div>
+        ))}
 
       {/* Promotion Choice Modal */}
       {pendingPromotion && (
