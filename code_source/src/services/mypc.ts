@@ -1,4 +1,4 @@
-// MyPC SDK Service integration (v2.8.0)
+// MyPC SDK Service integration (v2.8.0+)
 
 export interface MyPCHandlers {
   onInit?: (info: any) => void;
@@ -12,7 +12,9 @@ export interface MyPCHandlers {
 
 class MyPCService {
   private isMyPCAvailable: boolean = false;
+  private initialized: boolean = false;
   private profileName: string = 'Player 1';
+  private currentHandlers: MyPCHandlers = {};
 
   constructor() {
     this.checkAvailability();
@@ -24,8 +26,16 @@ class MyPCService {
     }
   }
 
+  public setInputHandler(handler: MyPCHandlers['onInput']) {
+    this.currentHandlers.onInput = handler;
+  }
+
   public init(handlers: MyPCHandlers) {
+    this.currentHandlers = { ...this.currentHandlers, ...handlers };
     if (typeof window === 'undefined') return;
+    if (this.initialized) return;
+    this.initialized = true;
+
     const MyPC = (window as any).MyPC;
     if (MyPC && typeof MyPC.init === 'function') {
       this.isMyPCAvailable = true;
@@ -34,22 +44,34 @@ class MyPCService {
           if (info?.profile?.name) {
             this.profileName = info.profile.name;
           }
-          handlers.onInit?.(info);
+          this.currentHandlers.onInit?.(info);
           MyPC.ready?.();
         },
-        onStart: handlers.onStart,
-        onPause: handlers.onPause,
-        onResume: handlers.onResume,
-        onDestroy: handlers.onDestroy,
-        onInput: handlers.onInput,
-        onMenu: handlers.onMenu,
+        onStart: () => {
+          this.currentHandlers.onStart?.();
+        },
+        onPause: () => {
+          this.currentHandlers.onPause?.();
+        },
+        onResume: () => {
+          this.currentHandlers.onResume?.();
+        },
+        onDestroy: () => {
+          this.currentHandlers.onDestroy?.();
+        },
+        onInput: (action: string, pressed: boolean, repeat: boolean, dev?: string) => {
+          this.currentHandlers.onInput?.(action, pressed, repeat, dev);
+        },
+        onMenu: (id: string) => {
+          this.currentHandlers.onMenu?.(id);
+        },
         ownMenu: true,
       });
     } else {
       // Standalone mode in regular browser
       setTimeout(() => {
-        handlers.onInit?.({ standalone: true, profile: { name: 'Player 1' } });
-        handlers.onStart?.();
+        this.currentHandlers.onInit?.({ standalone: true, profile: { name: 'Player 1' } });
+        this.currentHandlers.onStart?.();
       }, 50);
     }
   }

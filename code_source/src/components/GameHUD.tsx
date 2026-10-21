@@ -284,7 +284,10 @@ export const LeftArenaPanel: React.FC<ArenaHUDProps> = ({
       : `${timeControlLabel} • Couch • 2 Players`;
 
   return (
-    <div className="flex flex-col gap-3 w-full h-full max-h-[86vh] select-none">
+    <div
+      data-tv-panel="left"
+      className="flex flex-col gap-3 w-full h-full max-h-[86vh] select-none"
+    >
       {/* Top Match Details Card (Matching Screenshot Top-Left Box) */}
       <div className="bg-[#262421] border border-slate-800/90 rounded-lg p-3.5 shadow-lg shrink-0">
         <div className="flex items-center gap-3 mb-2.5">
@@ -507,7 +510,10 @@ export const RightArenaPanel: React.FC<ArenaHUDProps> = ({
   const stepLast = () => onSelectPly(null);
 
   return (
-    <div className="flex flex-col justify-center w-full h-full max-h-[86vh] select-none">
+    <div
+      data-tv-panel="right"
+      className="flex flex-col justify-center w-full h-full max-h-[86vh] select-none"
+    >
       {/* Top Opponent Digital Clock Row */}
       <div className="flex items-end justify-between mb-0.5">
         <div
@@ -862,7 +868,10 @@ export const VerticalTopSection: React.FC<ArenaHUDProps> = ({
       : `${timeControlLabel} • Couch`;
 
   return (
-    <div className="w-full flex flex-col gap-1.5 shrink-0 select-none">
+    <div
+      data-tv-panel="top"
+      className="w-full flex flex-col gap-1.5 shrink-0 select-none"
+    >
       {/* Row 1: Match Details & Quick Utilities Bar */}
       <div className="flex items-center justify-between bg-[#262421] border border-slate-800/90 rounded-lg px-2.5 py-1 shadow">
         <div className="flex items-center gap-2 min-w-0">
@@ -1044,7 +1053,10 @@ export const VerticalBottomSection: React.FC<
   const stepLast = () => onSelectPly(null);
 
   return (
-    <div className="w-full flex-1 flex flex-col min-h-0 gap-1.5 select-none">
+    <div
+      data-tv-panel="bottom"
+      className="w-full flex-1 flex flex-col min-h-0 gap-1.5 select-none"
+    >
       {/* Row 1: Player (You) Info + Player Digital Clock right below the ChessBoard */}
       <div className="flex items-center justify-between bg-[#262421] border border-slate-800/90 rounded-lg px-3 py-1.5 shadow-md shrink-0">
         <div className="flex flex-col min-w-0 pr-2">
@@ -1286,7 +1298,10 @@ export const MobileChatModal: React.FC<
   const headToHead = useHeadToHead(props.profileName, props.opponentName, props.savedGames);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/75 backdrop-blur-xs p-2 sm:p-4 animate-in fade-in duration-150">
+    <div
+      data-tv-modal="true"
+      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/75 backdrop-blur-xs p-2 sm:p-4 animate-in fade-in duration-150"
+    >
       <div className="w-full max-w-md h-[78vh] max-h-[600px] bg-[#1e1d1a] border border-slate-700 rounded-2xl shadow-2xl flex flex-col overflow-hidden p-3 gap-2.5">
         {/* Modal Header with Close Button */}
         <div className="flex items-center justify-between pb-1.5 border-b border-slate-800 shrink-0">
@@ -1328,7 +1343,10 @@ export const BottomCrosstableBar: React.FC<{
   const headToHead = useHeadToHead(profileName, opponentName, savedGames);
 
   return (
-    <div className="w-full flex flex-col gap-1.5 pt-1 select-none">
+    <div
+      data-tv-panel="bottom"
+      className="w-full flex flex-col gap-1.5 pt-1 select-none"
+    >
       {/* Press [m] to focus row */}
       <div className="flex items-center justify-between text-xs text-slate-400 px-1">
         <button

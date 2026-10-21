@@ -32,6 +32,21 @@ import { soundManager } from './services/sound';
 import { stockfishService } from './services/stockfish';
 import { myPCService } from './services/mypc';
 import { lichessService, ActiveLichessGameState } from './services/lichess';
+import {
+  UnifiedAction,
+  InputSource,
+  NavDirection,
+  mapMyPCAction,
+  mapKeyboardOrTVEvent,
+  getFocusableElements,
+  getCurrentFocusedElement,
+  setSpatialFocus,
+  ensureSpatialFocus,
+  clearAllSpatialFocus,
+  findNextSpatialElement,
+  stepRangeInput,
+  triggerSpatialConfirm,
+} from './services/spatialInput';
 import { Bot, Users, Wifi, Sliders, ChevronRight, History } from 'lucide-react';
 
 export const App: React.FC = () => {
@@ -150,9 +165,15 @@ export const App: React.FC = () => {
   const [isHost, setIsHost] = useState<boolean>(false);
   const [connectingOnline, setConnectingOnline] = useState<boolean>(false);
 
-  // TV remote navigation index (6 items on main menu)
+  // TV remote / Controller / Keyboard navigation state
   const [menuIndex, setMenuIndex] = useState<number>(0);
   const menuItemsCount = 6;
+  const [playFocusZone, setPlayFocusZone] = useState<'board' | 'hud'>('board');
+  const lastDispatchedRef = useRef<{
+    action: UnifiedAction;
+    source: InputSource;
+    time: number;
+  } | null>(null);
 
   // Initialize MyPC SDK and load saved ratings, config, and match history
   useEffect(() => {
@@ -205,10 +226,6 @@ export const App: React.FC = () => {
         lichessService.stopGameStream();
         lichessService.cancelSeek();
         soundManager.destroy();
-      },
-      onInput: (action, pressed) => {
-        if (!pressed) return;
-        handleTVInput(action);
       },
     });
   }, []);
@@ -333,6 +350,8 @@ export const App: React.FC = () => {
       setValidMoves([]);
       setLastMove(null);
       setCursorSquare(color === 'w' ? 'e2' : 'e7');
+      setPlayFocusZone('board');
+      clearAllSpatialFocus();
       setGameHistory([]);
       gameHistoryRef.current = [];
       setAnalysisSummary(null);
@@ -711,6 +730,8 @@ export const App: React.FC = () => {
         return;
       }
 
+      setPlayFocusZone('board');
+      clearAllSpatialFocus();
       setCursorSquare(square);
       const piece = chess.get(square);
 
@@ -1040,19 +1061,205 @@ export const App: React.FC = () => {
     []
   );
 
-  // TV / Gamepad remote action router
-  const handleTVInput = useCallback(
-    (action: string) => {
+  // Helper: Focus the closest interactive element inside a specific HUD panel
+  const enterHudPanelFromBoard = useCallback(
+    (panelName: 'left' | 'right' | 'top' | 'bottom', currentSq: Square): boolean => {
+      const panelEl = document.querySelector<HTMLElement>(`[data-tv-panel="${panelName}"]`);
+      if (!panelEl) return false;
+      const focusables = getFocusableElements(panelEl);
+      if (focusables.length === 0) return false;
+
+      const sqEl = document.querySelector<HTMLElement>(`[data-board-square="${currentSq}"]`);
+      const sqRect = sqEl?.getBoundingClientRect();
+
+      let bestEl = focusables[0];
+      if (sqRect) {
+        const sqCx = sqRect.left + sqRect.width / 2;
+        const sqCy = sqRect.top + sqRect.height / 2;
+        let bestDist = Infinity;
+        for (const el of focusables) {
+          const r = el.getBoundingClientRect();
+          const cx = r.left + r.width / 2;
+          const cy = r.top + r.height / 2;
+          const dist = Math.hypot(cx - sqCx, cy - sqCy);
+          if (dist < bestDist) {
+            bestDist = dist;
+            bestEl = el;
+          }
+        }
+      }
+
+      setPlayFocusZone('hud');
+      setSpatialFocus(bestEl);
+      soundManager.playSound('select');
+      return true;
+    },
+    []
+  );
+
+  // Helper: Return from HUD panel to the nearest ChessBoard edge square
+  const returnToBoardFromHud = useCallback(
+    (fromPanel: string | null, focusedEl: HTMLElement | null) => {
+      const files = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
+      const ranks = ['8', '7', '6', '5', '4', '3', '2', '1'];
+      const displayFiles = flipped ? [...files].reverse() : files;
+      const displayRanks = flipped ? [...ranks].reverse() : ranks;
+
+      const cur = cursorSquare || (playerColor === 'w' ? 'e2' : 'e7');
+      let col = Math.max(0, displayFiles.indexOf(cur[0]));
+      let row = Math.max(0, displayRanks.indexOf(cur[1]));
+
+      const boardEl = document.querySelector<HTMLElement>('[data-chessboard-root="true"]');
+      const boardRect = boardEl?.getBoundingClientRect();
+      const elRect = focusedEl?.getBoundingClientRect();
+
+      if (boardRect && elRect && boardRect.width > 0 && boardRect.height > 0) {
+        const elCx = elRect.left + elRect.width / 2;
+        const elCy = elRect.top + elRect.height / 2;
+        const relX = Math.max(0, Math.min(0.999, (elCx - boardRect.left) / boardRect.width));
+        const relY = Math.max(0, Math.min(0.999, (elCy - boardRect.top) / boardRect.height));
+        col = Math.floor(relX * 8);
+        row = Math.floor(relY * 8);
+      }
+
+      if (fromPanel === 'left') col = 0;
+      else if (fromPanel === 'right') col = 7;
+      else if (fromPanel === 'top') row = 0;
+      else if (fromPanel === 'bottom') row = 7;
+
+      const targetSq = `${displayFiles[col]}${displayRanks[row]}` as Square;
+      clearAllSpatialFocus();
+      setPlayFocusZone('board');
+      setCursorSquare(targetSq);
+      soundManager.playSound('select');
+    },
+    [flipped, cursorSquare, playerColor]
+  );
+
+  // Unified Action Router for Keyboard, Smart TV Remote, and Gamepad Controller
+  const handleUnifiedAction = useCallback(
+    (action: UnifiedAction) => {
+      const isDirection =
+        action === 'up' || action === 'down' || action === 'left' || action === 'right';
+
+      // 1. Check if any modal or sub-screen is currently active
+      const isModalOrSubScreen =
+        pendingPromotion !== null ||
+        mobileChatOpen ||
+        appState !== 'menu' && appState !== 'playing';
+
+      if (isModalOrSubScreen) {
+        const modals = document.querySelectorAll<HTMLElement>('[data-tv-modal="true"]');
+        const activeModal = modals.length > 0 ? modals[modals.length - 1] : document;
+
+        if (action === 'cancel' || action === 'pause') {
+          const activeTag = (document.activeElement as HTMLElement)?.tagName;
+          if (activeTag === 'INPUT' || activeTag === 'TEXTAREA') {
+            (document.activeElement as HTMLElement).blur();
+            soundManager.playSound('select');
+            return;
+          }
+          soundManager.playSound('click');
+          if (pendingPromotion) {
+            setPendingPromotion(null);
+          } else if (mobileChatOpen) {
+            setMobileChatOpen(false);
+          } else if (appState === 'paused') {
+            setAppState('playing');
+          } else if (appState === 'settings') {
+            setAppState(settingsReturnState);
+          } else if (
+            appState === 'analysis_stats' ||
+            appState === 'analysis_view' ||
+            appState === 'analysis_learn'
+          ) {
+            setAppState(analysisReturnState);
+          } else {
+            lichessService.cancelSeek();
+            setAppState('menu');
+          }
+          return;
+        }
+
+        if (action === 'prev_tab' || action === 'next_tab') {
+          // Check for move stepper buttons first (e.g. inside AnalysisModal)
+          const stepSelector =
+            action === 'prev_tab'
+              ? '[data-tv-step-prev="true"]:not([disabled])'
+              : '[data-tv-step-next="true"]:not([disabled])';
+          const stepBtn = activeModal.querySelector<HTMLElement>(stepSelector);
+          if (stepBtn) {
+            stepBtn.click();
+            return;
+          }
+
+          // Otherwise cycle modal navigation tabs ([data-tv-tab="true"])
+          const tabs = Array.from(
+            activeModal.querySelectorAll<HTMLElement>('[data-tv-tab="true"]:not([disabled])')
+          );
+          if (tabs.length > 1) {
+            const focused = getCurrentFocusedElement(activeModal);
+            let idx = tabs.findIndex((t) => t === focused || t.classList.contains('bg-blue-600') || t.classList.contains('border-white') || t.classList.contains('border-amber-400'));
+            if (idx === -1) idx = 0;
+            const nextIdx =
+              action === 'next_tab'
+                ? (idx + 1) % tabs.length
+                : (idx - 1 + tabs.length) % tabs.length;
+            tabs[nextIdx].click();
+            setSpatialFocus(tabs[nextIdx]);
+            soundManager.playSound('select');
+          }
+          return;
+        }
+
+        if (action === 'confirm') {
+          ensureSpatialFocus(activeModal);
+          if (triggerSpatialConfirm(activeModal)) {
+            soundManager.playSound('click');
+          }
+          return;
+        }
+
+        if (isDirection) {
+          const cur = ensureSpatialFocus(activeModal);
+          if (!cur) return;
+
+          // If focused on a range slider, Left/Right adjusts value directly
+          if (
+            cur.tagName === 'INPUT' &&
+            (cur as HTMLInputElement).type === 'range' &&
+            (action === 'left' || action === 'right')
+          ) {
+            stepRangeInput(cur as HTMLInputElement, action);
+            soundManager.playSound('select');
+            return;
+          }
+
+          const candidates = getFocusableElements(activeModal);
+          const next = findNextSpatialElement(candidates, cur, action as NavDirection);
+          if (next) {
+            setSpatialFocus(next);
+            soundManager.playSound('select');
+          }
+          return;
+        }
+
+        return;
+      }
+
+      // 2. Main Menu State
       if (appState === 'menu') {
-        if (action === 'up') {
+        if (action === 'up' || action === 'left') {
           soundManager.playSound('select');
           setMenuIndex((prev) => (prev > 0 ? prev - 1 : menuItemsCount - 1));
+          return;
         }
-        if (action === 'down') {
+        if (action === 'down' || action === 'right') {
           soundManager.playSound('select');
           setMenuIndex((prev) => (prev < menuItemsCount - 1 ? prev + 1 : 0));
+          return;
         }
-        if (action === 'confirm' || action === 'jump') {
+        if (action === 'confirm') {
           soundManager.playSound('click');
           if (menuIndex === 0) startNewGame('ai');
           else if (menuIndex === 1) setAppState('lichess_hub');
@@ -1060,138 +1267,466 @@ export const App: React.FC = () => {
           else if (menuIndex === 3) setAppState('multiplayer_menu');
           else if (menuIndex === 4) setAppState('history');
           else if (menuIndex === 5) openSettings('menu');
+          return;
         }
-      } else if (appState === 'playing') {
-        if (action === 'cancel' || action === 'menu' || action === 'pause') {
+        if (action === 'pause') {
+          openSettings('menu');
+          return;
+        }
+        return;
+      }
+
+      // 3. Playing Screen State (Board + HUD Side Panels & Action Buttons)
+      if (appState === 'playing') {
+        if (action === 'pause') {
           soundManager.playSound('click');
           setAppState('paused');
           return;
         }
-        if (action === 'run') {
+        if (action === 'flip') {
+          soundManager.playSound('select');
+          setFlipped((prev) => !prev);
+          return;
+        }
+        if (action === 'undo') {
           handleUndo();
+          return;
+        }
+        if (action === 'resign') {
+          handleResign();
+          return;
+        }
+        if (action === 'chat') {
+          soundManager.playSound('click');
+          if (isVerticalScreen) {
+            setMobileChatOpen(true);
+            setTimeout(() => chatInputRef.current?.focus(), 80);
+          } else {
+            setPlayFocusZone('hud');
+            if (chatInputRef.current) {
+              setSpatialFocus(chatInputRef.current);
+              chatInputRef.current.focus();
+            }
+          }
+          return;
+        }
+        if (action === 'prev_tab') {
+          soundManager.playSound('select');
+          setViewPly((prev) => {
+            const active = prev === null ? gameHistory.length : prev;
+            return Math.max(0, active - 1);
+          });
+          return;
+        }
+        if (action === 'next_tab') {
+          soundManager.playSound('select');
+          setViewPly((prev) => {
+            const active = prev === null ? gameHistory.length : prev;
+            return active + 1 >= gameHistory.length ? null : active + 1;
+          });
+          return;
+        }
+        if (action === 'zone_switch') {
+          if (playFocusZone === 'board') {
+            const cur = cursorSquare || (playerColor === 'w' ? 'e2' : 'e7');
+            const targetPanel = isVerticalScreen ? 'bottom' : 'right';
+            enterHudPanelFromBoard(targetPanel, cur);
+          } else {
+            clearAllSpatialFocus();
+            setPlayFocusZone('board');
+            soundManager.playSound('select');
+          }
+          return;
+        }
+
+        // Playing Screen -> HUD Side Panels / Action Buttons Zone
+        if (playFocusZone === 'hud') {
+          const boardEl = document.querySelector<HTMLElement>('[data-chessboard-root="true"]');
+
+          if (action === 'cancel') {
+            const activeTag = (document.activeElement as HTMLElement)?.tagName;
+            if (activeTag === 'INPUT' || activeTag === 'TEXTAREA') {
+              (document.activeElement as HTMLElement).blur();
+              soundManager.playSound('select');
+              return;
+            }
+            clearAllSpatialFocus();
+            setPlayFocusZone('board');
+            soundManager.playSound('select');
+            return;
+          }
+
+          if (action === 'confirm') {
+            ensureSpatialFocus(document, boardEl);
+            if (triggerSpatialConfirm(document)) {
+              soundManager.playSound('click');
+            }
+            return;
+          }
+
+          if (isDirection) {
+            const curEl = ensureSpatialFocus(document, boardEl);
+            if (!curEl) {
+              setPlayFocusZone('board');
+              return;
+            }
+
+            const panelEl = curEl.closest<HTMLElement>('[data-tv-panel]');
+            const panelName = panelEl?.getAttribute('data-tv-panel') || null;
+
+            // First try finding a neighbor within the same HUD panel
+            if (panelEl) {
+              const panelCandidates = getFocusableElements(panelEl);
+              const nextInPanel = findNextSpatialElement(
+                panelCandidates,
+                curEl,
+                action as NavDirection
+              );
+              if (nextInPanel) {
+                setSpatialFocus(nextInPanel);
+                soundManager.playSound('select');
+                return;
+              }
+            }
+
+            // If stepping inward from a panel toward the ChessBoard, return to the board!
+            if (
+              (panelName === 'left' && action === 'right') ||
+              (panelName === 'right' && action === 'left') ||
+              (panelName === 'top' && action === 'down') ||
+              (panelName === 'bottom' && action === 'up')
+            ) {
+              returnToBoardFromHud(panelName, curEl);
+              return;
+            }
+
+            // Otherwise search across all HUD panels (excluding the chessboard squares)
+            const allHudCandidates = getFocusableElements(document, boardEl);
+            const nextHud = findNextSpatialElement(
+              allHudCandidates,
+              curEl,
+              action as NavDirection
+            );
+            if (nextHud) {
+              setSpatialFocus(nextHud);
+              soundManager.playSound('select');
+            }
+            return;
+          }
+          return;
+        }
+
+        // Playing Screen -> ChessBoard 8x8 Square Cursor Zone
+        if (action === 'cancel') {
+          if (selectedSquare !== null) {
+            setSelectedSquare(null);
+            setValidMoves([]);
+            soundManager.playSound('select');
+            return;
+          }
+          if (viewPly !== null) {
+            setViewPly(null);
+            soundManager.playSound('select');
+            return;
+          }
+          soundManager.playSound('click');
+          setAppState('paused');
           return;
         }
 
         const files = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
-        const current = cursorSquare || 'e2';
-        let fileIdx = files.indexOf(current[0]);
-        let rank = parseInt(current[1], 10);
+        const ranks = ['8', '7', '6', '5', '4', '3', '2', '1'];
+        const displayFiles = flipped ? [...files].reverse() : files;
+        const displayRanks = flipped ? [...ranks].reverse() : ranks;
+
+        const current = cursorSquare || (playerColor === 'w' ? 'e2' : 'e7');
+        const col = Math.max(0, displayFiles.indexOf(current[0]));
+        const row = Math.max(0, displayRanks.indexOf(current[1]));
+
+        if (action === 'confirm') {
+          handleSquareClick(current);
+          return;
+        }
 
         if (action === 'left') {
-          fileIdx = fileIdx > 0 ? fileIdx - 1 : 7;
-          setCursorSquare(`${files[fileIdx]}${rank}` as Square);
-          soundManager.playSound('select');
+          if (col > 0) {
+            setCursorSquare(`${displayFiles[col - 1]}${displayRanks[row]}` as Square);
+            soundManager.playSound('select');
+          } else if (!isVerticalScreen && enterHudPanelFromBoard('left', current)) {
+            return;
+          } else {
+            setCursorSquare(`${displayFiles[7]}${displayRanks[row]}` as Square);
+            soundManager.playSound('select');
+          }
         } else if (action === 'right') {
-          fileIdx = fileIdx < 7 ? fileIdx + 1 : 0;
-          setCursorSquare(`${files[fileIdx]}${rank}` as Square);
-          soundManager.playSound('select');
+          if (col < 7) {
+            setCursorSquare(`${displayFiles[col + 1]}${displayRanks[row]}` as Square);
+            soundManager.playSound('select');
+          } else if (!isVerticalScreen && enterHudPanelFromBoard('right', current)) {
+            return;
+          } else {
+            setCursorSquare(`${displayFiles[0]}${displayRanks[row]}` as Square);
+            soundManager.playSound('select');
+          }
         } else if (action === 'up') {
-          rank = rank < 8 ? rank + 1 : 1;
-          setCursorSquare(`${files[fileIdx]}${rank}` as Square);
-          soundManager.playSound('select');
+          if (row > 0) {
+            setCursorSquare(`${displayFiles[col]}${displayRanks[row - 1]}` as Square);
+            soundManager.playSound('select');
+          } else if (isVerticalScreen && enterHudPanelFromBoard('top', current)) {
+            return;
+          } else {
+            setCursorSquare(`${displayFiles[col]}${displayRanks[7]}` as Square);
+            soundManager.playSound('select');
+          }
         } else if (action === 'down') {
-          rank = rank > 1 ? rank - 1 : 8;
-          setCursorSquare(`${files[fileIdx]}${rank}` as Square);
-          soundManager.playSound('select');
-        } else if (action === 'confirm' || action === 'jump') {
-          handleSquareClick(current);
-        }
-      } else if (appState === 'paused') {
-        if (action === 'cancel') {
-          soundManager.playSound('click');
-          setAppState('playing');
-        }
-      } else if (appState === 'settings') {
-        if (action === 'cancel') {
-          soundManager.playSound('click');
-          setAppState(settingsReturnState);
-        }
-      } else if (
-        appState === 'history' ||
-        appState === 'lichess_hub' ||
-        appState === 'multiplayer_menu'
-      ) {
-        if (action === 'cancel') {
-          soundManager.playSound('click');
-          setAppState('menu');
+          if (row < 7) {
+            setCursorSquare(`${displayFiles[col]}${displayRanks[row + 1]}` as Square);
+            soundManager.playSound('select');
+          } else if (enterHudPanelFromBoard('bottom', current)) {
+            return;
+          } else {
+            setCursorSquare(`${displayFiles[col]}${displayRanks[0]}` as Square);
+            soundManager.playSound('select');
+          }
         }
       }
     },
     [
       appState,
-      menuIndex,
-      cursorSquare,
+      pendingPromotion,
+      mobileChatOpen,
       settingsReturnState,
-      openSettings,
+      analysisReturnState,
+      menuIndex,
+      playFocusZone,
+      cursorSquare,
+      selectedSquare,
+      viewPly,
+      flipped,
+      playerColor,
+      isVerticalScreen,
+      gameHistory.length,
       startNewGame,
-      handleSquareClick,
+      openSettings,
       handleUndo,
+      handleResign,
+      handleSquareClick,
+      enterHudPanelFromBoard,
+      returnToBoardFromHud,
     ]
   );
 
-  // Global Keyboard listener for shortcuts (Flip, Pause, Resign, Undo, 'm' for chat focus, ArrowLeft/Right for move history)
+  // Deduplicating dispatcher across Keyboard, MyPC SDK, and HTML5 Gamepad
+  const dispatchUnifiedAction = useCallback(
+    (action: UnifiedAction, source: InputSource) => {
+      const now = performance.now();
+      const last = lastDispatchedRef.current;
+      // Prevent duplicate firing when host environment bridges native key/gamepad + MyPC.onInput simultaneously
+      if (last && last.action === action && last.source !== source && now - last.time < 75) {
+        return;
+      }
+      lastDispatchedRef.current = { action, source, time: now };
+      handleUnifiedAction(action);
+    },
+    [handleUnifiedAction]
+  );
+
+  // Keep MyPC SDK onInput callback always synchronized with latest state (fixes stale closure)
+  useEffect(() => {
+    myPCService.setInputHandler((rawAction, pressed) => {
+      if (!pressed) return;
+      const mapped = mapMyPCAction(rawAction);
+      if (mapped) {
+        dispatchUnifiedAction(mapped, 'mypc');
+      }
+    });
+  }, [dispatchUnifiedAction]);
+
+  // Automatically highlight default focusable element when a modal opens or changes state
+  useEffect(() => {
+    const isModalOrSubScreen =
+      pendingPromotion !== null ||
+      mobileChatOpen ||
+      (appState !== 'menu' && appState !== 'playing');
+    if (!isModalOrSubScreen) {
+      if (playFocusZone === 'board') {
+        clearAllSpatialFocus();
+      }
+      return;
+    }
+    const timer = setTimeout(() => {
+      const modals = document.querySelectorAll<HTMLElement>('[data-tv-modal="true"]');
+      const activeModal = modals.length > 0 ? modals[modals.length - 1] : null;
+      if (activeModal) {
+        ensureSpatialFocus(activeModal);
+      }
+    }, 40);
+    return () => clearTimeout(timer);
+  }, [appState, pendingPromotion, mobileChatOpen, playFocusZone, analyzing]);
+
+  // Global Keyboard & Smart TV Remote listener
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      const tag = (e.target as HTMLElement)?.tagName;
-      if (tag === 'INPUT' || tag === 'TEXTAREA') {
-        if (e.key === 'Escape') {
-          (e.target as HTMLElement)?.blur();
-        }
-        return;
-      }
-      if (appState === 'settings') return;
+      const activeEl = document.activeElement as HTMLElement | null;
+      const tag = activeEl?.tagName;
+      const isTextInput =
+        (tag === 'INPUT' &&
+          (activeEl as HTMLInputElement).type !== 'range' &&
+          (activeEl as HTMLInputElement).type !== 'checkbox' &&
+          (activeEl as HTMLInputElement).type !== 'button') ||
+        tag === 'TEXTAREA';
 
-      if (e.key === 'Escape') {
-        if (appState === 'playing') {
-          soundManager.playSound('click');
-          setAppState('paused');
-        } else if (appState === 'paused') {
-          soundManager.playSound('click');
-          setAppState('playing');
-        } else if (
-          appState === 'multiplayer_menu' ||
-          appState === 'history' ||
-          appState === 'lichess_hub'
+      if (isTextInput && activeEl) {
+        if (
+          e.key === 'Escape' ||
+          e.key === 'BrowserBack' ||
+          e.key === 'GoBack' ||
+          e.keyCode === 4
         ) {
-          soundManager.playSound('click');
-          setAppState('menu');
+          e.preventDefault();
+          activeEl.blur();
+          soundManager.playSound('select');
+          return;
+        }
+        // Allow Up/Down arrows to exit single-line <input> fields so TV remote users never get stuck
+        if (tag === 'INPUT' && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+          e.preventDefault();
+          activeEl.blur();
+          dispatchUnifiedAction(e.key === 'ArrowUp' ? 'up' : 'down', 'keyboard');
+          return;
         }
         return;
       }
 
-      if (appState === 'playing') {
+      // If SettingsModal is actively listening to rebind a shortcut key, let it capture the key
+      if (
+        appState === 'settings' &&
+        document.querySelector('[data-tv-modal="true"] button.animate-pulse')
+      ) {
+        return;
+      }
+
+      // Map Arrow keys, Enter/Space, Escape/Backspace, Tab, and Smart TV Remote keys
+      const mapped = mapKeyboardOrTVEvent(e);
+      if (mapped) {
+        e.preventDefault();
+        dispatchUnifiedAction(mapped, 'keyboard');
+        return;
+      }
+
+      // Single-letter match hotkeys when playing
+      if (appState === 'playing' && !pendingPromotion && !mobileChatOpen) {
         const k = e.key.toLowerCase();
         if (k === 'm') {
           e.preventDefault();
-          if (isVerticalScreen) {
-            setMobileChatOpen(true);
-            setTimeout(() => chatInputRef.current?.focus(), 80);
-          } else {
-            chatInputRef.current?.focus();
-          }
+          dispatchUnifiedAction('chat', 'keyboard');
           return;
         }
         if (k === settings.shortcuts.flip) {
           e.preventDefault();
-          soundManager.playSound('select');
-          setFlipped((prev) => !prev);
+          dispatchUnifiedAction('flip', 'keyboard');
         } else if (k === settings.shortcuts.pause) {
           e.preventDefault();
-          soundManager.playSound('click');
-          setAppState('paused');
+          dispatchUnifiedAction('pause', 'keyboard');
         } else if (k === settings.shortcuts.resign) {
           e.preventDefault();
-          handleResign();
+          dispatchUnifiedAction('resign', 'keyboard');
         } else if (k === settings.shortcuts.undo) {
           e.preventDefault();
-          handleUndo();
+          dispatchUnifiedAction('undo', 'keyboard');
         }
       }
     };
 
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [appState, settings.shortcuts, handleResign, handleUndo, isVerticalScreen]);
+  }, [appState, settings.shortcuts, pendingPromotion, mobileChatOpen, dispatchUnifiedAction]);
+
+  // W3C HTML5 Gamepad Controller Polling Loop (supports Xbox, PlayStation, Switch, Android TV Gamepads)
+  const dispatchRef = useRef(dispatchUnifiedAction);
+  useEffect(() => {
+    dispatchRef.current = dispatchUnifiedAction;
+  }, [dispatchUnifiedAction]);
+
+  useEffect(() => {
+    if (typeof navigator === 'undefined' || typeof navigator.getGamepads !== 'function') return;
+
+    let rafId: number;
+    const prevButtons: Record<number, boolean[]> = {};
+    const heldDirState: Record<
+      number,
+      { dir: NavDirection | null; nextTriggerTime: number }
+    > = {};
+
+    const STICK_DEADZONE = 0.45;
+    const INITIAL_REPEAT_DELAY = 270;
+    const REPEAT_INTERVAL = 115;
+
+    const pollGamepads = () => {
+      try {
+        const pads = navigator.getGamepads ? navigator.getGamepads() : [];
+        const now = performance.now();
+
+        for (let i = 0; i < pads.length; i++) {
+          const pad = pads[i];
+          if (!pad || !pad.connected) continue;
+
+          const idx = pad.index;
+          const prev = prevButtons[idx] || [];
+          const curr = pad.buttons.map((b) =>
+            typeof b === 'object' ? b.pressed || b.value > 0.5 : Boolean(b)
+          );
+
+          // 1. Directional input (D-Pad buttons 12..15 + Left Stick axes 0..1 + Right Stick axes 2..3)
+          let activeDir: NavDirection | null = null;
+          const ax0 = pad.axes[0] ?? 0;
+          const ax1 = pad.axes[1] ?? 0;
+          const ax2 = pad.axes[2] ?? 0;
+          const ax3 = pad.axes[3] ?? 0;
+
+          if (curr[12] || ax1 < -STICK_DEADZONE || ax3 < -STICK_DEADZONE) activeDir = 'up';
+          else if (curr[13] || ax1 > STICK_DEADZONE || ax3 > STICK_DEADZONE) activeDir = 'down';
+          else if (curr[14] || ax0 < -STICK_DEADZONE || ax2 < -STICK_DEADZONE) activeDir = 'left';
+          else if (curr[15] || ax0 > STICK_DEADZONE || ax2 > STICK_DEADZONE) activeDir = 'right';
+
+          const dirState = heldDirState[idx] || { dir: null, nextTriggerTime: 0 };
+          if (activeDir) {
+            if (dirState.dir !== activeDir) {
+              dirState.dir = activeDir;
+              dirState.nextTriggerTime = now + INITIAL_REPEAT_DELAY;
+              dispatchRef.current(activeDir, 'gamepad');
+            } else if (now >= dirState.nextTriggerTime) {
+              dirState.nextTriggerTime = now + REPEAT_INTERVAL;
+              dispatchRef.current(activeDir, 'gamepad');
+            }
+          } else {
+            dirState.dir = null;
+          }
+          heldDirState[idx] = dirState;
+
+          // 2. Action Buttons (Edge-triggered on press)
+          const justPressed = (btnIndex: number) => Boolean(curr[btnIndex] && !prev[btnIndex]);
+
+          if (justPressed(0)) dispatchRef.current('confirm', 'gamepad'); // A / Cross
+          if (justPressed(1)) dispatchRef.current('cancel', 'gamepad'); // B / Circle
+          if (justPressed(2)) dispatchRef.current('zone_switch', 'gamepad'); // X / Square
+          if (justPressed(3)) dispatchRef.current('flip', 'gamepad'); // Y / Triangle
+          if (justPressed(4)) dispatchRef.current('prev_tab', 'gamepad'); // LB / L1
+          if (justPressed(5)) dispatchRef.current('next_tab', 'gamepad'); // RB / R1
+          if (justPressed(8)) dispatchRef.current('chat', 'gamepad'); // Select / Back / Share
+          if (justPressed(9)) dispatchRef.current('pause', 'gamepad'); // Start / Options
+
+          prevButtons[idx] = curr;
+        }
+      } catch {
+        // Ignore transient gamepad permission errors
+      }
+      rafId = requestAnimationFrame(pollGamepads);
+    };
+
+    rafId = requestAnimationFrame(pollGamepads);
+    return () => cancelAnimationFrame(rafId);
+  }, []);
 
   // Save modified settings
   const handleSaveSettings = (newSettings: GameSettings) => {
@@ -1589,7 +2124,7 @@ export const App: React.FC = () => {
                 selectedSquare={displayedBoardState.isInspectingHistory ? null : selectedSquare}
                 validMoves={displayedBoardState.isInspectingHistory ? [] : validMoves}
                 lastMove={displayedBoardState.boardLastMove}
-                cursorSquare={displayedBoardState.isInspectingHistory ? null : cursorSquare}
+                cursorSquare={playFocusZone === 'board' ? cursorSquare : null}
                 settings={settings}
                 sizeVariant="vertical"
                 onSquareClick={handleSquareClick}
@@ -1631,7 +2166,7 @@ export const App: React.FC = () => {
                 selectedSquare={displayedBoardState.isInspectingHistory ? null : selectedSquare}
                 validMoves={displayedBoardState.isInspectingHistory ? [] : validMoves}
                 lastMove={displayedBoardState.boardLastMove}
-                cursorSquare={displayedBoardState.isInspectingHistory ? null : cursorSquare}
+                cursorSquare={playFocusZone === 'board' ? cursorSquare : null}
                 settings={settings}
                 sizeVariant="arena"
                 onSquareClick={handleSquareClick}

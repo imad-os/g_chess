@@ -1,84 +1,105 @@
-# Widescreen TV Arena & Lichess-Style 3-Column Match Layout
+# Unified Keyboard, TV Remote & Gamepad Navigation
 
-Transform the active gameplay view into a widescreen 3-column TV arena modeled directly after the Lichess desktop/TV reference layout, maximizing board height on large displays while utilizing the left, right, and bottom zones for live match metadata, opponent chat/notes, digital player clocks, move history navigation, and head-to-head series records.
+Deliver complete, zero-dead-end directional navigation and action mapping for keyboards, Smart TV remotes, and game controllers across the chessboard, side panels, match action buttons, and every menu, modal, and dialog.
 
 ## User Review & Critical Decisions
 
 > [!IMPORTANT]
-> All Phase 1 preferences have been locked in for implementation across the active match interface:
+> The following navigation behaviors were confirmed during clarification and govern the input system design:
 
-- **Confirmed Decision 1 (All Game Modes)**: The 3-column widescreen TV arena layout will be used across all game modes (`lichess`, `ai`, `local`, and `online` multiplayer), adapting the metadata card and controls dynamically for each mode.
-- **Confirmed Decision 2 (Live Chat & Notes Panel)**: The left column will provide a tabbed **Chat room** and **Notes** panel—supporting live Lichess game chat (`chatLine` events + `/api/board/game/{gameId}/chat`), MyPC P2P online multiplayer chat, one-click quick-chat buttons (`HI`, `GL`, `HF`, `U2`), and persistent private match notes across all modes.
-- **Confirmed Decision 3 (Board Coordinates)**: Rank numbers (`1–8`) and file letters (`a–h`) will be displayed both along the outer right and bottom borders of the board frame (matching the screenshot) and inside the corner squares for quick visual scanning.
+- **Confirmed Decision 1 — Full Playing Screen Navigation (Board + Side Panels & Action Buttons)**: During a match, directional navigation smoothly transitions between the 8×8 chessboard squares and the surrounding HUD action controls (replay buttons, Abort/Restart, Undo, Offer Draw, Resign, Flip Board, Audio toggles, Settings, Pause, and Chat/Notes), rather than locking focus exclusively inside the board.
+- **Confirmed Decision 2 — Arrow Keys Only for Keyboard Navigation**: Keyboard directional movement uses the `ArrowUp`, `ArrowDown`, `ArrowLeft`, and `ArrowRight` keys (`Enter`/`Space` to confirm, `Escape`/`Backspace` to cancel or go back), avoiding accidental triggers when typing in chat, notes, or PGN text boxes.
+- **Confirmed Decision 3 — Universal Screen & Modal Coverage**: Every screen in the application—Main Menu, Playing Screen (Widescreen TV & Vertical Phone), Promotion Dialog, Pause Modal, Game Over Modal, Lichess Hub, Wi-Fi Multiplayer Modal, Game History & PGN Lab, Analysis Suite, and Settings Modal—supports full directional focus navigation and confirmation.
 
 ---
 
 ## 1. Overview & Core Concept
 
-- **What It Does**: Replaces the narrow single-column top/bottom HUD layout on widescreen viewports with a full-viewport 3-column arena where the chessboard scales up to ~84–88% of the screen height in the center, flanked by a Left Match Info & Chat/Notes column and a Right Digital Clocks, Move List & Controls column, plus a Head-to-Head Crosstable bar underneath the board.
-- **Target Audience / Persona**: TV, couch, and widescreen desktop chess players using mouse, keyboard shortcuts, or TV remote/gamepad navigation.
-- **Key Value**: Eliminates wasted horizontal screen space on 16:9 widescreen displays, makes the chess pieces and coordinates dramatically larger and clearer from across a room, and surfaces real-time move history, clocks, chat, and head-to-head scores without cluttering the board.
+- **What It Does**: Unifies three hardware input sources—**Keyboard** (Arrow keys, Enter/Space, Escape/Backspace), **TV Remote Control** (MyPC SDK `onInput` events + Smart TV / Android TV / WebOS / Tizen remote keycodes), and **Game Controller** (HTML5 `navigator.getGamepads()` polling for D-pad, Left Analog Stick, A/B/X/Y, L1/R1, Start/Select + MyPC gamepad actions)—into a single, responsive spatial navigation engine.
+- **Target Audience / Persona**: Living-room Smart TV players using a TV remote or wireless gamepad, desktop players using keyboard arrow keys, and handheld/couch multiplayer players.
+- **Key Value**: Eliminates the stale-closure input bug that previously froze `onInput` callbacks after initial load, and provides a clear, high-contrast visual focus ring across both the 8×8 board squares and every UI button/slider/tab in the app.
 
 ---
 
 ## 2. User Experience & Visual Design
 
 - **Key User Flows**:
-  1. **Entering a Match (Any Mode)**: Launching a Lichess match, Stockfish AI game, Local 2-Player game, or Online P2P game opens the 3-column widescreen arena (`lg:grid-cols-[300px_auto_320px]` / `xl:grid-cols-[320px_auto_340px]`).
-  2. **Left Column (Match Info + Chat Room / Notes)**:
-     - **Top Match Card**: Displays the speed/mode icon (Bullet, Blitz, Rapid, Classical, AI Bot, Couch, or Wi-Fi P2P), time control and rated status (e.g., `10+0 · Rated · Rapid` or `Stockfish AI · Casual`), elapsed/start status, and both players' color indicators, usernames, and ratings.
-     - **Chat Room & Notes Tabs**: Interactive tab bar switching between live opponent chat (with `Please be nice in the chat!` input and 1-click `HI`, `GL`, `HF`, `U2` buttons at the bottom) and personal match notes.
-  3. **Center Column (Maximized ChessBoard + Outer Coordinates + Head-to-Head Bar)**:
-     - **Near-Full-Height Board**: Scales up to `min(83vh, 52vw)` on widescreen displays with crisp outer coordinate gutters along the right edge (`1–8` aligned to each rank) and bottom edge (`a–h` or `h–a` when flipped, aligned to each file) in addition to subtle in-square corner labels.
-     - **Bottom Crosstable / Head-to-Head Strip**: Positioned directly beneath the board, displaying historical series tallies (`Wins / Draws / Losses` and total score) between the current user and the current opponent (computed from saved games history and live session results).
-  4. **Right Column (Digital Clocks, Player Bars, Move History & Match Actions)**:
-     - **Opponent Clock & Bar (Top)**: Large tabular digital timer (`01:00`), active turn indicator dot, opponent username, rating, material advantage (`+2`), and captured piece icons.
-     - **Move History & Replay Controls**: Navigation toolbar (`|<<`, `<`, `>`, `>>|`, Flip Board, Audio/Settings) above a 2-column scrollable algebraic move table (`1. e4 e5`, `2. Nf3 Nc6`) allowing players to step through earlier board positions during or after play.
-     - **Match Action Bar**: Clean icon action buttons for Abort (`✕`), Offer Draw / Undo (`½` / Undo), Resign (`⚑`), and Pause, followed by the player's own status bar, turn prompt banner, and large bottom digital clock (`01:00`).
-
+  1. **Main Menu**: Pressing `Up`/`Down` on the keyboard, TV remote D-pad, or controller stick cycles through the 6 game mode cards with audio feedback and a glowing focus ring; `Enter` / `OK` / `Button A` launches the selected mode.
+  2. **Playing Screen (Board ↔ HUD Zone Switching)**:
+     - When focus is in the **Board Zone**, `Arrow` keys / D-pad / Left Stick move the glowing cyan square cursor across ranks and files (respecting board flip orientation so `Up` always moves visually upward on screen).
+     - Moving past the outer edge of the board (e.g., pressing `Right` from file `h` on widescreen, or pressing `Down`/`Up` past rank `1`/`8` on vertical screens, or pressing a dedicated zone-cycle button `Tab` / Controller `LB`/`RB` / `X`) shifts focus smoothly into the **HUD Controls Zone** (Replay bar, Abort, Undo, Offer Draw, Resign, Chat, Flip, SFX, Music, Settings, Pause) and back to the board.
+     - Pressing `Enter` / `Space` / Remote `OK` / Controller `A` on a board square selects a piece or executes a legal move; pressing it on a HUD button activates that control.
+     - Pressing `Backspace` / Controller `B` while a piece is selected deselects the piece (or triggers Undo when no piece is selected).
+  3. **Modals & Sub-Screens (Promotion, Pause, Game Over, Multiplayer, Lichess, History, Analysis, Settings)**:
+     - Opening any modal automatically places focus on its primary default action (e.g., Queen in Promotion, Resume in Pause, Post-Game Analysis in Game Over).
+     - `Arrow` keys / D-pad navigate 1D lists, 2D grids (such as the 4×3 Lichess time control grid), tab bars, and range sliders (`Left`/`Right` adjusts Stockfish Elo, Depth, and Time sliders when focused in Settings).
+     - `Escape` / Remote `Back` / Controller `B` or `Start` closes the active modal or returns to the previous screen.
 - **Visual Identity & Theme**:
-  - *Aesthetic Direction*: Authentic Lichess dark-arena aesthetic paired with crisp high-contrast TV legibility.
-  - *Color Palette & Mood*: Deep charcoal/slate arena canvas (`#161512` / `bg-slate-950`), elevated structural panels (`#262421` / `bg-slate-900/95`), subtle borders (`border-slate-800`), warm active-move highlights, and emerald status banners (`#629924` / `bg-emerald-600`).
-  - *Typography & Hierarchy*: Monospace tabular numerals (`font-mono tabular-nums`) for digital clocks, ratings, and move indices; clean sans-serif player headers.
+  - *Aesthetic Direction*: High-contrast competitive arena dark theme (`#161512` / `#262421`) with unmistakable 3-meter TV legibility.
+  - *Color Palette & Focus Highlight*:
+    - Board Cursor Square: Bright cyan inner ring (`ring-4 ring-inset ring-cyan-400/90 bg-cyan-400/15`) distinct from the emerald selected-piece square and amber last-move highlight.
+    - Focused UI Control: High-visibility focus ring (`ring-2 ring-cyan-400 shadow-[0_0_15px_rgba(34,211,238,0.45)] scale-[1.02]`) applied automatically to whichever button, tab, or slider holds active controller/keyboard focus.
+  - *Interactive Feedback & Motion*: Instant `<150ms` transform/ring transitions paired with synthesized Web Audio API select/confirm chimes.
 
 ---
 
 ## 3. Key Product Decisions & Trade-Offs
 
-- **Decision 1: Historical Ply Inspection Without Breaking Live State**
-  - *Chosen Approach*: Clicking `<` / `>` or any move in the right-hand move list lets the player inspect historical plies on the board while a live game continues; making a new move or clicking `>>|` immediately snaps back to the live board state.
-  - *Why*: Matches Lichess's exact right-panel move navigation behavior while keeping the live `chess` instance authoritative.
-- **Decision 2: Unified Chat Transport Across Lichess & Online P2P**
-  - *Chosen Approach*: Extend `lichessService.streamBoardGame` to parse incoming `chatLine` NDJSON events and add `sendBoardChat(gameId, text)` (`POST /api/board/game/{gameId}/chat`), while routing `online` multiplayer chat over `onlineSession.sendMessage({ type: 'chat', text, sender })`.
-  - *Why*: Delivers real two-way chat with opponents in both Lichess and MyPC Online Multiplayer using the exact same UI component and quick-chat buttons (`HI`, `GL`, `HF`, `U2`).
+- **Decision 1: Hybrid Board + Spatial DOM Focus Engine**
+  - *Chosen Approach*: Combine dedicated 8×8 algebraic coordinate navigation for the chessboard (supporting flipped perspective) with an automatic spatial/indexed focus manager for HUD panels and modal dialogs.
+  - *Why*: Pure DOM `tabIndex` navigation struggles with 64-square 2D grids and flipped chess perspectives, while a purely custom index per modal is brittle. Managing the board as a 2D coordinate grid (`a1`–`h8`) that hands off seamlessly to focusable `[data-tv-focusable]` UI controls at the board boundary gives effortless control everywhere.
+  - *Alternatives Considered*: Separate hotkey-only HUD actions (rejected per user preference for full directional navigation across board + side panels and action buttons).
+- **Decision 2: Tri-Source Input Normalization with Deduping**
+  - *Chosen Approach*: Normalize events from (1) `MyPC.init({ onInput })` via a live mutable `ref` (fixing the stale React closure), (2) browser `keydown` events (standard Arrow keys + Smart TV remote keycodes like `BrowserBack`, `GoBack`, `MediaPlayPause`, `ColorF0Red`), and (3) a `requestAnimationFrame` W3C `navigator.getGamepads()` polling loop with deadzone and repeat-delay handling. A short timestamp debounce (`60ms`) prevents double-firing when the host environment emits both a native `keydown`/gamepad event and a synthesized `MyPC.onInput` callback.
+  - *Why*: Ensures 100% reliability whether running inside the MyPC TV shell, a standalone desktop browser, an Android TV WebView, or with a Bluetooth Xbox/PlayStation controller.
 
 ---
 
 ## 4. Technical Architecture & Data Strategy *(Technical Reference)*
 
+- **Architecture & Component Diagram**:
+
 ```
-┌───────────────────────────────────────────────────────────────────────────────────┐
-│                          App.tsx (Active Match Arena)                             │
-├─────────────────────────┬───────────────────────────────┬─────────────────────────┤
-│   Left Arena Column     │      Center Arena Column      │   Right Arena Column    │
-│ ┌─────────────────────┐ │ ┌───────────────────────────┐ │ ┌─────────────────────┐ │
-│ │ Match Info Card     │ │ │ ChessBoard (Up to 83vh)   │ │ │ Opponent Clock      │ │
-│ │ • Format & Mode     │ │ │ • 8x8 Grid + Best Arrows  │ │ │ Opponent Bar + Caps │ │
-│ │ • White & Black Elo │ │ │ • Corner & Outer Border   │ │ ├─────────────────────┤ │
-│ └─────────────────────┘ │ │   Ranks (1-8) & Files(a-h)│ │ │ Move Nav (|<< < > >>)│ │
-│ ┌─────────────────────┐ │ └───────────────────────────┘ │ │ 2-Col SAN Move List │ │
-│ │ Chat Room | Notes   │ │ ┌───────────────────────────┐ │ │ Action Bar (X ½ ⚑)  │ │
-│ │ • Live Messages     │ │ │ Head-to-Head Crosstable   │ │ ├─────────────────────┤ │
-│ │ • Input + QuickChat │ │ │ • Player vs Opponent Wins │ │ │ Player Bar + Banner │ │
-│ │   [HI] [GL] [HF][U2]│ │ └───────────────────────────┘ │ │ Player Clock        │ │
-│ └─────────────────────┘ │                               │ └─────────────────────┘ │
-└─────────────────────────┴───────────────────────────────┴─────────────────────────┘
+┌───────────────────────────────────────────────────────────────────────────┐
+│                         Hardware Input Sources                            │
+│  ┌─────────────────────┐  ┌──────────────────────┐  ┌──────────────────┐  │
+│  │ Keyboard & Smart TV │  │   MyPC SDK Bridge    │  │ W3C Gamepad API  │  │
+│  │  ArrowUp/Down/L/R   │  │ MyPC.init({onInput}) │  │ getGamepads()    │  │
+│  │  Enter/Space/Escape │  │ (via live HandlerRef)│  │ D-Pad + Stick +  │  │
+│  │  TV Back / OK Keys  │  │                      │  │ A/B/X/Y/LB/RB    │  │
+│  └──────────┬──────────┘  └──────────┬───────────┘  └────────┬─────────┘  │
+└─────────────┼────────────────────────┼───────────────────────┼────────────┘
+              │                        │                       │
+              └────────────────────────┼───────────────────────┘
+                                       ▼
+┌───────────────────────────────────────────────────────────────────────────┐
+│               Unified Input & Deduplication Router (60ms guard)           │
+│     Normalizes to semantic actions: UP | DOWN | LEFT | RIGHT |            │
+│     CONFIRM | CANCEL | ALT_ACTION | PREV_TAB | NEXT_TAB | PAUSE           │
+└──────────────────┬───────────────────────────────────────┬────────────────┘
+                   │                                       │
+         (Playing: Board Zone)                (Playing: HUD Zone & Modals)
+                   ▼                                       ▼
+┌──────────────────────────────────────┐ ┌──────────────────────────────────┐
+│     2D Chessboard Cursor Engine      │ │   Spatial UI Focus Navigator     │
+│ • Flip-aware visual Up/Down/L/R      │ │ • Scans active screen/modal      │
+│ • Piece select, legal move & cancel  │ │   focusable controls & sliders   │
+│ • Edge handoff to Left/Right/Top/    │ │ • Applies glowing focus ring &   │
+│   Bottom HUD panels                  │ │   scrolls focused item into view │
+└──────────────────────────────────────┘ └──────────────────────────────────┘
 ```
 
 - **Data Model & State**:
-  - `ChatMessage`: `{ id: string; sender: string; text: string; timestamp: string; isSystem?: boolean }`
-  - `viewPly`: `number | null` (null = live latest position; number = inspecting historical ply `0..gameHistory.length`)
-  - `matchNotes`: `string` persisted per session/storage for the `Notes` tab
-  - `headToHead`: Computed dynamically from `savedGames` matching the current opponent name (`myWins`, `opponentWins`, `draws`).
-- **Build & Packaging**:
-  - After implementing and verifying all components in `code_source/`, compile the production bundle into the repository root (`/`), ensure relative paths in root `index.html`, bump `mypc-app.json` version to `3.0.0`, and register all updated build artifacts for GitHub sync.
+  - `activeZone`: `'board' | 'left_panel' | 'right_panel' | 'top_panel' | 'bottom_panel'` during active gameplay.
+  - `cursorSquare`: Algebraic square (`'a1'`..`'h8'`) when `activeZone === 'board'`, moving visually according to `flipped` state.
+  - `focusedElementIndex` / spatial focus tracker for navigating buttons, tabs, and `<input type="range">` sliders in HUD panels and modals.
+  - `inputHandlerRef`: Mutable React ref holding the latest `handleUnifiedInput` callback so `MyPC.init({ onInput })` always invokes current state without stale closures.
+- **Interactive Component & State Mapping**:
+  - **Playing View**:
+    - Visual `Up`/`Down`/`Left`/`Right` inside the board moves `cursorSquare`. Stepping off the left edge of the board in widescreen enters the Left Panel controls; stepping off the right edge enters the Right Panel controls (and on vertical screens, stepping above rank 8 enters Top bar utilities, stepping below rank 1 enters Bottom controls & Chat button).
+    - `Confirm` (`Enter` / `Space` / Remote `OK` / Gamepad `A`) clicks the current board square or focused HUD button.
+    - `Cancel` (`Escape` / `Backspace` / Remote `Back` / Gamepad `B`) clears selected piece first, returns focus from HUD panel to board, or opens Pause Modal.
+  - **Modals & Menus (Pause, Game Over, Promotion, Lichess Hub, Multiplayer, History, Analysis, Settings)**:
+    - Directional arrows move focus geometrically (nearest neighbor in 2D button grids or sequential list order) across all visible interactive elements inside the active modal container.
+    - When focused on a range slider (`input[type="range"]` in Settings or Lichess Custom Builder), `Left`/`Right` decrements/increments the slider value by its `step`, while `Up`/`Down` moves to the previous/next setting row.
+    - Text inputs (`INPUT` / `TEXTAREA` in Chat, Notes, Lichess Token, or PGN Import) only capture typing when explicitly activated with `Confirm`, and pressing `Escape` or `Down`/`Up` exits text editing back to directional navigation.

@@ -29,7 +29,10 @@ export const GameOverModal: React.FC<GameOverModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 bg-black/85 backdrop-blur-md z-50 flex items-center justify-center p-4">
+    <div
+      data-tv-modal="true"
+      className="fixed inset-0 bg-black/85 backdrop-blur-md z-50 flex items-center justify-center p-4"
+    >
       <div className="bg-slate-900 border-2 border-slate-700 rounded-3xl p-8 max-w-md w-full shadow-2xl text-center animate-in fade-in zoom-in-95 duration-150">
         <div className="mx-auto w-16 h-16 rounded-full bg-blue-500/20 border-2 border-blue-400 flex items-center justify-center text-blue-400 mb-4 shadow-lg shadow-blue-500/10">
           <Trophy size={32} />
@@ -59,6 +62,7 @@ export const GameOverModal: React.FC<GameOverModalProps> = ({
 
         <div className="flex flex-col gap-3">
           <button
+            data-tv-autofocus="true"
             onClick={onStartAnalysis}
             className="flex items-center justify-center gap-2.5 w-full py-3.5 px-4 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 font-bold text-white shadow-xl transition-all hover:scale-[1.02] active:scale-[0.98] cursor-pointer"
           >

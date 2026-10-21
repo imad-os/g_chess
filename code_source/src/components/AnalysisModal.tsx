@@ -131,15 +131,7 @@ export const AnalysisModal: React.FC<AnalysisModalProps> = ({
     }
   };
 
-  // Keyboard navigation for stepping moves
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'ArrowRight') handleNext();
-      if (e.key === 'ArrowLeft') handlePrev();
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [currentPly, learnIdx, viewMode, summary]);
+  // Move stepping is controlled via buttons and unified spatial navigation router
 
   const getQualityBadge = (quality: MoveAnalysis['quality']) => {
     switch (quality) {
@@ -237,7 +229,10 @@ export const AnalysisModal: React.FC<AnalysisModalProps> = ({
   const opponentColor: Color = playerColor === 'b' ? 'w' : 'b';
 
   return (
-    <div className="fixed inset-0 bg-slate-950/95 backdrop-blur-md z-50 flex flex-col p-4 sm:p-6 overflow-y-auto">
+    <div
+      data-tv-modal="true"
+      className="fixed inset-0 bg-slate-950/95 backdrop-blur-md z-50 flex flex-col p-4 sm:p-6 overflow-y-auto"
+    >
       {/* Top Header */}
       <div className="flex items-center justify-between pb-4 border-b border-slate-800 max-w-6xl w-full mx-auto">
         <div className="flex items-center gap-3">
@@ -331,6 +326,7 @@ export const AnalysisModal: React.FC<AnalysisModalProps> = ({
           {/* Action Navigation */}
           <div className="flex flex-col sm:flex-row items-center justify-center gap-4 pt-2">
             <button
+              data-tv-autofocus="true"
               onClick={() => {
                 setCurrentPly(1);
                 setViewMode('board');
@@ -497,6 +493,7 @@ export const AnalysisModal: React.FC<AnalysisModalProps> = ({
               </button>
 
               <button
+                data-tv-step-prev="true"
                 onClick={handlePrev}
                 disabled={currentPly === 0}
                 className="flex-1 flex items-center justify-center gap-1 py-3 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 disabled:opacity-40 disabled:pointer-events-none text-white font-bold transition-colors cursor-pointer"
@@ -506,6 +503,8 @@ export const AnalysisModal: React.FC<AnalysisModalProps> = ({
               </button>
 
               <button
+                data-tv-autofocus="true"
+                data-tv-step-next="true"
                 onClick={handleNext}
                 disabled={currentPly >= summary.moves.length}
                 className="flex-1 flex items-center justify-center gap-1 py-3 px-4 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-40 disabled:pointer-events-none text-white font-bold transition-colors cursor-pointer"

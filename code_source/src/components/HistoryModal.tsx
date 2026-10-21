@@ -130,7 +130,10 @@ export const HistoryModal: React.FC<HistoryModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-md p-2 sm:p-4 overflow-hidden">
+    <div
+      data-tv-modal="true"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-md p-2 sm:p-4 overflow-hidden"
+    >
       <div className="bg-slate-900 border border-slate-700/80 rounded-2xl max-w-4xl w-full max-h-[94vh] flex flex-col shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200">
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-3.5 border-b border-slate-800 bg-slate-950/60 shrink-0">
@@ -156,6 +159,8 @@ export const HistoryModal: React.FC<HistoryModalProps> = ({
         {/* Navigation Tabs */}
         <div className="flex border-b border-slate-800 bg-slate-950/30 px-5 pt-2 gap-2 shrink-0">
           <button
+            data-tv-tab="true"
+            data-tv-autofocus="true"
             onClick={() => setActiveTab('saved')}
             className={`flex items-center gap-2 px-4 py-2.5 text-xs sm:text-sm font-bold border-b-2 transition cursor-pointer ${
               activeTab === 'saved'
@@ -167,6 +172,7 @@ export const HistoryModal: React.FC<HistoryModalProps> = ({
             Saved Games ({savedGames.length})
           </button>
           <button
+            data-tv-tab="true"
             onClick={() => setActiveTab('import')}
             className={`flex items-center gap-2 px-4 py-2.5 text-xs sm:text-sm font-bold border-b-2 transition cursor-pointer ${
               activeTab === 'import'

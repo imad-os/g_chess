@@ -82,6 +82,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
   return (
     <div 
+      data-tv-modal="true"
       className="fixed inset-0 bg-black/85 backdrop-blur-md z-50 flex items-center justify-center p-2 sm:p-4 overflow-y-auto select-none"
       onKeyDown={handleKeyDown}
       tabIndex={0}
@@ -110,6 +111,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         {/* 4 Tabs Switcher */}
         <div className="grid grid-cols-4 rounded-xl bg-slate-950 p-1 mb-4 border border-slate-800 shrink-0 gap-1">
           <button
+            data-tv-tab="true"
+            data-tv-autofocus="true"
             onClick={() => setActiveTab('display')}
             className={`flex items-center justify-center gap-1.5 py-2 px-1 rounded-lg text-[11px] sm:text-xs font-bold transition-all cursor-pointer ${
               activeTab === 'display' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-400 hover:text-slate-200'
@@ -119,6 +122,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             <span className="truncate">Board & SFX</span>
           </button>
           <button
+            data-tv-tab="true"
             onClick={() => setActiveTab('scale')}
             className={`flex items-center justify-center gap-1.5 py-2 px-1 rounded-lg text-[11px] sm:text-xs font-bold transition-all cursor-pointer ${
               activeTab === 'scale' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-400 hover:text-slate-200'
@@ -128,6 +132,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             <span className="truncate">Font Size</span>
           </button>
           <button
+            data-tv-tab="true"
             onClick={() => setActiveTab('shortcuts')}
             className={`flex items-center justify-center gap-1.5 py-2 px-1 rounded-lg text-[11px] sm:text-xs font-bold transition-all cursor-pointer ${
               activeTab === 'shortcuts' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-400 hover:text-slate-200'
@@ -137,6 +142,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             <span className="truncate">Shortcuts</span>
           </button>
           <button
+            data-tv-tab="true"
             onClick={() => setActiveTab('ai')}
             className={`flex items-center justify-center gap-1.5 py-2 px-1 rounded-lg text-[11px] sm:text-xs font-bold transition-all cursor-pointer ${
               activeTab === 'ai' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-400 hover:text-slate-200'
@@ -389,8 +395,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   <div className="p-2.5 rounded-xl bg-slate-900/60 border border-slate-800 flex items-start gap-2">
                     <Tv size={16} className="text-blue-400 shrink-0 mt-0.5" />
                     <div className="text-[11px] text-slate-300">
-                      <strong className="text-white block font-semibold mb-0.5">TV Remote Mapping</strong>
-                      <span>Arrows = Move cursor<br />OK = Select / Move<br />Back / Esc = Pause menu</span>
+                      <strong className="text-white block font-semibold mb-0.5">Keyboard & TV Remote</strong>
+                      <span>Arrows = Board & Side Panels<br />Enter / OK = Select / Confirm<br />Tab = Switch Board / Controls<br />Back / Esc = Cancel / Pause</span>
                     </div>
                   </div>
 
@@ -398,7 +404,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     <Gamepad2 size={16} className="text-indigo-400 shrink-0 mt-0.5" />
                     <div className="text-[11px] text-slate-300">
                       <strong className="text-white block font-semibold mb-0.5">Gamepad Controller</strong>
-                      <span>D-pad = Navigate<br />Button A = Confirm / Jump<br />Button B = Undo / Cancel</span>
+                      <span>D-Pad / Stick = Board & UI<br />A = Confirm • B = Cancel / Back<br />X = Board ↔ HUD • Y = Flip<br />LB / RB = Tabs & History</span>
                     </div>
                   </div>
                 </div>

@@ -393,7 +393,10 @@ export const LichessModal: React.FC<LichessModalProps> = ({
   }, [account, gamesList]);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-md p-2 sm:p-4 overflow-hidden">
+    <div
+      data-tv-modal="true"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-md p-2 sm:p-4 overflow-hidden"
+    >
       <div className="bg-slate-900 border border-slate-700/80 rounded-2xl max-w-4xl w-full max-h-[95vh] flex flex-col shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200">
         {/* Top Header */}
         <div className="flex flex-wrap items-center justify-between gap-2 px-5 py-3 border-b border-slate-800 bg-slate-950/80 shrink-0">
@@ -486,6 +489,8 @@ export const LichessModal: React.FC<LichessModalProps> = ({
         {/* Navigation Tabs */}
         <div className="flex border-b border-slate-800 bg-slate-950/40 px-4 pt-2 gap-1 sm:gap-2 overflow-x-auto shrink-0">
           <button
+            data-tv-tab="true"
+            data-tv-autofocus="true"
             onClick={() => setActiveTab('play')}
             className={`flex items-center gap-1.5 px-3.5 py-2 text-xs sm:text-sm font-bold border-b-2 transition cursor-pointer whitespace-nowrap ${
               activeTab === 'play'
@@ -497,6 +502,7 @@ export const LichessModal: React.FC<LichessModalProps> = ({
             Quick Pairing Grid
           </button>
           <button
+            data-tv-tab="true"
             onClick={() => setActiveTab('puzzles')}
             className={`flex items-center gap-1.5 px-3.5 py-2 text-xs sm:text-sm font-bold border-b-2 transition cursor-pointer whitespace-nowrap ${
               activeTab === 'puzzles'
@@ -508,6 +514,7 @@ export const LichessModal: React.FC<LichessModalProps> = ({
             Puzzles (Streak: {puzzleStats.streak})
           </button>
           <button
+            data-tv-tab="true"
             onClick={() => setActiveTab('games')}
             className={`flex items-center gap-1.5 px-3.5 py-2 text-xs sm:text-sm font-bold border-b-2 transition cursor-pointer whitespace-nowrap ${
               activeTab === 'games'
@@ -519,6 +526,7 @@ export const LichessModal: React.FC<LichessModalProps> = ({
             My Lichess Games
           </button>
           <button
+            data-tv-tab="true"
             onClick={() => setActiveTab('stats')}
             className={`flex items-center gap-1.5 px-3.5 py-2 text-xs sm:text-sm font-bold border-b-2 transition cursor-pointer whitespace-nowrap ${
               activeTab === 'stats'
@@ -791,6 +799,7 @@ export const LichessModal: React.FC<LichessModalProps> = ({
                       lastMove={puzzleLastMove}
                       cursorSquare={null}
                       settings={settings}
+                      enableDomFocus={true}
                       onSquareClick={handlePuzzleSquareClick}
                     />
                   </div>

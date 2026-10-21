@@ -19,15 +19,19 @@ export const PromotionModal: React.FC<PromotionModalProps> = ({ color, onSelect,
   const colorCode = color === 'w' ? 'l' : 'd';
 
   return (
-    <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+    <div
+      data-tv-modal="true"
+      className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+    >
       <div className="bg-slate-900 border-2 border-slate-700 rounded-2xl p-6 max-w-sm w-full shadow-2xl text-center animate-in fade-in zoom-in-95 duration-150">
         <h3 className="text-xl font-bold text-white mb-2">Promote Pawn</h3>
         <p className="text-sm text-slate-400 mb-6">Choose a piece to replace your promoted pawn</p>
         
         <div className="grid grid-cols-4 gap-3 mb-6">
-          {pieces.map((p) => (
+          {pieces.map((p, idx) => (
             <button
               key={p.type}
+              data-tv-autofocus={idx === 0 ? 'true' : undefined}
               onClick={() => onSelect(p.type)}
               className="flex flex-col items-center justify-center p-3 rounded-xl bg-slate-800 hover:bg-blue-600 border border-slate-700 hover:border-blue-400 transition-all hover:scale-105 active:scale-95 group cursor-pointer"
             >

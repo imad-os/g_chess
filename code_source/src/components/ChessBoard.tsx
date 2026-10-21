@@ -20,6 +20,7 @@ interface ChessBoardProps {
   disabled?: boolean;
   arrows?: BoardArrow[];
   sizeVariant?: 'arena' | 'vertical' | 'analysis';
+  enableDomFocus?: boolean;
   onSquareClick: (sq: Square) => void;
 }
 
@@ -34,6 +35,7 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
   disabled = false,
   arrows = [],
   sizeVariant = 'arena',
+  enableDomFocus = false,
   onSquareClick,
 }) => {
   const files = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
@@ -116,6 +118,7 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
       <div className="flex items-stretch">
         {/* Main 8x8 Chessboard Grid */}
         <div
+          data-chessboard-root="true"
           className={`relative grid grid-cols-8 grid-rows-8 ${boardSizeClass} rounded-sm overflow-hidden border border-slate-700/80 shadow-[0_12px_40px_rgba(0,0,0,0.65)]`}
         >
           {displayRanks.map((rank, rankIdx) =>
@@ -135,6 +138,8 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
               return (
                 <div
                   key={square}
+                  data-board-square={square}
+                  data-tv-focusable={enableDomFocus && !disabled ? 'true' : undefined}
                   onClick={() => !disabled && onSquareClick(square)}
                   className={`relative flex items-center justify-center cursor-pointer transition-colors duration-100 ${squareBg} ${
                     isSelected ? 'ring-inset ring-4 ring-blue-500 bg-emerald-500/45' : ''
@@ -143,7 +148,9 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
                   } ${
                     isKingInCheck ? '!bg-red-500/75 ring-inset ring-4 ring-red-600 animate-pulse' : ''
                   } ${
-                    isCursor ? 'ring-inset ring-4 ring-cyan-400 bg-cyan-400/25 z-10' : ''
+                    isCursor
+                      ? 'ring-inset ring-4 ring-cyan-400 bg-cyan-400/30 shadow-[inset_0_0_16px_rgba(34,211,238,0.55)] z-10'
+                      : ''
                   }`}
                 >
                   {/* Inside-corner Rank & File Labels */}

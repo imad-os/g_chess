@@ -1,6 +1,6 @@
 {
-  "summary": "Implementation plan for the Lichess-inspired 3-column widescreen TV layout across all game modes, including a near-fullscreen ChessBoard with outer border rank/file coordinates, a left Game Details + Live Chat/Notes column, a right Player Clocks + Move History + Controls panel, and a bottom Head-to-Head Crosstable scoreboard.",
-  "updatedAt": "2026-10-20T12:10:08.496403453Z",
-  "requestFeedback": true,
-  "userFacing": true
+  "summary":  "Implementation plan for adding full Keyboard (Arrow keys), TV Remote Control (MyPC SDK & Smart TV keycodes), and Gamepad Controller (W3C Gamepad API & MyPC Input) support across the chess board, side panels, action buttons, and all menus/dialogs.",
+  "updatedAt":  "2026-10-21T10:27:47.270124016Z",
+  "requestFeedback":  true,
+  "userFacing":  true
 }

@@ -16,13 +16,17 @@ export const PauseModal: React.FC<PauseModalProps> = ({
   onQuitToMenu,
 }) => {
   return (
-    <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center p-4">
+    <div
+      data-tv-modal="true"
+      className="fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center p-4"
+    >
       <div className="bg-slate-900 border-2 border-slate-700 rounded-3xl p-8 max-w-sm w-full shadow-2xl text-center animate-in fade-in zoom-in-95 duration-150">
         <h2 className="text-3xl font-extrabold text-white mb-2">Paused</h2>
         <p className="text-sm text-slate-400 mb-6">Game is currently on hold</p>
 
         <div className="flex flex-col gap-3">
           <button
+            data-tv-autofocus="true"
             onClick={onResume}
             className="flex items-center justify-center gap-2.5 w-full py-3.5 px-4 rounded-xl bg-blue-600 hover:bg-blue-500 font-semibold text-white shadow-lg transition-all hover:scale-[1.02] active:scale-[0.98] cursor-pointer"
           >
