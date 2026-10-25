@@ -64,6 +64,8 @@ export interface ActiveLichessGameState {
   speed?: string;
   clockInitialSec?: number;
   clockIncrementSec?: number;
+  wdraw?: boolean;
+  bdraw?: boolean;
 }
 
 class LichessService {
@@ -74,20 +76,49 @@ class LichessService {
   private puzzleIndex: number = 0;
 
   constructor() {
-    this.loadSavedToken();
-    this.username = myPCService.load<string>('lichess_username', '');
+    this.syncFromMyPC();
+  }
+
+  /**
+   * Synchronizes the connected Lichess Personal API Token and username from MyPC cloud profile storage.
+   * Called both at startup and inside MyPC.init({ onInit }) so switching devices restores credentials automatically.
+   */
+  public syncFromMyPC(): { token: string; username: string } {
+    const authBundle = myPCService.load<{ token?: string; username?: string }>('lichess_auth', {});
+    const savedToken = myPCService.load<string>('lichess_token', '');
+    const configToken = myPCService.getAppConfig()?.lichess_token || '';
+    const savedUser = myPCService.load<string>('lichess_username', '');
+
+    const resolvedToken = (authBundle?.token || savedToken || configToken || this.token || '').trim();
+    const resolvedUser = (authBundle?.username || savedUser || this.username || '').trim();
+
+    this.token = resolvedToken;
+    this.username = resolvedUser;
+
+    // Ensure both individual keys and combined bundle are persisted in MyPC cloud profile
+    if (resolvedToken) {
+      myPCService.save('lichess_token', resolvedToken);
+    }
+    if (resolvedUser) {
+      myPCService.save('lichess_username', resolvedUser);
+    }
+    if (resolvedToken || resolvedUser) {
+      myPCService.save('lichess_auth', {
+        token: resolvedToken,
+        username: resolvedUser,
+      });
+    }
+
+    return { token: this.token, username: this.username };
   }
 
   public loadSavedToken(): string {
-    const configToken = myPCService.getAppConfig()?.lichess_token;
-    const saved = myPCService.load<string>('lichess_token', '');
-    this.token = saved || configToken || '';
-    return this.token;
+    return this.syncFromMyPC().token;
   }
 
   public getToken(): string {
     if (!this.token) {
-      this.loadSavedToken();
+      this.syncFromMyPC();
     }
     return this.token;
   }
@@ -95,11 +126,15 @@ class LichessService {
   public setToken(newToken: string) {
     this.token = newToken.trim();
     myPCService.save('lichess_token', this.token);
+    myPCService.save('lichess_auth', {
+      token: this.token,
+      username: this.username,
+    });
   }
 
   public getUsername(): string {
     if (!this.username) {
-      this.username = myPCService.load<string>('lichess_username', '');
+      this.syncFromMyPC();
     }
     return this.username;
   }
@@ -107,6 +142,10 @@ class LichessService {
   public setUsername(name: string) {
     this.username = name.trim();
     myPCService.save('lichess_username', this.username);
+    myPCService.save('lichess_auth', {
+      token: this.token,
+      username: this.username,
+    });
   }
 
   private getHeaders(accept: string = 'application/json', contentType?: string): Record<string, string> {
@@ -576,9 +615,13 @@ class LichessService {
                 speed: msg.speed || msg.perf?.name || 'rapid',
                 clockInitialSec: msg.clock?.initial ? Math.round(msg.clock.initial / 1000) : undefined,
                 clockIncrementSec: msg.clock?.increment ? Math.round(msg.clock.increment / 1000) : undefined,
+                wdraw: !!(msg.state?.wdraw || msg.state?.wtie),
+                bdraw: !!(msg.state?.bdraw || msg.state?.btie),
               };
               onUpdate({ ...currentState });
             } else if (msg.type === 'gameState') {
+              const movesChanged =
+                msg.moves !== undefined && msg.moves !== currentState.movesUci;
               currentState = {
                 ...currentState,
                 movesUci: msg.moves ?? currentState.movesUci,
@@ -586,10 +629,40 @@ class LichessService {
                 btime: msg.btime ?? currentState.btime,
                 status: msg.status || currentState.status,
                 winner: msg.winner ?? currentState.winner,
+                wdraw:
+                  msg.wdraw !== undefined
+                    ? !!msg.wdraw
+                    : msg.wtie !== undefined
+                    ? !!msg.wtie
+                    : movesChanged
+                    ? false
+                    : currentState.wdraw,
+                bdraw:
+                  msg.bdraw !== undefined
+                    ? !!msg.bdraw
+                    : msg.btie !== undefined
+                    ? !!msg.btie
+                    : movesChanged
+                    ? false
+                    : currentState.bdraw,
               };
               onUpdate({ ...currentState });
-            } else if (msg.type === 'chatLine' && onChatLine) {
-              if (msg.username && msg.text) {
+            } else if (msg.type === 'chatLine') {
+              const lowerText = String(msg.text || '').toLowerCase();
+              const isSystemUser = String(msg.username || '').toLowerCase() === 'lichess';
+              if (isSystemUser && lowerText.includes('offers draw')) {
+                if (lowerText.includes('white')) {
+                  currentState = { ...currentState, wdraw: true };
+                  onUpdate({ ...currentState });
+                } else if (lowerText.includes('black')) {
+                  currentState = { ...currentState, bdraw: true };
+                  onUpdate({ ...currentState });
+                }
+              } else if (isSystemUser && lowerText.includes('declines draw')) {
+                currentState = { ...currentState, wdraw: false, bdraw: false };
+                onUpdate({ ...currentState });
+              }
+              if (onChatLine && msg.username && msg.text) {
                 onChatLine(msg.username, msg.text);
               }
             }
@@ -650,6 +723,20 @@ class LichessService {
   public async offerBoardDraw(gameId: string): Promise<boolean> {
     const res = await myPCService.proxyFetch(
       `${LICHESS_BASE}/api/board/game/${encodeURIComponent(gameId)}/draw/yes`,
+      {
+        method: 'POST',
+        headers: this.getHeaders('application/json'),
+      }
+    );
+    return res.ok;
+  }
+
+  /**
+   * Decline an opponent's draw offer in an active Lichess Board game
+   */
+  public async declineBoardDraw(gameId: string): Promise<boolean> {
+    const res = await myPCService.proxyFetch(
+      `${LICHESS_BASE}/api/board/game/${encodeURIComponent(gameId)}/draw/no`,
       {
         method: 'POST',
         headers: this.getHeaders('application/json'),

@@ -24,7 +24,7 @@ interface ChessBoardProps {
   onSquareClick: (sq: Square) => void;
 }
 
-export const ChessBoard: React.FC<ChessBoardProps> = ({
+export const ChessBoard: React.FC<ChessBoardProps> = React.memo(({
   chess,
   flipped,
   selectedSquare,
@@ -178,8 +178,10 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
                     <img
                       src={getPieceImage(piece.type, piece.color)}
                       alt={`${piece.color} ${piece.type}`}
-                      className={`w-[86%] h-[86%] object-contain pointer-events-none transition-transform hover:scale-105 active:scale-95 ${
-                        settings.piece_theme === 'modern'
+                      className={`w-[86%] h-[86%] object-contain pointer-events-none ${
+                        settings.performance_mode === 'low_cpu'
+                          ? ''
+                          : settings.piece_theme === 'modern'
                           ? 'drop-shadow-[0_3px_5px_rgba(0,0,0,0.65)] contrast-110'
                           : 'drop-shadow-[0_2px_3px_rgba(0,0,0,0.45)]'
                       }`}
@@ -288,4 +290,4 @@ export const ChessBoard: React.FC<ChessBoardProps> = ({
       </div>
     </div>
   );
-};
+});

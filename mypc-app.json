@@ -6,7 +6,7 @@
   "type": "game",
   "entry": "index.html",
   "icon": "assets/pieces/nl.svg",
-  "version": "3.3.0",
+  "version": "3.5.0",
   "scores": true,
   "config": {
     "show_legal_moves": true,
@@ -17,10 +17,11 @@
   "touch": {
     "buttons": [
       { "label": "OK", "action": "ok" },
-      { "label": "B", "action": "run" }
+      { "label": "+", "action": "plus" }
     ],
     "catalog": [
       { "label": "OK", "action": "ok" },
+      { "label": "+", "action": "plus" },
       { "label": "B", "action": "run" },
       { "label": "C", "action": "cancel" }
     ]

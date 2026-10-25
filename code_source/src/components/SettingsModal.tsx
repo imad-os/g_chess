@@ -1,7 +1,22 @@
 // SettingsModal Component
 import React, { useState } from 'react';
-import { GameSettings, FontScale, KeyboardShortcuts } from '../types/chess';
-import { Sliders, Monitor, Cpu, Check, X, Volume2, Sparkles, Eye, Type, Keyboard, RotateCcw, Gamepad2, Tv } from 'lucide-react';
+import { GameSettings, FontScale, KeyboardShortcuts, SoundPack, PerformanceMode } from '../types/chess';
+import {
+  Sliders,
+  Monitor,
+  Cpu,
+  Check,
+  X,
+  Volume2,
+  Sparkles,
+  Eye,
+  Type,
+  Keyboard,
+  RotateCcw,
+  Gamepad2,
+  Tv,
+  Zap,
+} from 'lucide-react';
 import { soundManager } from '../services/sound';
 
 interface SettingsModalProps {
@@ -11,17 +26,24 @@ interface SettingsModalProps {
   onClose: () => void;
 }
 
-export const SettingsModal: React.FC<SettingsModalProps> = ({ 
-  settings, 
+export const SettingsModal: React.FC<SettingsModalProps> = ({
+  settings,
   isIngame = false,
-  onSave, 
-  onClose 
+  onSave,
+  onClose,
 }) => {
   const [activeTab, setActiveTab] = useState<'display' | 'scale' | 'shortcuts' | 'ai'>('display');
-  const [current, setCurrent] = useState<GameSettings>({ ...settings });
+  const [current, setCurrent] = useState<GameSettings>({
+    ...settings,
+    sound_pack: settings.sound_pack || 'wooden',
+    performance_mode: settings.performance_mode || 'auto',
+  });
   const [listeningKey, setListeningKey] = useState<keyof KeyboardShortcuts | null>(null);
 
+  const isLowCpu = current.performance_mode === 'low_cpu';
+
   const handleSave = () => {
+    soundManager.setSoundPack(current.sound_pack || 'wooden');
     soundManager.playSound('click');
     onSave(current);
     onClose();
@@ -34,6 +56,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     if (nextVal) {
       soundManager.playSound('click');
     }
+  };
+
+  const handleSelectSoundPack = (pack: SoundPack) => {
+    setCurrent({ ...current, sound_pack: pack });
+    soundManager.setSoundPack(pack);
+    soundManager.playSound('move');
   };
 
   const handleToggleMusic = () => {
@@ -53,7 +81,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     e.stopPropagation();
 
     const key = e.key.toLowerCase();
-    // Ignore meta keys
     if (['shift', 'control', 'alt', 'meta', 'capslock', 'tab'].includes(key)) return;
 
     soundManager.playSound('click');
@@ -80,14 +107,23 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     });
   };
 
+  const fontPresets: { id: FontScale; short: string; label: string; desc: string }[] = [
+    { id: 'small', short: 'Small (90%)', label: 'Small (90%)', desc: 'High-density compact layout' },
+    { id: 'standard', short: 'Standard (100%)', label: 'Standard (100%)', desc: 'Desktop & phone default' },
+    { id: 'large', short: 'Large TV (115%)', label: 'Large TV (115%)', desc: 'Living room 3-meter TV default' },
+    { id: 'xlarge', short: 'Extra Large (130%)', label: 'Extra Large (130%)', desc: 'Maximum readability & contrast' },
+  ];
+
   return (
-    <div 
+    <div
       data-tv-modal="true"
-      className="fixed inset-0 bg-black/85 backdrop-blur-md z-50 flex items-center justify-center p-2 sm:p-4 overflow-y-auto select-none"
+      className={`fixed inset-0 bg-black/90 ${
+        isLowCpu ? '' : 'backdrop-blur-xs'
+      } z-50 flex items-center justify-center p-2 sm:p-4 overflow-y-auto select-none`}
       onKeyDown={handleKeyDown}
       tabIndex={0}
     >
-      <div className="bg-slate-900 border-2 border-slate-700 rounded-3xl p-4 sm:p-6 max-w-xl w-full shadow-2xl animate-in fade-in zoom-in-95 duration-150 my-auto max-h-[92vh] flex flex-col">
+      <div className="bg-slate-900 border-2 border-slate-700 rounded-3xl p-4 sm:p-6 max-w-xl w-full shadow-2xl my-auto max-h-[92vh] flex flex-col">
         {/* Header */}
         <div className="flex items-center justify-between pb-3 border-b border-slate-800 mb-3 shrink-0">
           <div>
@@ -96,7 +132,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               Game Settings
             </h2>
             <p className="text-[11px] text-slate-400">
-              {isIngame ? 'Settings apply directly to this match' : 'Preferences persist across sessions'}
+              {isIngame ? 'Settings apply directly to this match' : 'Preferences persist across sessions & devices'}
             </p>
           </div>
           <button
@@ -113,28 +149,37 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           <button
             data-tv-tab="true"
             data-tv-autofocus="true"
-            onClick={() => setActiveTab('display')}
-            className={`flex items-center justify-center gap-1.5 py-2 px-1 rounded-lg text-[11px] sm:text-xs font-bold transition-all cursor-pointer ${
+            onClick={() => {
+              soundManager.playSound('select');
+              setActiveTab('display');
+            }}
+            className={`flex items-center justify-center gap-1.5 py-2 px-1 rounded-lg text-[11px] sm:text-xs font-bold transition-colors cursor-pointer ${
               activeTab === 'display' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-400 hover:text-slate-200'
             }`}
           >
             <Monitor size={14} />
-            <span className="truncate">Board & SFX</span>
+            <span className="truncate">Display & Audio</span>
           </button>
           <button
             data-tv-tab="true"
-            onClick={() => setActiveTab('scale')}
-            className={`flex items-center justify-center gap-1.5 py-2 px-1 rounded-lg text-[11px] sm:text-xs font-bold transition-all cursor-pointer ${
+            onClick={() => {
+              soundManager.playSound('select');
+              setActiveTab('scale');
+            }}
+            className={`flex items-center justify-center gap-1.5 py-2 px-1 rounded-lg text-[11px] sm:text-xs font-bold transition-colors cursor-pointer ${
               activeTab === 'scale' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-400 hover:text-slate-200'
             }`}
           >
             <Type size={14} />
-            <span className="truncate">Font Size</span>
+            <span className="truncate">Text Size</span>
           </button>
           <button
             data-tv-tab="true"
-            onClick={() => setActiveTab('shortcuts')}
-            className={`flex items-center justify-center gap-1.5 py-2 px-1 rounded-lg text-[11px] sm:text-xs font-bold transition-all cursor-pointer ${
+            onClick={() => {
+              soundManager.playSound('select');
+              setActiveTab('shortcuts');
+            }}
+            className={`flex items-center justify-center gap-1.5 py-2 px-1 rounded-lg text-[11px] sm:text-xs font-bold transition-colors cursor-pointer ${
               activeTab === 'shortcuts' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-400 hover:text-slate-200'
             }`}
           >
@@ -143,8 +188,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           </button>
           <button
             data-tv-tab="true"
-            onClick={() => setActiveTab('ai')}
-            className={`flex items-center justify-center gap-1.5 py-2 px-1 rounded-lg text-[11px] sm:text-xs font-bold transition-all cursor-pointer ${
+            onClick={() => {
+              soundManager.playSound('select');
+              setActiveTab('ai');
+            }}
+            className={`flex items-center justify-center gap-1.5 py-2 px-1 rounded-lg text-[11px] sm:text-xs font-bold transition-colors cursor-pointer ${
               activeTab === 'ai' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-400 hover:text-slate-200'
             }`}
           >
@@ -155,9 +203,123 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
         {/* Tab Content Container */}
         <div className="overflow-y-auto flex-1 pr-1 flex flex-col gap-3">
-          {/* TAB 1: Board & SFX */}
+          {/* TAB 1: Display, Text Size, Audio Packs & Low-CPU Performance */}
           {activeTab === 'display' && (
             <div className="flex flex-col gap-3">
+              {/* Text Size Quick Selector in Display Tab */}
+              <div className="p-3 rounded-2xl bg-slate-950/70 border border-slate-800/80">
+                <div className="flex items-center justify-between mb-2">
+                  <label className="text-xs uppercase font-bold tracking-wider text-slate-300 flex items-center gap-1.5">
+                    <Type size={14} className="text-amber-400" />
+                    Text Size
+                  </label>
+                  <span className="text-[11px] font-semibold text-amber-400 uppercase">
+                    {current.font_scale}
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  {fontPresets.map((fp) => (
+                    <button
+                      key={fp.id}
+                      onClick={() => {
+                        setCurrent({ ...current, font_scale: fp.id });
+                        soundManager.playSound('select');
+                      }}
+                      className={`py-2 px-2 rounded-xl border text-xs font-bold transition-colors cursor-pointer flex items-center justify-center gap-1 ${
+                        current.font_scale === fp.id
+                          ? 'bg-blue-600 border-blue-400 text-white ring-2 ring-blue-500/50'
+                          : 'bg-slate-900 border-slate-800 text-slate-400 hover:bg-slate-800 hover:text-slate-200'
+                      }`}
+                    >
+                      {fp.short}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Open-Source Sound Pack Style Selector */}
+              <div className="p-3 rounded-2xl bg-slate-950/70 border border-slate-800/80">
+                <div className="flex items-center justify-between mb-2">
+                  <label className="text-xs uppercase font-bold tracking-wider text-slate-300 flex items-center gap-1.5">
+                    <Volume2 size={14} className="text-emerald-400" />
+                    Open-Source Sound Style
+                  </label>
+                  <span className="text-[11px] font-semibold text-emerald-400 capitalize">
+                    {current.sound_pack === 'broadcast' ? 'Tournament Broadcast' : 'Wooden Acoustic'}
+                  </span>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {[
+                    {
+                      id: 'wooden' as SoundPack,
+                      title: 'Wooden Chess & Studio UI',
+                      sub: 'Staunton wood knocks, acoustic fanfare & tactile taps',
+                    },
+                    {
+                      id: 'broadcast' as SoundPack,
+                      title: 'Tournament Broadcast & Glass',
+                      sub: 'Crisp arena slate moves, studio gong & glass sonar',
+                    },
+                  ].map((pk) => (
+                    <button
+                      key={pk.id}
+                      onClick={() => handleSelectSoundPack(pk.id)}
+                      className={`flex flex-col p-2.5 rounded-xl border text-left transition-colors cursor-pointer ${
+                        (current.sound_pack || 'wooden') === pk.id
+                          ? 'bg-emerald-600/25 border-emerald-400 text-white ring-2 ring-emerald-500/40'
+                          : 'bg-slate-900 border-slate-800 text-slate-400 hover:bg-slate-800 hover:text-slate-200'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between mb-0.5">
+                        <span className="text-xs font-bold text-white">{pk.title}</span>
+                        {(current.sound_pack || 'wooden') === pk.id && (
+                          <Check size={14} className="text-emerald-400 shrink-0" />
+                        )}
+                      </div>
+                      <span className="text-[10px] text-slate-400">{pk.sub}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Low-CPU & RAM Performance Mode */}
+              <div className="p-3 rounded-2xl bg-slate-950/70 border border-slate-800/80">
+                <div className="flex items-center justify-between mb-2">
+                  <label className="text-xs uppercase font-bold tracking-wider text-slate-300 flex items-center gap-1.5">
+                    <Zap size={14} className="text-amber-400" />
+                    CPU & RAM Performance Mode
+                  </label>
+                  <span className="text-[11px] font-semibold text-slate-400 uppercase">
+                    {current.performance_mode || 'auto'}
+                  </span>
+                </div>
+                <div className="grid grid-cols-3 gap-2">
+                  {(
+                    [
+                      { id: 'auto', label: 'Auto Detect', sub: 'Smart TV / PC' },
+                      { id: 'low_cpu', label: 'Low CPU / RAM', sub: 'Fastest Menus' },
+                      { id: 'high_quality', label: 'High Quality', sub: 'Full Effects' },
+                    ] as { id: PerformanceMode; label: string; sub: string }[]
+                  ).map((pm) => (
+                    <button
+                      key={pm.id}
+                      onClick={() => {
+                        setCurrent({ ...current, performance_mode: pm.id });
+                        soundManager.playSound('select');
+                      }}
+                      className={`flex flex-col items-center justify-center p-2 rounded-xl border text-center transition-colors cursor-pointer ${
+                        (current.performance_mode || 'auto') === pm.id
+                          ? 'bg-blue-600/30 border-blue-400 text-white ring-2 ring-blue-500/50'
+                          : 'bg-slate-900 border-slate-800 text-slate-400 hover:bg-slate-800 hover:text-slate-200'
+                      }`}
+                    >
+                      <span className="text-xs font-bold">{pm.label}</span>
+                      <span className="text-[10px] text-slate-400">{pm.sub}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
               {/* Pieces Theme */}
               <div className="p-3 rounded-2xl bg-slate-950/70 border border-slate-800/80">
                 <div className="flex items-center justify-between mb-2">
@@ -177,7 +339,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                         setCurrent({ ...current, piece_theme: pt });
                         soundManager.playSound('select');
                       }}
-                      className={`flex items-center justify-between p-2.5 rounded-xl border transition-all cursor-pointer ${
+                      className={`flex items-center justify-between p-2.5 rounded-xl border transition-colors cursor-pointer ${
                         current.piece_theme === pt
                           ? 'bg-blue-600/30 border-blue-400 text-white ring-2 ring-blue-500/50'
                           : 'bg-slate-900 border-slate-800 text-slate-400 hover:bg-slate-800 hover:text-slate-200'
@@ -185,11 +347,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     >
                       <div className="flex items-center gap-2">
                         <img
-                          src="/assets/pieces/nl.svg"
+                          src="assets/pieces/nl.svg"
                           alt={pt}
-                          className={`w-6 h-6 object-contain ${
-                            pt === 'modern' ? 'drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)] contrast-125' : ''
-                          }`}
+                          className="w-6 h-6 object-contain"
                         />
                         <span className="text-xs font-bold capitalize">{pt}</span>
                       </div>
@@ -217,15 +377,17 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                         setCurrent({ ...current, theme: t });
                         soundManager.playSound('select');
                       }}
-                      className={`py-2 px-2 rounded-xl border text-xs font-semibold capitalize transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+                      className={`py-2 px-2 rounded-xl border text-xs font-semibold capitalize transition-colors cursor-pointer flex items-center justify-center gap-1.5 ${
                         current.theme === t
                           ? 'bg-blue-600 border-blue-400 text-white ring-2 ring-blue-500/50'
                           : 'bg-slate-900 border-slate-800 text-slate-400 hover:bg-slate-800 hover:text-slate-200'
                       }`}
                     >
-                      <span className={`w-2.5 h-2.5 rounded-full ${
-                        t === 'dark' ? 'bg-slate-600' : t === 'light' ? 'bg-slate-300' : 'bg-emerald-600'
-                      }`} />
+                      <span
+                        className={`w-2.5 h-2.5 rounded-full ${
+                          t === 'dark' ? 'bg-slate-600' : t === 'light' ? 'bg-slate-300' : 'bg-emerald-600'
+                        }`}
+                      />
                       {t}
                     </button>
                   ))}
@@ -237,8 +399,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 <div className="flex items-center gap-2">
                   <Eye size={16} className="text-blue-400" />
                   <div>
-                    <span className="text-xs sm:text-sm font-semibold text-slate-200 block">Show Allowed Moves</span>
-                    <span className="text-[10px] text-slate-400">Target dots & capture rings on piece select</span>
+                    <span className="text-xs sm:text-sm font-semibold text-slate-200 block">
+                      Show Allowed Moves
+                    </span>
+                    <span className="text-[10px] text-slate-400">
+                      Target dots & capture rings on piece select
+                    </span>
                   </div>
                 </div>
                 <button
@@ -259,8 +425,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 <div className="flex items-center gap-2">
                   <Volume2 size={16} className="text-emerald-400" />
                   <div>
-                    <span className="text-xs sm:text-sm font-semibold text-slate-200 block">Audio Effects (SFX)</span>
-                    <span className="text-[10px] text-slate-400">Move, capture, check & game end sound effects</span>
+                    <span className="text-xs sm:text-sm font-semibold text-slate-200 block">
+                      Audio Effects (SFX)
+                    </span>
+                    <span className="text-[10px] text-slate-400">
+                      Menu, matchmaking, move, capture, check, checkmate & win/loss sounds
+                    </span>
                   </div>
                 </div>
                 <button
@@ -276,7 +446,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               {/* Background Music */}
               <div className="flex items-center justify-between p-3 rounded-2xl bg-slate-950/70 border border-slate-800/80">
                 <div>
-                  <span className="text-xs sm:text-sm font-semibold text-slate-200 block">Background Music</span>
+                  <span className="text-xs sm:text-sm font-semibold text-slate-200 block">
+                    Background Music
+                  </span>
                   <span className="text-[10px] text-slate-400">Ambient audio loop during gameplay</span>
                 </div>
                 <button
@@ -291,30 +463,26 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             </div>
           )}
 
-          {/* TAB 2: Font Size & TV Scale */}
+          {/* TAB 2: Text Size & TV Scale */}
           {activeTab === 'scale' && (
             <div className="flex flex-col gap-3">
               <div className="p-3 rounded-2xl bg-slate-950/70 border border-slate-800/80">
                 <label className="text-xs uppercase font-bold tracking-wider text-slate-300 block mb-2">
-                  UI & Typography Scaling
+                  Global Text Size & UI Scaling
                 </label>
                 <p className="text-[11px] text-slate-400 mb-3">
-                  Optimized preset scales for desktop screens and distance living room TV viewing.
+                  Scales all menus, player clocks, move history tables, chat messages, and modals across the entire application.
                 </p>
 
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 mb-4">
-                  {[
-                    { id: 'standard', label: 'Standard (100%)', desc: 'Compact desktop & mobile' },
-                    { id: 'large', label: 'Large TV (115%)', desc: 'Living room 3-meter TV default' },
-                    { id: 'xlarge', label: 'Extra Large (130%)', desc: 'Maximum contrast & accessibility' },
-                  ].map((preset) => (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 mb-4">
+                  {fontPresets.map((preset) => (
                     <button
                       key={preset.id}
                       onClick={() => {
-                        setCurrent({ ...current, font_scale: preset.id as FontScale });
+                        setCurrent({ ...current, font_scale: preset.id });
                         soundManager.playSound('select');
                       }}
-                      className={`flex flex-col p-3 rounded-xl border text-left transition-all cursor-pointer ${
+                      className={`flex flex-col p-3 rounded-xl border text-left transition-colors cursor-pointer ${
                         current.font_scale === preset.id
                           ? 'bg-blue-600/30 border-blue-400 text-white ring-2 ring-blue-500/50'
                           : 'bg-slate-900 border-slate-800 text-slate-400 hover:bg-slate-850 hover:text-slate-200'
@@ -331,16 +499,34 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
                 {/* Live Preview Sample */}
                 <div className="p-3.5 rounded-xl bg-slate-900 border border-slate-800 flex flex-col gap-1.5">
-                  <span className="text-[10px] uppercase font-bold text-slate-500 tracking-wider">Preview</span>
-                  <div className={`transition-all ${
-                    current.font_scale === 'xlarge' ? 'text-lg' : current.font_scale === 'large' ? 'text-base' : 'text-sm'
-                  } font-bold text-slate-100`}>
+                  <span className="text-[10px] uppercase font-bold text-slate-500 tracking-wider">
+                    Live Typography Preview
+                  </span>
+                  <div
+                    className={`${
+                      current.font_scale === 'xlarge'
+                        ? 'text-xl'
+                        : current.font_scale === 'large'
+                        ? 'text-base'
+                        : current.font_scale === 'small'
+                        ? 'text-xs'
+                        : 'text-sm'
+                    } font-bold text-slate-100`}
+                  >
                     Grandmaster AI • Elo 2400
                   </div>
-                  <div className={`transition-all ${
-                    current.font_scale === 'xlarge' ? 'text-sm' : current.font_scale === 'large' ? 'text-xs' : 'text-[11px]'
-                  } text-slate-400`}>
-                    White to move • 1. e4 e5 2. Nf3 Nc6
+                  <div
+                    className={`${
+                      current.font_scale === 'xlarge'
+                        ? 'text-base'
+                        : current.font_scale === 'large'
+                        ? 'text-sm'
+                        : current.font_scale === 'small'
+                        ? 'text-[10px]'
+                        : 'text-xs'
+                    } text-slate-400`}
+                  >
+                    White to move • 1. e4 e5 2. Nf3 Nc6 3. Bb5 a6
                   </div>
                 </div>
               </div>
@@ -356,7 +542,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     <label className="text-xs uppercase font-bold tracking-wider text-slate-300 block">
                       Keyboard Shortcuts
                     </label>
-                    <span className="text-[10px] text-slate-400">Click a key button, then press any keyboard key to rebind</span>
+                    <span className="text-[10px] text-slate-400">
+                      Click a key button, then press any keyboard key to rebind
+                    </span>
                   </div>
                   <button
                     onClick={resetShortcuts}
@@ -374,11 +562,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     { key: 'undo' as const, label: 'Undo Move' },
                     { key: 'resign' as const, label: 'Resign Match' },
                   ].map((s) => (
-                    <div key={s.key} className="flex items-center justify-between p-2.5 rounded-xl bg-slate-900 border border-slate-800">
+                    <div
+                      key={s.key}
+                      className="flex items-center justify-between p-2.5 rounded-xl bg-slate-900 border border-slate-800"
+                    >
                       <span className="text-xs font-medium text-slate-300">{s.label}</span>
                       <button
                         onClick={() => handleKeyListen(s.key)}
-                        className={`min-w-10 px-2 py-1 rounded-lg text-xs font-mono font-bold uppercase transition-all cursor-pointer ${
+                        className={`min-w-10 px-2 py-1 rounded-lg text-xs font-mono font-bold uppercase transition-colors cursor-pointer ${
                           listeningKey === s.key
                             ? 'bg-amber-500 text-slate-950 ring-2 ring-amber-300 animate-pulse'
                             : 'bg-slate-800 hover:bg-slate-700 text-white border border-slate-700'
@@ -395,16 +586,36 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   <div className="p-2.5 rounded-xl bg-slate-900/60 border border-slate-800 flex items-start gap-2">
                     <Tv size={16} className="text-blue-400 shrink-0 mt-0.5" />
                     <div className="text-[11px] text-slate-300">
-                      <strong className="text-white block font-semibold mb-0.5">Keyboard & TV Remote</strong>
-                      <span>Arrows = Board & Side Panels<br />Enter / OK = Select / Confirm<br />Tab = Switch Board / Controls<br />Back / Esc = Cancel / Pause</span>
+                      <strong className="text-white block font-semibold mb-0.5">
+                        Keyboard & TV Remote
+                      </strong>
+                      <span>
+                        Arrows = Board & Side Panels
+                        <br />
+                        Enter / OK = Select / Confirm
+                        <br />
+                        Tab = Switch Board / Controls
+                        <br />
+                        Back / Esc = Cancel / Pause
+                      </span>
                     </div>
                   </div>
 
                   <div className="p-2.5 rounded-xl bg-slate-900/60 border border-slate-800 flex items-start gap-2">
                     <Gamepad2 size={16} className="text-indigo-400 shrink-0 mt-0.5" />
                     <div className="text-[11px] text-slate-300">
-                      <strong className="text-white block font-semibold mb-0.5">Gamepad Controller</strong>
-                      <span>D-Pad / Stick = Board & UI<br />A = Confirm • B = Cancel / Back<br />X = Board ↔ HUD • Y = Flip<br />LB / RB = Tabs & History</span>
+                      <strong className="text-white block font-semibold mb-0.5">
+                        Gamepad Controller
+                      </strong>
+                      <span>
+                        D-Pad / Stick = Board & UI
+                        <br />
+                        A = Confirm • B = Cancel / Back
+                        <br />
+                        X = Board ↔ HUD • Y = Flip
+                        <br />
+                        LB / RB = Tabs & History
+                      </span>
                     </div>
                   </div>
                 </div>
@@ -443,7 +654,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   <label className="text-xs uppercase font-bold tracking-wider text-slate-300">
                     Search Depth
                   </label>
-                  <span className="text-sm font-mono font-bold text-cyan-400">{current.ai_depth} plies</span>
+                  <span className="text-sm font-mono font-bold text-cyan-400">
+                    {current.ai_depth} plies
+                  </span>
                 </div>
                 <input
                   type="range"
@@ -461,7 +674,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   <label className="text-xs uppercase font-bold tracking-wider text-slate-300">
                     Calculation Time
                   </label>
-                  <span className="text-sm font-mono font-bold text-cyan-400">{current.ai_time} ms</span>
+                  <span className="text-sm font-mono font-bold text-cyan-400">
+                    {current.ai_time} ms
+                  </span>
                 </div>
                 <input
                   type="range"
@@ -487,7 +702,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           </button>
           <button
             onClick={handleSave}
-            className="flex items-center gap-1.5 px-5 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-xs font-bold text-white shadow-lg transition-all hover:scale-105 active:scale-95 cursor-pointer"
+            className="flex items-center gap-1.5 px-5 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-xs font-bold text-white shadow-lg transition-colors cursor-pointer"
           >
             <Check size={14} />
             Apply Changes

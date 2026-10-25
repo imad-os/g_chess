@@ -294,6 +294,10 @@ export function mapMyPCAction(rawAction: string): UnifiedAction | null {
     case 'menu':
     case 'pause':
     case 'start':
+    case 'plus':
+    case '+':
+    case 'add':
+    case 'options':
       return 'pause';
     default:
       return null;
@@ -350,8 +354,12 @@ export function mapKeyboardOrTVEvent(e: KeyboardEvent): UnifiedAction | null {
     return 'zone_switch';
   }
 
-  // TV Remote Menu / PlayPause / Red button -> Pause
+  // Plus (+) button / TV Remote Menu / PlayPause / Red button -> Match Menu (Pause)
   if (
+    key === '+' ||
+    key === '=' ||
+    e.code === 'NumpadAdd' ||
+    e.code === 'Equal' ||
     key === 'MediaPlayPause' ||
     key === 'ContextMenu' ||
     key === 'Menu' ||

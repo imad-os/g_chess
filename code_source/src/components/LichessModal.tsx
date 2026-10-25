@@ -590,6 +590,8 @@ export const LichessModal: React.FC<LichessModalProps> = ({
                   </p>
                   <button
                     onClick={() => {
+                      soundManager.stopSearchPulse();
+                      soundManager.playSound('click');
                       lichessService.cancelSeek();
                       setSeeking(false);
                     }}

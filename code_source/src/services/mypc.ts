@@ -92,7 +92,7 @@ class MyPCService {
   }
 
   public save(key: string, value: any) {
-    const MyPC = (window as any).MyPC;
+    const MyPC = typeof window !== 'undefined' ? (window as any).MyPC : null;
     if (MyPC && typeof MyPC.save === 'function') {
       try {
         MyPC.save(key, value);
@@ -104,16 +104,31 @@ class MyPCService {
   }
 
   public load<T>(key: string, defaultValue: T): T {
-    const MyPC = (window as any).MyPC;
+    const MyPC = typeof window !== 'undefined' ? (window as any).MyPC : null;
     if (MyPC && typeof MyPC.load === 'function') {
       try {
-        const loaded = MyPC.load(key, defaultValue);
-        if (loaded !== undefined && loaded !== null) return loaded;
+        const loaded = MyPC.load(key, undefined);
+        if (loaded !== undefined && loaded !== null && loaded !== '') {
+          try {
+            localStorage.setItem(`mypc_chess_${key}`, JSON.stringify(loaded));
+          } catch {}
+          return loaded as T;
+        }
       } catch {}
     }
     try {
       const stored = localStorage.getItem(`mypc_chess_${key}`);
-      if (stored !== null) return JSON.parse(stored);
+      if (stored !== null) {
+        const parsed = JSON.parse(stored);
+        if (parsed !== undefined && parsed !== null) {
+          if (MyPC && typeof MyPC.save === 'function' && parsed !== '') {
+            try {
+              MyPC.save(key, parsed);
+            } catch {}
+          }
+          return parsed as T;
+        }
+      }
     } catch {}
     return defaultValue;
   }

@@ -84,7 +84,7 @@ class StockfishService {
   private workerFailed: boolean = false;
 
   constructor() {
-    this.initWorker();
+    // Lazy initialization: do not spawn Web Worker on Main Menu load to save RAM & CPU
   }
 
   public initWorker() {
@@ -123,8 +123,21 @@ class StockfishService {
     }
   }
 
+  public terminateWorker() {
+    if (this.worker) {
+      try {
+        this.worker.terminate();
+      } catch {}
+      this.worker = null;
+      this.isReady = false;
+    }
+  }
+
   public requestMove(options: AIMoveOptions, onMove: (from: string, to: string, promotion?: string) => void) {
     this.onMoveCallback = onMove;
+    if (!this.worker && !this.workerFailed) {
+      this.initWorker();
+    }
 
     if (this.worker && this.isReady && !this.workerFailed) {
       const eloRange = 2600;

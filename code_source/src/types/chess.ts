@@ -16,7 +16,11 @@ export type AppState =
   | 'analysis_view' 
   | 'analysis_learn';
 
-export type FontScale = 'standard' | 'large' | 'xlarge';
+export type FontScale = 'small' | 'standard' | 'large' | 'xlarge';
+
+export type SoundPack = 'wooden' | 'broadcast';
+
+export type PerformanceMode = 'auto' | 'low_cpu' | 'high_quality';
 
 export interface KeyboardShortcuts {
   flip: string;
@@ -36,6 +40,8 @@ export interface GameSettings {
   ai_time: number;
   sound_enabled: boolean;
   music_enabled: boolean;
+  sound_pack?: SoundPack;
+  performance_mode?: PerformanceMode;
 }
 
 export interface MoveRecord {

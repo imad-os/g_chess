@@ -56,7 +56,7 @@ export const App: React.FC = () => {
   const [analysisReturnState, setAnalysisReturnState] = useState<AppState>('menu');
   const [gameMode, setGameMode] = useState<GameMode>('ai');
 
-  // Game settings with font scaling & shortcuts
+  // Game settings with font scaling, sound pack & performance mode
   const [settings, setSettings] = useState<GameSettings>({
     show_legal_moves: true,
     theme: 'dark',
@@ -73,6 +73,14 @@ export const App: React.FC = () => {
     ai_time: 1000,
     sound_enabled: true,
     music_enabled: false,
+    sound_pack: 'wooden',
+    performance_mode: 'auto',
+  });
+  const [autoLowCpuDetected, setAutoLowCpuDetected] = useState<boolean>(() => {
+    if (typeof navigator !== 'undefined' && navigator.hardwareConcurrency && navigator.hardwareConcurrency <= 4) {
+      return true;
+    }
+    return false;
   });
 
   // Profiles & ratings
@@ -92,6 +100,8 @@ export const App: React.FC = () => {
   const [validMoves, setValidMoves] = useState<{ to: Square; captured?: PieceSymbol }[]>([]);
   const [lastMove, setLastMove] = useState<{ from: Square; to: Square } | null>(null);
   const [cursorSquare, setCursorSquare] = useState<Square | null>('e2');
+  // Remember each player's own last move square so focus starts from their own last move when their turn arrives
+  const lastPlayerMoveSquareRef = useRef<{ w: Square; b: Square }>({ w: 'e2', b: 'e7' });
   const [pendingPromotion, setPendingPromotion] = useState<{ from: Square; to: Square } | null>(null);
 
   // Move inspection state (null = live position, 0..N = inspecting historical ply)
@@ -165,6 +175,11 @@ export const App: React.FC = () => {
   const [isHost, setIsHost] = useState<boolean>(false);
   const [connectingOnline, setConnectingOnline] = useState<boolean>(false);
 
+  // Draw offer & Resign confirmation state
+  const [incomingDrawOffer, setIncomingDrawOffer] = useState<boolean>(false);
+  const [drawOfferSent, setDrawOfferSent] = useState<boolean>(false);
+  const [initialConfirmResign, setInitialConfirmResign] = useState<boolean>(false);
+
   // TV remote / Controller / Keyboard navigation state
   const [menuIndex, setMenuIndex] = useState<number>(0);
   const menuItemsCount = 6;
@@ -175,7 +190,7 @@ export const App: React.FC = () => {
     time: number;
   } | null>(null);
 
-  // Initialize MyPC SDK and load saved ratings, config, and match history
+  // Initialize MyPC SDK and load saved ratings, config, Lichess API token, and match history
   useEffect(() => {
     soundManager.init();
 
@@ -184,6 +199,10 @@ export const App: React.FC = () => {
         if (info?.profile?.name) {
           setProfileName(info.profile.name);
         }
+        if (info?.quality?.tier === 'low') {
+          setAutoLowCpuDetected(true);
+        }
+
         const savedElo = myPCService.load<number>('elo', 1200);
         setMyElo(savedElo);
 
@@ -202,11 +221,36 @@ export const App: React.FC = () => {
           setSettings((prev) => ({
             ...prev,
             ...savedConfig,
+            sound_pack: savedConfig.sound_pack || prev.sound_pack || 'wooden',
+            performance_mode: savedConfig.performance_mode || prev.performance_mode || 'auto',
             shortcuts: {
               ...prev.shortcuts,
               ...(savedConfig.shortcuts || {}),
             },
           }));
+        }
+
+        // Synchronize Lichess Personal API Token & username from MyPC cloud profile across devices
+        const syncedLichess = lichessService.syncFromMyPC();
+        if (syncedLichess.username) {
+          setLichessUsername(syncedLichess.username);
+        }
+        if (syncedLichess.token) {
+          lichessService
+            .fetchAccount()
+            .then((acc) => {
+              if (acc?.username) {
+                setLichessUsername(acc.username);
+              }
+              const rapidOrBlitz =
+                acc?.perfs?.rapid?.rating ||
+                acc?.perfs?.blitz?.rating ||
+                acc?.perfs?.classical?.rating;
+              if (rapidOrBlitz) {
+                setMyLichessRating(rapidOrBlitz);
+              }
+            })
+            .catch(() => {});
         }
       },
       onStart: () => {
@@ -225,16 +269,43 @@ export const App: React.FC = () => {
       onDestroy: () => {
         lichessService.stopGameStream();
         lichessService.cancelSeek();
+        stockfishService.terminateWorker();
         soundManager.destroy();
       },
     });
   }, []);
 
-  // Update soundManager flags when settings change
+  // Update soundManager flags and sound pack when settings change
   useEffect(() => {
     soundManager.setSoundEnabled(settings.sound_enabled);
     soundManager.setMusicEnabled(settings.music_enabled);
-  }, [settings.sound_enabled, settings.music_enabled]);
+    soundManager.setSoundPack(settings.sound_pack || 'wooden');
+  }, [settings.sound_enabled, settings.music_enabled, settings.sound_pack]);
+
+  // Apply global root typography scaling so all rem-based Tailwind text & spacing scale cleanly
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    const rootFontMap: Record<string, string> = {
+      small: '14px',
+      standard: '15.5px',
+      large: '17.5px',
+      xlarge: '20px',
+    };
+    document.documentElement.style.fontSize = rootFontMap[settings.font_scale] || '16px';
+  }, [settings.font_scale]);
+
+  // Free Stockfish Web Worker RAM when returning to Main Menu in low-CPU mode
+  const isLowCpuActive = useMemo(() => {
+    if (settings.performance_mode === 'low_cpu') return true;
+    if (settings.performance_mode === 'high_quality') return false;
+    return autoLowCpuDetected;
+  }, [settings.performance_mode, autoLowCpuDetected]);
+
+  useEffect(() => {
+    if (appState === 'menu' && isLowCpuActive) {
+      stockfishService.terminateWorker();
+    }
+  }, [appState, isLowCpuActive]);
 
   const appendChatMessage = useCallback(
     (sender: string, text: string, isSystem: boolean = false) => {
@@ -330,7 +401,8 @@ export const App: React.FC = () => {
   // Start a new game session
   const startNewGame = useCallback(
     (mode: GameMode, color: Color = 'w') => {
-      soundManager.playSound('click');
+      soundManager.stopSearchPulse();
+      soundManager.playSound('game_start');
       lichessService.stopGameStream();
       setActiveLichessGameId(null);
       setMatchClocks({ wtime: 600000, btime: 600000 });
@@ -339,6 +411,9 @@ export const App: React.FC = () => {
       setRatedMatch(mode === 'ai');
       setInitialFen('startpos');
       setViewPly(null);
+      setIncomingDrawOffer(false);
+      setDrawOfferSent(false);
+      setInitialConfirmResign(false);
       currentMatchSavedRef.current = false;
 
       const newChess = new Chess();
@@ -349,6 +424,7 @@ export const App: React.FC = () => {
       setSelectedSquare(null);
       setValidMoves([]);
       setLastMove(null);
+      lastPlayerMoveSquareRef.current = { w: 'e2', b: 'e7' };
       setCursorSquare(color === 'w' ? 'e2' : 'e7');
       setPlayFocusZone('board');
       clearAllSpatialFocus();
@@ -386,7 +462,6 @@ export const App: React.FC = () => {
       oppName: string
     ) => {
       if (c.isGameOver()) {
-        soundManager.playSound('end');
         let winner: 'w' | 'b' | 'draw' | null = null;
         let reason = 'Game concluded';
         let eloChange = 0;
@@ -397,18 +472,30 @@ export const App: React.FC = () => {
           if (currentMode === 'ai') {
             eloChange = winner === pColor ? 15 : -15;
           }
+          soundManager.playSound('checkmate');
+          setTimeout(() => {
+            if (currentMode === 'local') {
+              soundManager.playSound('win');
+            } else {
+              soundManager.playSound(winner === pColor ? 'win' : 'lose');
+            }
+          }, 360);
         } else if (c.isStalemate()) {
           winner = 'draw';
           reason = 'Draw by Stalemate';
+          soundManager.playSound('draw');
         } else if (c.isThreefoldRepetition()) {
           winner = 'draw';
           reason = 'Draw by Threefold Repetition';
+          soundManager.playSound('draw');
         } else if (c.isInsufficientMaterial()) {
           winner = 'draw';
           reason = 'Draw by Insufficient Material';
+          soundManager.playSound('draw');
         } else {
           winner = 'draw';
           reason = 'Draw by 50-move Rule';
+          soundManager.playSound('draw');
         }
 
         const updatedElo = Math.max(400, myCurrentElo + eloChange);
@@ -438,8 +525,10 @@ export const App: React.FC = () => {
   // Make move execution
   const executeMove = useCallback(
     (from: Square, to: Square, promotion?: string, isRemoteSync: boolean = false) => {
-      // Snap back to live view when any move is made
+      // Snap back to live view and clear transient draw offers when any move is made
       setViewPly(null);
+      setIncomingDrawOffer(false);
+      setDrawOfferSent(false);
 
       // If Lichess live game and this is a local player move, send to Lichess Board API
       if (gameMode === 'lichess' && activeLichessGameId && !isRemoteSync) {
@@ -456,18 +545,33 @@ export const App: React.FC = () => {
             return prevChess;
           }
 
-          // Sound effects
-          if (move.flags.includes('c') || move.flags.includes('e')) {
-            soundManager.playSound('capture');
-          } else {
-            soundManager.playSound('move');
-          }
-          if (nextChess.inCheck()) {
-            soundManager.playSound('check');
+          // Distinct open-source sound effects for each chess action
+          if (!nextChess.isCheckmate()) {
+            if (nextChess.inCheck()) {
+              soundManager.playSound('check');
+            } else if (move.flags.includes('k') || move.flags.includes('q')) {
+              soundManager.playSound('castle');
+            } else if (move.flags.includes('p') || move.promotion) {
+              soundManager.playSound('promote');
+            } else if (move.flags.includes('c') || move.flags.includes('e')) {
+              soundManager.playSound('capture');
+            } else {
+              soundManager.playSound('move');
+            }
           }
 
           setLastMove({ from, to });
-          setCursorSquare(to);
+
+          // Remember each player's own last move square so when their turn comes, focus starts on their own last move!
+          lastPlayerMoveSquareRef.current[move.color] = to;
+          const nextTurn = nextChess.turn();
+          if (gameMode === 'local') {
+            setCursorSquare(lastPlayerMoveSquareRef.current[nextTurn]);
+          } else {
+            // In AI / Online / Lichess: always keep the local player's cursor on their own last move square
+            setCursorSquare(lastPlayerMoveSquareRef.current[playerColor]);
+          }
+
           setSelectedSquare(null);
           setValidMoves([]);
 
@@ -543,18 +647,25 @@ export const App: React.FC = () => {
   // Start & stream a live Lichess game on the main board
   const handleStartLiveLichessGame = useCallback(
     (gameId: string, myUsername: string) => {
-      soundManager.playSound('click');
+      soundManager.stopSearchPulse();
+      soundManager.playSound('game_start');
       currentMatchSavedRef.current = false;
       setActiveLichessGameId(gameId);
       setGameMode('lichess');
       setChess(new Chess());
       setInitialFen('startpos');
       setViewPly(null);
+      setIncomingDrawOffer(false);
+      setDrawOfferSent(false);
+      setInitialConfirmResign(false);
+      setPlayFocusZone('board');
+      clearAllSpatialFocus();
       setGameHistory([]);
       gameHistoryRef.current = [];
       setSelectedSquare(null);
       setValidMoves([]);
       setLastMove(null);
+      lastPlayerMoveSquareRef.current = { w: 'e2', b: 'e7' };
       setChatMessages([
         {
           id: `sys_${Date.now()}`,
@@ -602,6 +713,9 @@ export const App: React.FC = () => {
           const uciTokens = state.movesUci.trim().split(/\s+/).filter(Boolean);
           const rebuiltMoves: MoveRecord[] = [];
           let lastFromTo: { from: Square; to: Square } | null = null;
+          let lastMoveObj: any = null;
+          let wLastSq: Square = 'e2';
+          let bLastSq: Square = 'e7';
 
           for (const uci of uciTokens) {
             const from = uci.slice(0, 2) as Square;
@@ -612,12 +726,30 @@ export const App: React.FC = () => {
               if (mv) {
                 rebuiltMoves.push({ from, to, san: mv.san, promotion: promo });
                 lastFromTo = { from, to };
+                lastMoveObj = mv;
+                if (mv.color === 'w') wLastSq = to;
+                else bLastSq = to;
               }
             } catch {}
           }
 
-          if (rebuiltMoves.length > gameHistoryRef.current.length) {
-            soundManager.playSound('move');
+          lastPlayerMoveSquareRef.current = { w: wLastSq, b: bLastSq };
+          setCursorSquare(lastPlayerMoveSquareRef.current[state.myColor]);
+
+          if (rebuiltMoves.length > gameHistoryRef.current.length && lastMoveObj) {
+            if (rebChess.isCheckmate()) {
+              soundManager.playSound('checkmate');
+            } else if (rebChess.inCheck()) {
+              soundManager.playSound('check');
+            } else if (lastMoveObj.flags?.includes('k') || lastMoveObj.flags?.includes('q')) {
+              soundManager.playSound('castle');
+            } else if (lastMoveObj.flags?.includes('p') || lastMoveObj.promotion) {
+              soundManager.playSound('promote');
+            } else if (lastMoveObj.flags?.includes('c') || lastMoveObj.flags?.includes('e')) {
+              soundManager.playSound('capture');
+            } else {
+              soundManager.playSound('move');
+            }
           }
 
           gameHistoryRef.current = rebuiltMoves;
@@ -625,19 +757,29 @@ export const App: React.FC = () => {
           setChess(rebChess);
           setLastMove(lastFromTo);
 
+          // Synchronize Lichess draw offer status (wdraw / bdraw)
+          const oppOffered = state.myColor === 'w' ? !!state.bdraw : !!state.wdraw;
+          const myOffered = state.myColor === 'w' ? !!state.wdraw : !!state.bdraw;
+          setIncomingDrawOffer(oppOffered);
+          setDrawOfferSent(myOffered);
+
           // Check if Lichess game ended (resign, mate, outoftime, draw)
           if (
             state.status &&
             state.status !== 'started' &&
             state.status !== 'created'
           ) {
-            soundManager.playSound('end');
             const wWinner: 'w' | 'b' | 'draw' =
               state.winner === 'white'
                 ? 'w'
                 : state.winner === 'black'
                 ? 'b'
                 : 'draw';
+            if (wWinner === 'draw') {
+              soundManager.playSound('draw');
+            } else {
+              soundManager.playSound(wWinner === state.myColor ? 'win' : 'lose');
+            }
             const statusReason = `Lichess Match Finished (${state.status})`;
             archiveCompletedGame(
               rebuiltMoves,
@@ -828,14 +970,22 @@ export const App: React.FC = () => {
         const dropCount = gameMode === 'ai' ? 2 : 1;
         const newHist = prevHist.slice(0, Math.max(0, prevHist.length - dropCount));
         gameHistoryRef.current = newHist;
+        let wLast: Square = 'e2';
+        let bLast: Square = 'e7';
+        newHist.forEach((m, idx) => {
+          if (idx % 2 === 0) wLast = m.to as Square;
+          else bLast = m.to as Square;
+        });
+        lastPlayerMoveSquareRef.current = { w: wLast, b: bLast };
+
         if (newHist.length > 0) {
           const last = newHist[newHist.length - 1];
           setLastMove({ from: last.from as Square, to: last.to as Square });
-          setCursorSquare(last.to as Square);
         } else {
           setLastMove(null);
-          setCursorSquare(playerColor === 'w' ? 'e2' : 'e7');
         }
+        const activeTurnColor = gameMode === 'local' ? nextChess.turn() : playerColor;
+        setCursorSquare(lastPlayerMoveSquareRef.current[activeTurnColor]);
         return newHist;
       });
 
@@ -845,7 +995,7 @@ export const App: React.FC = () => {
 
   // Resign match (synchronizes across Multiplayer so both Host and Guest save the game!)
   const handleResign = useCallback(() => {
-    soundManager.playSound('end');
+    soundManager.playSound('lose');
     const winner: Color = playerColor === 'w' ? 'b' : 'w';
     const eloChange = gameMode === 'ai' ? -15 : 0;
     const updatedElo = Math.max(400, myElo + eloChange);
@@ -898,6 +1048,7 @@ export const App: React.FC = () => {
       eloChange: gameMode === 'ai' ? eloChange : undefined,
       newElo: gameMode === 'ai' ? updatedElo : undefined,
     });
+    setInitialConfirmResign(false);
     setAppState('game_over');
   }, [
     gameMode,
@@ -912,23 +1063,34 @@ export const App: React.FC = () => {
     archiveCompletedGame,
   ]);
 
-  // Offer Draw handler
+  // Open Resign Confirmation dialog so accidental presses never immediately resign
+  const handleRequestResignConfirm = useCallback(() => {
+    soundManager.playSound('click');
+    setInitialConfirmResign(true);
+    setAppState('paused');
+  }, []);
+
+  // Offer Draw handler (supports Lichess Board API, Online P2P, and AI/Local)
   const handleOfferDraw = useCallback(() => {
     soundManager.playSound('click');
     if (gameMode === 'lichess' && activeLichessGameId) {
       lichessService.offerBoardDraw(activeLichessGameId);
+      setDrawOfferSent(true);
       appendChatMessage('System', 'Draw offer sent to Lichess opponent.', true);
       return;
     }
     if (gameMode === 'online' && onlineSession) {
       const peer = isHost ? onlineSession.peers?.[0] : onlineSession;
       if (peer?.send) {
+        peer.send({ type: 'draw_offer', sender: profileName });
         peer.send({ type: 'chat', sender: profileName, text: 'offered a draw (½).' });
       }
+      setDrawOfferSent(true);
       appendChatMessage('System', 'Draw offer sent to opponent.', true);
       return;
     }
-    // In local or AI mode, conclude by draw agreement if >= 2 moves played
+    // In local or AI mode, conclude by draw agreement
+    soundManager.playSound('draw');
     const oppLabel = gameMode === 'ai' ? 'Stockfish AI' : 'Player 2';
     archiveCompletedGame(
       gameHistoryRef.current,
@@ -953,6 +1115,81 @@ export const App: React.FC = () => {
     archiveCompletedGame,
     appendChatMessage,
   ]);
+
+  // Accept Opponent's Draw Offer (Lichess Board API + Online Wi-Fi P2P)
+  const handleAcceptDraw = useCallback(() => {
+    soundManager.playSound('draw');
+    setIncomingDrawOffer(false);
+    setDrawOfferSent(false);
+
+    if (gameMode === 'lichess' && activeLichessGameId) {
+      lichessService.offerBoardDraw(activeLichessGameId);
+      appendChatMessage('System', 'Accepted draw offer on Lichess.', true);
+      if (appState === 'paused') {
+        setAppState('playing');
+      }
+      return;
+    }
+
+    if (gameMode === 'online' && onlineSession) {
+      const peer = isHost ? onlineSession.peers?.[0] : onlineSession;
+      if (peer?.send) {
+        peer.send({ type: 'draw_accept', sender: profileName });
+      }
+    }
+
+    const oppLabel =
+      gameMode === 'ai'
+        ? 'Stockfish AI'
+        : gameMode === 'online' || gameMode === 'lichess'
+        ? remotePlayerName
+        : 'Player 2';
+
+    archiveCompletedGame(
+      gameHistoryRef.current,
+      gameMode,
+      'draw',
+      'Draw by Mutual Agreement',
+      playerColor,
+      oppLabel
+    );
+    setGameOverInfo({
+      winner: 'draw',
+      reason: 'Draw by Mutual Agreement',
+    });
+    setAppState('game_over');
+  }, [
+    appState,
+    gameMode,
+    activeLichessGameId,
+    onlineSession,
+    isHost,
+    profileName,
+    remotePlayerName,
+    playerColor,
+    archiveCompletedGame,
+    appendChatMessage,
+  ]);
+
+  // Decline Opponent's Draw Offer (Lichess Board API + Online Wi-Fi P2P)
+  const handleDeclineDraw = useCallback(() => {
+    soundManager.playSound('select');
+    setIncomingDrawOffer(false);
+
+    if (gameMode === 'lichess' && activeLichessGameId) {
+      lichessService.declineBoardDraw(activeLichessGameId);
+      appendChatMessage('System', 'Declined Lichess draw offer.', true);
+      return;
+    }
+
+    if (gameMode === 'online' && onlineSession) {
+      const peer = isHost ? onlineSession.peers?.[0] : onlineSession;
+      if (peer?.send) {
+        peer.send({ type: 'draw_decline', sender: profileName });
+      }
+      appendChatMessage('System', 'Declined opponent draw offer.', true);
+    }
+  }, [gameMode, activeLichessGameId, onlineSession, isHost, profileName, appendChatMessage]);
 
   // Abort or Restart match handler
   const handleAbortOrRestart = useCallback(() => {
@@ -1059,81 +1296,6 @@ export const App: React.FC = () => {
       );
     },
     []
-  );
-
-  // Helper: Focus the closest interactive element inside a specific HUD panel
-  const enterHudPanelFromBoard = useCallback(
-    (panelName: 'left' | 'right' | 'top' | 'bottom', currentSq: Square): boolean => {
-      const panelEl = document.querySelector<HTMLElement>(`[data-tv-panel="${panelName}"]`);
-      if (!panelEl) return false;
-      const focusables = getFocusableElements(panelEl);
-      if (focusables.length === 0) return false;
-
-      const sqEl = document.querySelector<HTMLElement>(`[data-board-square="${currentSq}"]`);
-      const sqRect = sqEl?.getBoundingClientRect();
-
-      let bestEl = focusables[0];
-      if (sqRect) {
-        const sqCx = sqRect.left + sqRect.width / 2;
-        const sqCy = sqRect.top + sqRect.height / 2;
-        let bestDist = Infinity;
-        for (const el of focusables) {
-          const r = el.getBoundingClientRect();
-          const cx = r.left + r.width / 2;
-          const cy = r.top + r.height / 2;
-          const dist = Math.hypot(cx - sqCx, cy - sqCy);
-          if (dist < bestDist) {
-            bestDist = dist;
-            bestEl = el;
-          }
-        }
-      }
-
-      setPlayFocusZone('hud');
-      setSpatialFocus(bestEl);
-      soundManager.playSound('select');
-      return true;
-    },
-    []
-  );
-
-  // Helper: Return from HUD panel to the nearest ChessBoard edge square
-  const returnToBoardFromHud = useCallback(
-    (fromPanel: string | null, focusedEl: HTMLElement | null) => {
-      const files = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
-      const ranks = ['8', '7', '6', '5', '4', '3', '2', '1'];
-      const displayFiles = flipped ? [...files].reverse() : files;
-      const displayRanks = flipped ? [...ranks].reverse() : ranks;
-
-      const cur = cursorSquare || (playerColor === 'w' ? 'e2' : 'e7');
-      let col = Math.max(0, displayFiles.indexOf(cur[0]));
-      let row = Math.max(0, displayRanks.indexOf(cur[1]));
-
-      const boardEl = document.querySelector<HTMLElement>('[data-chessboard-root="true"]');
-      const boardRect = boardEl?.getBoundingClientRect();
-      const elRect = focusedEl?.getBoundingClientRect();
-
-      if (boardRect && elRect && boardRect.width > 0 && boardRect.height > 0) {
-        const elCx = elRect.left + elRect.width / 2;
-        const elCy = elRect.top + elRect.height / 2;
-        const relX = Math.max(0, Math.min(0.999, (elCx - boardRect.left) / boardRect.width));
-        const relY = Math.max(0, Math.min(0.999, (elCy - boardRect.top) / boardRect.height));
-        col = Math.floor(relX * 8);
-        row = Math.floor(relY * 8);
-      }
-
-      if (fromPanel === 'left') col = 0;
-      else if (fromPanel === 'right') col = 7;
-      else if (fromPanel === 'top') row = 0;
-      else if (fromPanel === 'bottom') row = 7;
-
-      const targetSq = `${displayFiles[col]}${displayRanks[row]}` as Square;
-      clearAllSpatialFocus();
-      setPlayFocusZone('board');
-      setCursorSquare(targetSq);
-      soundManager.playSound('select');
-    },
-    [flipped, cursorSquare, playerColor]
   );
 
   // Unified Action Router for Keyboard, Smart TV Remote, and Gamepad Controller
@@ -1276,10 +1438,11 @@ export const App: React.FC = () => {
         return;
       }
 
-      // 3. Playing Screen State (Board + HUD Side Panels & Action Buttons)
+      // 3. Playing Screen State (Board-Only Directional Focus; Plus [+] Opens Match Menu)
       if (appState === 'playing') {
         if (action === 'pause') {
           soundManager.playSound('click');
+          setInitialConfirmResign(false);
           setAppState('paused');
           return;
         }
@@ -1293,7 +1456,7 @@ export const App: React.FC = () => {
           return;
         }
         if (action === 'resign') {
-          handleResign();
+          handleRequestResignConfirm();
           return;
         }
         if (action === 'chat') {
@@ -1302,11 +1465,7 @@ export const App: React.FC = () => {
             setMobileChatOpen(true);
             setTimeout(() => chatInputRef.current?.focus(), 80);
           } else {
-            setPlayFocusZone('hud');
-            if (chatInputRef.current) {
-              setSpatialFocus(chatInputRef.current);
-              chatInputRef.current.focus();
-            }
+            chatInputRef.current?.focus();
           }
           return;
         }
@@ -1327,96 +1486,18 @@ export const App: React.FC = () => {
           return;
         }
         if (action === 'zone_switch') {
-          if (playFocusZone === 'board') {
-            const cur = cursorSquare || (playerColor === 'w' ? 'e2' : 'e7');
-            const targetPanel = isVerticalScreen ? 'bottom' : 'right';
-            enterHudPanelFromBoard(targetPanel, cur);
-          } else {
-            clearAllSpatialFocus();
-            setPlayFocusZone('board');
-            soundManager.playSound('select');
-          }
+          soundManager.playSound('click');
+          setInitialConfirmResign(false);
+          setAppState('paused');
           return;
         }
 
-        // Playing Screen -> HUD Side Panels / Action Buttons Zone
-        if (playFocusZone === 'hud') {
-          const boardEl = document.querySelector<HTMLElement>('[data-chessboard-root="true"]');
-
-          if (action === 'cancel') {
-            const activeTag = (document.activeElement as HTMLElement)?.tagName;
-            if (activeTag === 'INPUT' || activeTag === 'TEXTAREA') {
-              (document.activeElement as HTMLElement).blur();
-              soundManager.playSound('select');
-              return;
-            }
-            clearAllSpatialFocus();
-            setPlayFocusZone('board');
-            soundManager.playSound('select');
-            return;
-          }
-
-          if (action === 'confirm') {
-            ensureSpatialFocus(document, boardEl);
-            if (triggerSpatialConfirm(document)) {
-              soundManager.playSound('click');
-            }
-            return;
-          }
-
-          if (isDirection) {
-            const curEl = ensureSpatialFocus(document, boardEl);
-            if (!curEl) {
-              setPlayFocusZone('board');
-              return;
-            }
-
-            const panelEl = curEl.closest<HTMLElement>('[data-tv-panel]');
-            const panelName = panelEl?.getAttribute('data-tv-panel') || null;
-
-            // First try finding a neighbor within the same HUD panel
-            if (panelEl) {
-              const panelCandidates = getFocusableElements(panelEl);
-              const nextInPanel = findNextSpatialElement(
-                panelCandidates,
-                curEl,
-                action as NavDirection
-              );
-              if (nextInPanel) {
-                setSpatialFocus(nextInPanel);
-                soundManager.playSound('select');
-                return;
-              }
-            }
-
-            // If stepping inward from a panel toward the ChessBoard, return to the board!
-            if (
-              (panelName === 'left' && action === 'right') ||
-              (panelName === 'right' && action === 'left') ||
-              (panelName === 'top' && action === 'down') ||
-              (panelName === 'bottom' && action === 'up')
-            ) {
-              returnToBoardFromHud(panelName, curEl);
-              return;
-            }
-
-            // Otherwise search across all HUD panels (excluding the chessboard squares)
-            const allHudCandidates = getFocusableElements(document, boardEl);
-            const nextHud = findNextSpatialElement(
-              allHudCandidates,
-              curEl,
-              action as NavDirection
-            );
-            if (nextHud) {
-              setSpatialFocus(nextHud);
-              soundManager.playSound('select');
-            }
-            return;
-          }
-          return;
+        // Playing Screen -> Strict ChessBoard 8x8 Square Cursor Zone
+        if (playFocusZone !== 'board') {
+          clearAllSpatialFocus();
+          setPlayFocusZone('board');
         }
 
-        // Playing Screen -> ChessBoard 8x8 Square Cursor Zone
         if (action === 'cancel') {
           if (selectedSquare !== null) {
             setSelectedSquare(null);
@@ -1430,6 +1511,7 @@ export const App: React.FC = () => {
             return;
           }
           soundManager.playSound('click');
+          setInitialConfirmResign(false);
           setAppState('paused');
           return;
         }
@@ -1448,46 +1530,23 @@ export const App: React.FC = () => {
           return;
         }
 
+        // Strict 8x8 ChessBoard directional navigation (wraps within the board)
         if (action === 'left') {
-          if (col > 0) {
-            setCursorSquare(`${displayFiles[col - 1]}${displayRanks[row]}` as Square);
-            soundManager.playSound('select');
-          } else if (!isVerticalScreen && enterHudPanelFromBoard('left', current)) {
-            return;
-          } else {
-            setCursorSquare(`${displayFiles[7]}${displayRanks[row]}` as Square);
-            soundManager.playSound('select');
-          }
+          const nextCol = col > 0 ? col - 1 : 7;
+          setCursorSquare(`${displayFiles[nextCol]}${displayRanks[row]}` as Square);
+          soundManager.playSound('select');
         } else if (action === 'right') {
-          if (col < 7) {
-            setCursorSquare(`${displayFiles[col + 1]}${displayRanks[row]}` as Square);
-            soundManager.playSound('select');
-          } else if (!isVerticalScreen && enterHudPanelFromBoard('right', current)) {
-            return;
-          } else {
-            setCursorSquare(`${displayFiles[0]}${displayRanks[row]}` as Square);
-            soundManager.playSound('select');
-          }
+          const nextCol = col < 7 ? col + 1 : 0;
+          setCursorSquare(`${displayFiles[nextCol]}${displayRanks[row]}` as Square);
+          soundManager.playSound('select');
         } else if (action === 'up') {
-          if (row > 0) {
-            setCursorSquare(`${displayFiles[col]}${displayRanks[row - 1]}` as Square);
-            soundManager.playSound('select');
-          } else if (isVerticalScreen && enterHudPanelFromBoard('top', current)) {
-            return;
-          } else {
-            setCursorSquare(`${displayFiles[col]}${displayRanks[7]}` as Square);
-            soundManager.playSound('select');
-          }
+          const nextRow = row > 0 ? row - 1 : 7;
+          setCursorSquare(`${displayFiles[col]}${displayRanks[nextRow]}` as Square);
+          soundManager.playSound('select');
         } else if (action === 'down') {
-          if (row < 7) {
-            setCursorSquare(`${displayFiles[col]}${displayRanks[row + 1]}` as Square);
-            soundManager.playSound('select');
-          } else if (enterHudPanelFromBoard('bottom', current)) {
-            return;
-          } else {
-            setCursorSquare(`${displayFiles[col]}${displayRanks[0]}` as Square);
-            soundManager.playSound('select');
-          }
+          const nextRow = row < 7 ? row + 1 : 0;
+          setCursorSquare(`${displayFiles[col]}${displayRanks[nextRow]}` as Square);
+          soundManager.playSound('select');
         }
       }
     },
@@ -1509,10 +1568,8 @@ export const App: React.FC = () => {
       startNewGame,
       openSettings,
       handleUndo,
-      handleResign,
+      handleRequestResignConfirm,
       handleSquareClick,
-      enterHudPanelFromBoard,
-      returnToBoardFromHud,
     ]
   );
 
@@ -1651,7 +1708,8 @@ export const App: React.FC = () => {
   useEffect(() => {
     if (typeof navigator === 'undefined' || typeof navigator.getGamepads !== 'function') return;
 
-    let rafId: number;
+    let rafId: number | null = null;
+    let idleTimeoutId: number | null = null;
     const prevButtons: Record<number, boolean[]> = {};
     const heldDirState: Record<
       number,
@@ -1662,7 +1720,25 @@ export const App: React.FC = () => {
     const INITIAL_REPEAT_DELAY = 270;
     const REPEAT_INTERVAL = 115;
 
+    const scheduleNextPoll = (hasConnectedPad: boolean) => {
+      if (rafId !== null) {
+        cancelAnimationFrame(rafId);
+        rafId = null;
+      }
+      if (idleTimeoutId !== null) {
+        clearTimeout(idleTimeoutId);
+        idleTimeoutId = null;
+      }
+      if (hasConnectedPad) {
+        rafId = requestAnimationFrame(pollGamepads);
+      } else {
+        // Sleep for 900ms when no controller is connected so Main Menu & idle screens use 0% CPU
+        idleTimeoutId = window.setTimeout(pollGamepads, 900);
+      }
+    };
+
     const pollGamepads = () => {
+      let hasConnectedPad = false;
       try {
         const pads = navigator.getGamepads ? navigator.getGamepads() : [];
         const now = performance.now();
@@ -1670,6 +1746,7 @@ export const App: React.FC = () => {
         for (let i = 0; i < pads.length; i++) {
           const pad = pads[i];
           if (!pad || !pad.connected) continue;
+          hasConnectedPad = true;
 
           const idx = pad.index;
           const prev = prevButtons[idx] || [];
@@ -1721,29 +1798,50 @@ export const App: React.FC = () => {
       } catch {
         // Ignore transient gamepad permission errors
       }
-      rafId = requestAnimationFrame(pollGamepads);
+      scheduleNextPoll(hasConnectedPad);
     };
 
-    rafId = requestAnimationFrame(pollGamepads);
-    return () => cancelAnimationFrame(rafId);
+    const onGamepadConnected = () => scheduleNextPoll(true);
+    window.addEventListener('gamepadconnected', onGamepadConnected);
+    pollGamepads();
+
+    return () => {
+      window.removeEventListener('gamepadconnected', onGamepadConnected);
+      if (rafId !== null) cancelAnimationFrame(rafId);
+      if (idleTimeoutId !== null) clearTimeout(idleTimeoutId);
+    };
   }, []);
 
   // Save modified settings
-  const handleSaveSettings = (newSettings: GameSettings) => {
+  const handleSaveSettings = useCallback((newSettings: GameSettings) => {
     setSettings(newSettings);
     myPCService.save('config', newSettings);
-  };
+  }, []);
+
+  const handleCycleFontScale = useCallback(() => {
+    soundManager.playSound('select');
+    const order: GameSettings['font_scale'][] = ['small', 'standard', 'large', 'xlarge'];
+    setSettings((prev) => {
+      const idx = order.indexOf(prev.font_scale);
+      const nextScale = order[(idx + 1) % order.length];
+      const updated = { ...prev, font_scale: nextScale };
+      myPCService.save('config', updated);
+      return updated;
+    });
+  }, []);
 
   // Online Multiplayer Handlers (MyPC local Wi-Fi peer - saves history & supports live chat)
   const handleHostMultiplayer = async () => {
     try {
       soundManager.playSound('click');
       setConnectingOnline(true);
+      soundManager.startSearchPulse();
       const session = await myPCService.hostOnlineGame();
       setIsHost(true);
       setOnlineSession(session);
 
       session.onPeer((peer: any) => {
+        soundManager.stopSearchPulse();
         const guestName = peer.name || 'Guest Player';
         setRemotePlayerName(guestName);
         setConnectingOnline(false);
@@ -1754,8 +1852,30 @@ export const App: React.FC = () => {
             executeMove(msg.move.from, msg.move.to, msg.move.promotion, true);
           } else if (msg.type === 'chat' && msg.text) {
             appendChatMessage(msg.sender || guestName, msg.text);
+          } else if (msg.type === 'draw_offer') {
+            soundManager.playSound('select');
+            setIncomingDrawOffer(true);
+            appendChatMessage('System', `${msg.sender || guestName} offered a draw (½).`, true);
+          } else if (msg.type === 'draw_accept') {
+            soundManager.playSound('draw');
+            setIncomingDrawOffer(false);
+            setDrawOfferSent(false);
+            archiveCompletedGame(
+              gameHistoryRef.current,
+              'online',
+              'draw',
+              'Draw by Mutual Agreement',
+              'w',
+              guestName
+            );
+            setGameOverInfo({ winner: 'draw', reason: 'Draw by Mutual Agreement' });
+            setAppState('game_over');
+          } else if (msg.type === 'draw_decline') {
+            soundManager.playSound('select');
+            setDrawOfferSent(false);
+            appendChatMessage('System', `${msg.sender || guestName} declined the draw offer.`, true);
           } else if (msg.type === 'resign') {
-            soundManager.playSound('end');
+            soundManager.playSound('win');
             const w: 'w' | 'b' = msg.winner || 'w';
             const r = msg.reason || `${guestName} Resigned`;
             archiveCompletedGame(
@@ -1778,6 +1898,7 @@ export const App: React.FC = () => {
         peer.send({ type: 'start', fen: new Chess().fen(), hostName: profileName });
       });
     } catch {
+      soundManager.stopSearchPulse();
       setConnectingOnline(false);
       setRemotePlayerName('Remote Player');
       startNewGame('online', 'w');
@@ -1788,7 +1909,9 @@ export const App: React.FC = () => {
     try {
       soundManager.playSound('click');
       setConnectingOnline(true);
+      soundManager.startSearchPulse();
       const host = await myPCService.joinOnlineGame();
+      soundManager.stopSearchPulse();
       setIsHost(false);
       setOnlineSession(host);
       const hostName = host.name || 'Host Player';
@@ -1804,8 +1927,30 @@ export const App: React.FC = () => {
           setChess(new Chess(msg.fen));
         } else if (msg.type === 'chat' && msg.text) {
           appendChatMessage(msg.sender || hostName, msg.text);
+        } else if (msg.type === 'draw_offer') {
+          soundManager.playSound('select');
+          setIncomingDrawOffer(true);
+          appendChatMessage('System', `${msg.sender || hostName} offered a draw (½).`, true);
+        } else if (msg.type === 'draw_accept') {
+          soundManager.playSound('draw');
+          setIncomingDrawOffer(false);
+          setDrawOfferSent(false);
+          archiveCompletedGame(
+            gameHistoryRef.current,
+            'online',
+            'draw',
+            'Draw by Mutual Agreement',
+            'b',
+            hostName
+          );
+          setGameOverInfo({ winner: 'draw', reason: 'Draw by Mutual Agreement' });
+          setAppState('game_over');
+        } else if (msg.type === 'draw_decline') {
+          soundManager.playSound('select');
+          setDrawOfferSent(false);
+          appendChatMessage('System', `${msg.sender || hostName} declined the draw offer.`, true);
         } else if (msg.type === 'resign') {
-          soundManager.playSound('end');
+          soundManager.playSound('win');
           const w: 'w' | 'b' = msg.winner || 'b';
           const r = msg.reason || `${hostName} Resigned`;
           archiveCompletedGame(
@@ -1825,6 +1970,7 @@ export const App: React.FC = () => {
         setOnlineSession(null);
       });
     } catch {
+      soundManager.stopSearchPulse();
       setConnectingOnline(false);
       setRemotePlayerName('Host Player');
       startNewGame('online', 'b');
@@ -1835,6 +1981,7 @@ export const App: React.FC = () => {
   const scaleClass = useMemo(() => {
     if (settings.font_scale === 'xlarge') return 'text-base';
     if (settings.font_scale === 'large') return 'text-sm';
+    if (settings.font_scale === 'small') return 'text-[11px]';
     return 'text-xs';
   }, [settings.font_scale]);
 
@@ -1889,20 +2036,26 @@ export const App: React.FC = () => {
     savedGames,
     canUndo,
     onUndo: handleUndo,
+    incomingDrawOffer,
+    drawOfferSent,
     onOfferDraw: handleOfferDraw,
+    onAcceptDraw: handleAcceptDraw,
+    onDeclineDraw: handleDeclineDraw,
     onAbortOrRestart: handleAbortOrRestart,
     onGiveMoreTime: gameMode !== 'lichess' ? handleGiveMoreTime : undefined,
     onToggleSound: () =>
       handleSaveSettings({ ...settings, sound_enabled: !settings.sound_enabled }),
     onToggleMusic: () =>
       handleSaveSettings({ ...settings, music_enabled: !settings.music_enabled }),
+    onCycleFontScale: handleCycleFontScale,
     onFlipBoard: () => setFlipped((prev) => !prev),
     onOpenSettings: () => openSettings('playing'),
     onPause: () => {
       soundManager.playSound('click');
+      setInitialConfirmResign(false);
       setAppState('paused');
     },
-    onResign: handleResign,
+    onResign: handleRequestResignConfirm,
     chatInputRef,
   };
 
@@ -1912,15 +2065,15 @@ export const App: React.FC = () => {
     >
       {/* Main Menu State */}
       {appState === 'menu' && (
-        <div className="my-auto flex flex-col items-center justify-center max-w-md w-full text-center animate-in fade-in zoom-in-95 duration-200">
-          {/* Logo / Header */}
+        <div className="my-auto flex flex-col items-center justify-center max-w-md w-full text-center">
+          {/* Logo / Header (Optimized for zero idle CPU/GPU repaint lag) */}
           <div className="flex items-center justify-center gap-3 mb-1">
             <img
               src="assets/pieces/nl.svg"
               alt="Knight"
-              className="w-12 h-12 sm:w-15 sm:h-15 drop-shadow-xl animate-bounce"
+              className="w-12 h-12 sm:w-15 sm:h-15"
             />
-            <h1 className="text-4xl sm:text-5xl font-black tracking-tight text-white drop-shadow-md">
+            <h1 className="text-4xl sm:text-5xl font-black tracking-tight text-white">
               Chess
             </h1>
           </div>
@@ -1928,16 +2081,16 @@ export const App: React.FC = () => {
             Grandmaster AI • Lichess Online • Wi-Fi Multiplayer
           </p>
 
-          {/* Menu Options */}
+          {/* Menu Options (Optimized with transition-colors for instant 0-lag TV remote navigation) */}
           <div className="flex flex-col gap-2.5 w-full">
             {/* 0: Play vs AI */}
             <button
               onClick={() => startNewGame('ai')}
               onMouseEnter={() => setMenuIndex(0)}
-              className={`flex items-center justify-between p-3.5 rounded-2xl border transition-all cursor-pointer ${
+              className={`flex items-center justify-between p-3.5 rounded-2xl border transition-colors cursor-pointer ${
                 menuIndex === 0
-                  ? 'bg-blue-600 border-blue-400 text-white shadow-xl scale-[1.02] ring-2 ring-blue-400/50'
-                  : 'bg-slate-900/90 border-slate-800 text-slate-200 hover:bg-slate-850'
+                  ? 'bg-blue-600 border-blue-400 text-white shadow-lg ring-2 ring-blue-400/50'
+                  : 'bg-slate-900 border-slate-800 text-slate-200 hover:bg-slate-800'
               }`}
             >
               <div className="flex items-center gap-3.5">
@@ -1946,12 +2099,12 @@ export const App: React.FC = () => {
                 </div>
                 <div className="text-left">
                   <div className="font-bold text-sm sm:text-base">Play vs AI</div>
-                  <div className="text-[11px] text-slate-400">
+                  <div className="text-[11px] text-slate-300">
                     Stockfish Engine (Elo {settings.ai_elo})
                   </div>
                 </div>
               </div>
-              <ChevronRight size={18} className="text-slate-400" />
+              <ChevronRight size={18} className="text-slate-300" />
             </button>
 
             {/* 1: Lichess (High-Contrast White Button as requested) */}
@@ -1961,10 +2114,10 @@ export const App: React.FC = () => {
                 setAppState('lichess_hub');
               }}
               onMouseEnter={() => setMenuIndex(1)}
-              className={`flex items-center justify-between p-3.5 rounded-2xl border transition-all cursor-pointer ${
+              className={`flex items-center justify-between p-3.5 rounded-2xl border transition-colors cursor-pointer ${
                 menuIndex === 1
-                  ? 'bg-white border-amber-400 text-slate-950 shadow-2xl scale-[1.03] ring-4 ring-white/40'
-                  : 'bg-white/95 border-white text-slate-950 hover:bg-white shadow-lg'
+                  ? 'bg-white border-amber-400 text-slate-950 shadow-lg ring-4 ring-amber-400/60'
+                  : 'bg-white/95 border-white text-slate-950 hover:bg-white'
               }`}
             >
               <div className="flex items-center gap-3.5">
@@ -1975,7 +2128,7 @@ export const App: React.FC = () => {
                   <div className="font-black text-sm sm:text-base text-slate-950 flex items-center gap-2">
                     Lichess
                     <span className="px-1.5 py-0.5 rounded bg-slate-900 text-white text-[9px] font-extrabold uppercase">
-                      Online API
+                      {lichessUsername ? lichessUsername : 'Online API'}
                     </span>
                   </div>
                   <div className="text-[11px] text-slate-700 font-medium">
@@ -1990,10 +2143,10 @@ export const App: React.FC = () => {
             <button
               onClick={() => startNewGame('local')}
               onMouseEnter={() => setMenuIndex(2)}
-              className={`flex items-center justify-between p-3.5 rounded-2xl border transition-all cursor-pointer ${
+              className={`flex items-center justify-between p-3.5 rounded-2xl border transition-colors cursor-pointer ${
                 menuIndex === 2
-                  ? 'bg-blue-600 border-blue-400 text-white shadow-xl scale-[1.02] ring-2 ring-blue-400/50'
-                  : 'bg-slate-900/90 border-slate-800 text-slate-200 hover:bg-slate-850'
+                  ? 'bg-blue-600 border-blue-400 text-white shadow-lg ring-2 ring-blue-400/50'
+                  : 'bg-slate-900 border-slate-800 text-slate-200 hover:bg-slate-800'
               }`}
             >
               <div className="flex items-center gap-3.5">
@@ -2002,12 +2155,12 @@ export const App: React.FC = () => {
                 </div>
                 <div className="text-left">
                   <div className="font-bold text-sm sm:text-base">Couch Play</div>
-                  <div className="text-[11px] text-slate-400">
+                  <div className="text-[11px] text-slate-300">
                     Local pass-and-play for 2 players
                   </div>
                 </div>
               </div>
-              <ChevronRight size={18} className="text-slate-400" />
+              <ChevronRight size={18} className="text-slate-300" />
             </button>
 
             {/* 3: Online Multiplayer (Local Wi-Fi) */}
@@ -2017,10 +2170,10 @@ export const App: React.FC = () => {
                 setAppState('multiplayer_menu');
               }}
               onMouseEnter={() => setMenuIndex(3)}
-              className={`flex items-center justify-between p-3.5 rounded-2xl border transition-all cursor-pointer ${
+              className={`flex items-center justify-between p-3.5 rounded-2xl border transition-colors cursor-pointer ${
                 menuIndex === 3
-                  ? 'bg-blue-600 border-blue-400 text-white shadow-xl scale-[1.02] ring-2 ring-blue-400/50'
-                  : 'bg-slate-900/90 border-slate-800 text-slate-200 hover:bg-slate-850'
+                  ? 'bg-blue-600 border-blue-400 text-white shadow-lg ring-2 ring-blue-400/50'
+                  : 'bg-slate-900 border-slate-800 text-slate-200 hover:bg-slate-800'
               }`}
             >
               <div className="flex items-center gap-3.5">
@@ -2029,12 +2182,12 @@ export const App: React.FC = () => {
                 </div>
                 <div className="text-left">
                   <div className="font-bold text-sm sm:text-base">Online Multiplayer</div>
-                  <div className="text-[11px] text-slate-400">
+                  <div className="text-[11px] text-slate-300">
                     MyPC local Wi-Fi peer matching
                   </div>
                 </div>
               </div>
-              <ChevronRight size={18} className="text-slate-400" />
+              <ChevronRight size={18} className="text-slate-300" />
             </button>
 
             {/* 4: Game History & Analysis Lab */}
@@ -2044,10 +2197,10 @@ export const App: React.FC = () => {
                 setAppState('history');
               }}
               onMouseEnter={() => setMenuIndex(4)}
-              className={`flex items-center justify-between p-3.5 rounded-2xl border transition-all cursor-pointer ${
+              className={`flex items-center justify-between p-3.5 rounded-2xl border transition-colors cursor-pointer ${
                 menuIndex === 4
-                  ? 'bg-blue-600 border-blue-400 text-white shadow-xl scale-[1.02] ring-2 ring-blue-400/50'
-                  : 'bg-slate-900/90 border-slate-800 text-slate-200 hover:bg-slate-850'
+                  ? 'bg-blue-600 border-blue-400 text-white shadow-lg ring-2 ring-blue-400/50'
+                  : 'bg-slate-900 border-slate-800 text-slate-200 hover:bg-slate-800'
               }`}
             >
               <div className="flex items-center gap-3.5">
@@ -2063,22 +2216,22 @@ export const App: React.FC = () => {
                       </span>
                     )}
                   </div>
-                  <div className="text-[11px] text-slate-400">
+                  <div className="text-[11px] text-slate-300">
                     Saved games, PGN text import & instant test samples
                   </div>
                 </div>
               </div>
-              <ChevronRight size={18} className="text-slate-400" />
+              <ChevronRight size={18} className="text-slate-300" />
             </button>
 
             {/* 5: Settings */}
             <button
               onClick={() => openSettings('menu')}
               onMouseEnter={() => setMenuIndex(5)}
-              className={`flex items-center justify-between p-3.5 rounded-2xl border transition-all cursor-pointer ${
+              className={`flex items-center justify-between p-3.5 rounded-2xl border transition-colors cursor-pointer ${
                 menuIndex === 5
-                  ? 'bg-blue-600 border-blue-400 text-white shadow-xl scale-[1.02] ring-2 ring-blue-400/50'
-                  : 'bg-slate-900/90 border-slate-800 text-slate-200 hover:bg-slate-850'
+                  ? 'bg-blue-600 border-blue-400 text-white shadow-lg ring-2 ring-blue-400/50'
+                  : 'bg-slate-900 border-slate-800 text-slate-200 hover:bg-slate-800'
               }`}
             >
               <div className="flex items-center gap-3.5">
@@ -2087,24 +2240,33 @@ export const App: React.FC = () => {
                 </div>
                 <div className="text-left">
                   <div className="font-bold text-sm sm:text-base">Settings</div>
-                  <div className="text-[11px] text-slate-400">
-                    Board, font size, shortcuts & AI
+                  <div className="text-[11px] text-slate-300">
+                    Display, text size, audio packs, performance & AI
                   </div>
                 </div>
               </div>
-              <ChevronRight size={18} className="text-slate-400" />
+              <ChevronRight size={18} className="text-slate-300" />
             </button>
           </div>
 
-          {/* Profile footer info */}
-          <div className="mt-5 flex items-center justify-center gap-3 text-xs font-medium text-slate-500">
+          {/* Profile & Quick Text Size footer info */}
+          <div className="mt-5 flex flex-wrap items-center justify-center gap-3 text-xs font-medium text-slate-400">
             <span>
-              Profile: <strong className="text-slate-300">{profileName}</strong>
+              Profile: <strong className="text-slate-200">{profileName}</strong>
             </span>
             <span>•</span>
             <span>
               Rating: <strong className="text-blue-400 font-mono">Elo {myElo}</strong>
             </span>
+            <span>•</span>
+            <button
+              type="button"
+              onClick={handleCycleFontScale}
+              className="px-2 py-0.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-[11px] font-bold transition-colors cursor-pointer"
+              title="Click to cycle Text Size"
+            >
+              Text: {settings.font_scale.toUpperCase()}
+            </button>
           </div>
         </div>
       )}
@@ -2198,17 +2360,33 @@ export const App: React.FC = () => {
         />
       )}
 
-      {/* Paused Modal */}
+      {/* Paused / Plus (+) Match Menu Modal */}
       {appState === 'paused' && (
         <PauseModal
+          moves={gameHistory}
+          viewPly={viewPly}
+          onSelectPly={(ply) => {
+            soundManager.playSound('select');
+            setViewPly(ply);
+          }}
+          incomingDrawOffer={incomingDrawOffer}
+          drawOfferSent={drawOfferSent}
+          opponentName={activeOpponentName}
+          initialConfirmResign={initialConfirmResign}
+          onOfferDraw={handleOfferDraw}
+          onAcceptDraw={handleAcceptDraw}
+          onDeclineDraw={handleDeclineDraw}
+          onConfirmResign={handleResign}
           onResume={() => {
             soundManager.playSound('click');
+            setInitialConfirmResign(false);
             setAppState('playing');
           }}
           onRestart={() => startNewGame(gameMode, playerColor)}
           onOpenSettings={() => openSettings('paused')}
           onQuitToMenu={() => {
             soundManager.playSound('click');
+            setInitialConfirmResign(false);
             lichessService.stopGameStream();
             setAppState('menu');
           }}
@@ -2318,7 +2496,9 @@ export const App: React.FC = () => {
           onHost={handleHostMultiplayer}
           onJoin={handleJoinMultiplayer}
           onBack={() => {
+            soundManager.stopSearchPulse();
             soundManager.playSound('click');
+            setConnectingOnline(false);
             setAppState('menu');
           }}
           isConnecting={connectingOnline}

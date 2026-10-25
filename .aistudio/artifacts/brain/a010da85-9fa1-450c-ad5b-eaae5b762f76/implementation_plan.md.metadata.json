@@ -1,6 +1,6 @@
 {
-  "summary":  "Implementation plan for adding full Keyboard (Arrow keys), TV Remote Control (MyPC SDK & Smart TV keycodes), and Gamepad Controller (W3C Gamepad API & MyPC Input) support across the chess board, side panels, action buttons, and all menus/dialogs.",
-  "updatedAt":  "2026-10-21T10:27:47.270124016Z",
+  "summary":  "Implementation plan for dual open-source non-MIDI sound packs (Wooden Classic & Modern Broadcast), per-player last-move cursor memory, real global Text Size scaling in Settings + Top HUD Bar, Low-CPU/Low-RAM optimizations with auto-detection + manual toggle, and cross-device Lichess API token persistence via MyPC.save/load.",
+  "updatedAt":  "2026-10-25T13:07:03.591502452Z",
   "requestFeedback":  true,
   "userFacing":  true
 }

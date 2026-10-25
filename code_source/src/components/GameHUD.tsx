@@ -32,6 +32,7 @@ import {
   Wifi,
   Send,
   MessageSquare,
+  Type,
 } from 'lucide-react';
 
 export interface ArenaHUDProps {
@@ -62,11 +63,16 @@ export interface ArenaHUDProps {
   savedGames: SavedGameRecord[];
   canUndo?: boolean;
   onUndo?: () => void;
+  incomingDrawOffer?: boolean;
+  drawOfferSent?: boolean;
   onOfferDraw?: () => void;
+  onAcceptDraw?: () => void;
+  onDeclineDraw?: () => void;
   onAbortOrRestart?: () => void;
   onGiveMoreTime?: () => void;
   onToggleSound: () => void;
   onToggleMusic: () => void;
+  onCycleFontScale?: () => void;
   onFlipBoard: () => void;
   onOpenSettings: () => void;
   onPause: () => void;
@@ -452,17 +458,23 @@ export const RightArenaPanel: React.FC<ArenaHUDProps> = ({
   myClockMs,
   soundEnabled,
   musicEnabled,
+  fontScale,
   shortcuts,
   moves,
   viewPly,
   onSelectPly,
   canUndo = false,
   onUndo,
+  incomingDrawOffer = false,
+  drawOfferSent = false,
   onOfferDraw,
+  onAcceptDraw,
+  onDeclineDraw,
   onAbortOrRestart,
   onGiveMoreTime,
   onToggleSound,
   onToggleMusic,
+  onCycleFontScale,
   onFlipBoard,
   onOpenSettings,
   onPause,
@@ -607,6 +619,16 @@ export const RightArenaPanel: React.FC<ArenaHUDProps> = ({
           </div>
 
           <div className="flex items-center gap-0.5">
+            {onCycleFontScale && (
+              <button
+                type="button"
+                onClick={onCycleFontScale}
+                title={`Text Size: ${fontScale.toUpperCase()} (Click to cycle)`}
+                className="px-1.5 py-1 rounded hover:bg-slate-800 hover:text-white text-[11px] font-bold flex items-center gap-0.5 transition-colors cursor-pointer"
+              >
+                <Type size={13} />
+              </button>
+            )}
             <button
               type="button"
               onClick={onFlipBoard}
@@ -697,7 +719,36 @@ export const RightArenaPanel: React.FC<ArenaHUDProps> = ({
           )}
         </div>
 
-        {/* Match Action Toolbar (X Abort/Restart | Undo | 1/2 Draw | Flag Resign | Pause) */}
+        {/* Incoming Draw Offer Banner (Lichess / Online P2P) */}
+        {incomingDrawOffer && (
+          <div className="flex items-center justify-between gap-2 px-3 py-2 bg-amber-500/20 border-t border-amber-500/60 text-amber-200 text-xs">
+            <span className="font-bold truncate">
+              ½ {opponentName} offers a draw
+            </span>
+            <div className="flex items-center gap-1.5 shrink-0">
+              {onAcceptDraw && (
+                <button
+                  type="button"
+                  onClick={onAcceptDraw}
+                  className="px-2.5 py-1 rounded bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[11px] cursor-pointer"
+                >
+                  Accept
+                </button>
+              )}
+              {onDeclineDraw && (
+                <button
+                  type="button"
+                  onClick={onDeclineDraw}
+                  className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 border border-slate-600 text-slate-200 font-semibold text-[11px] cursor-pointer"
+                >
+                  Decline
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Match Action Toolbar (X Abort/Restart | Undo | 1/2 Draw | Flag Resign | + Match Menu) */}
         <div className="flex items-center justify-around py-2 px-3 bg-[#1e1d1a] border-t border-b border-slate-800 text-slate-400">
           {onAbortOrRestart && (
             <button
@@ -722,9 +773,21 @@ export const RightArenaPanel: React.FC<ArenaHUDProps> = ({
           {onOfferDraw && (
             <button
               type="button"
-              onClick={onOfferDraw}
-              title="Offer / Claim Draw (½)"
-              className="px-2 py-1 rounded hover:bg-slate-800 hover:text-white font-serif font-bold text-base leading-none transition-colors cursor-pointer"
+              onClick={incomingDrawOffer && onAcceptDraw ? onAcceptDraw : onOfferDraw}
+              title={
+                incomingDrawOffer
+                  ? 'Accept Opponent Draw Offer (½)'
+                  : drawOfferSent
+                  ? 'Draw Offer Sent'
+                  : 'Offer / Claim Draw (½)'
+              }
+              className={`px-2 py-1 rounded font-serif font-bold text-base leading-none transition-colors cursor-pointer ${
+                incomingDrawOffer
+                  ? 'bg-emerald-600 text-white animate-pulse'
+                  : drawOfferSent
+                  ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                  : 'hover:bg-slate-800 hover:text-white'
+              }`}
             >
               ½
             </button>
@@ -740,7 +803,7 @@ export const RightArenaPanel: React.FC<ArenaHUDProps> = ({
           <button
             type="button"
             onClick={onPause}
-            title={`Pause Menu [${shortcuts.pause.toUpperCase()}]`}
+            title={`Match Menu (+ / ${shortcuts.pause.toUpperCase()})`}
             className="p-1.5 rounded hover:bg-slate-800 hover:text-white transition-colors cursor-pointer"
           >
             <Pause size={17} />
@@ -833,12 +896,14 @@ export const VerticalTopSection: React.FC<ArenaHUDProps> = ({
   speedLabel = 'Rapid',
   soundEnabled,
   musicEnabled,
+  fontScale,
   shortcuts,
   savedGames,
   onGiveMoreTime,
   onFlipBoard,
   onToggleSound,
   onToggleMusic,
+  onCycleFontScale,
   onOpenSettings,
   onPause,
 }) => {
@@ -885,6 +950,16 @@ export const VerticalTopSection: React.FC<ArenaHUDProps> = ({
         </div>
 
         <div className="flex items-center gap-0.5 text-slate-400 shrink-0">
+          {onCycleFontScale && (
+            <button
+              type="button"
+              onClick={onCycleFontScale}
+              title={`Text Size: ${fontScale.toUpperCase()} (Click to cycle)`}
+              className="p-1.5 rounded hover:bg-slate-800 hover:text-white transition-colors cursor-pointer"
+            >
+              <Type size={14} />
+            </button>
+          )}
           <button
             type="button"
             onClick={onFlipBoard}
@@ -1007,7 +1082,11 @@ export const VerticalBottomSection: React.FC<
   chatMessages,
   canUndo = false,
   onUndo,
+  incomingDrawOffer = false,
+  drawOfferSent = false,
   onOfferDraw,
+  onAcceptDraw,
+  onDeclineDraw,
   onAbortOrRestart,
   onResign,
   onOpenChatModal,
@@ -1214,6 +1293,35 @@ export const VerticalBottomSection: React.FC<
           )}
         </div>
 
+        {/* Incoming Draw Offer Banner on Vertical Screens */}
+        {incomingDrawOffer && (
+          <div className="flex items-center justify-between gap-2 px-2.5 py-1.5 bg-amber-500/20 border-t border-amber-500/60 text-amber-200 text-xs shrink-0">
+            <span className="font-bold truncate">
+              ½ {opponentName} offers a draw
+            </span>
+            <div className="flex items-center gap-1.5 shrink-0">
+              {onAcceptDraw && (
+                <button
+                  type="button"
+                  onClick={onAcceptDraw}
+                  className="px-2 py-0.5 rounded bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[11px] cursor-pointer"
+                >
+                  Accept
+                </button>
+              )}
+              {onDeclineDraw && (
+                <button
+                  type="button"
+                  onClick={onDeclineDraw}
+                  className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 border border-slate-600 text-slate-200 font-semibold text-[11px] cursor-pointer"
+                >
+                  Decline
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* Bottom Action Toolbar + Prominent Chat Button */}
         <div className="flex items-center justify-between px-2.5 py-1.5 bg-[#1e1d1a] border-t border-slate-800 text-slate-300 shrink-0">
           <div className="flex items-center gap-1 sm:gap-2">
@@ -1240,9 +1348,21 @@ export const VerticalBottomSection: React.FC<
             {onOfferDraw && (
               <button
                 type="button"
-                onClick={onOfferDraw}
-                title="Offer / Claim Draw (½)"
-                className="px-2 py-1 rounded hover:bg-slate-800 hover:text-white font-serif font-bold text-sm leading-none transition-colors cursor-pointer"
+                onClick={incomingDrawOffer && onAcceptDraw ? onAcceptDraw : onOfferDraw}
+                title={
+                  incomingDrawOffer
+                    ? 'Accept Opponent Draw Offer (½)'
+                    : drawOfferSent
+                    ? 'Draw Offer Sent'
+                    : 'Offer / Claim Draw (½)'
+                }
+                className={`px-2 py-1 rounded font-serif font-bold text-sm leading-none transition-colors cursor-pointer ${
+                  incomingDrawOffer
+                    ? 'bg-emerald-600 text-white animate-pulse'
+                    : drawOfferSent
+                    ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                    : 'hover:bg-slate-800 hover:text-white'
+                }`}
               >
                 ½
               </button>
@@ -1339,7 +1459,7 @@ export const BottomCrosstableBar: React.FC<{
   opponentName: string;
   savedGames: SavedGameRecord[];
   onFocusChat: () => void;
-}> = ({ profileName, opponentName, savedGames, onFocusChat }) => {
+}> = React.memo(({ profileName, opponentName, savedGames, onFocusChat }) => {
   const headToHead = useHeadToHead(profileName, opponentName, savedGames);
 
   return (
@@ -1409,4 +1529,4 @@ export const BottomCrosstableBar: React.FC<{
       </div>
     </div>
   );
-};
+});
