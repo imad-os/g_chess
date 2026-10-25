@@ -1,5 +1,5 @@
 // LichessModal Component
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Chess, Square, PieceSymbol } from 'chess.js';
 import {
   GameSettings,
@@ -29,9 +29,6 @@ import {
   RefreshCw,
   Sliders,
   ShieldCheck,
-  Eye,
-  EyeOff,
-  ClipboardPaste,
   Trash2,
 } from 'lucide-react';
 
@@ -76,9 +73,9 @@ export const LichessModal: React.FC<LichessModalProps> = ({
   const [activeTab, setActiveTab] = useState<'play' | 'puzzles' | 'games' | 'stats'>('play');
 
   // Token & Account state
+  const tokenInputRef = useRef<HTMLInputElement | null>(null);
   const [tokenInput, setTokenInput] = useState<string>(() => lichessService.getToken());
   const [showTokenDrawer, setShowTokenDrawer] = useState<boolean>(() => !lichessService.getToken());
-  const [showTokenText, setShowTokenText] = useState<boolean>(true);
   const [account, setAccount] = useState<LichessUserStats | null>(null);
   const [lookupUsername, setLookupUsername] = useState<string>(() => lichessService.getUsername());
   const [loadingAccount, setLoadingAccount] = useState<boolean>(false);
@@ -146,12 +143,27 @@ export const LichessModal: React.FC<LichessModalProps> = ({
   }, [onUsernameChange]);
 
   useEffect(() => {
+    // Restore iOS Safari native text selection and touch callout ("Paste" bubble) while Lichess modal is open
+    // (mypc-sdk.js sets documentElement.style.webkitUserSelect='none' and webkitTouchCallout='none')
+    const rootStyle = document.documentElement.style as any;
+    const bodyStyle = document.body.style as any;
+    const prevRootSelect = rootStyle.webkitUserSelect;
+    const prevRootCallout = rootStyle.webkitTouchCallout;
+    rootStyle.webkitUserSelect = 'text';
+    rootStyle.userSelect = 'text';
+    rootStyle.webkitTouchCallout = 'default';
+    bodyStyle.webkitUserSelect = 'text';
+    bodyStyle.userSelect = 'text';
+    bodyStyle.webkitTouchCallout = 'default';
+
     const initialTok = lichessService.getToken();
     if (initialTok) {
       setTokenInput(initialTok);
       loadAccountAndGames(initialTok);
     }
     return () => {
+      rootStyle.webkitUserSelect = prevRootSelect;
+      rootStyle.webkitTouchCallout = prevRootCallout;
       lichessService.cancelSeek();
     };
   }, [loadAccountAndGames]);
@@ -167,26 +179,6 @@ export const LichessModal: React.FC<LichessModalProps> = ({
     } else {
       setAccount(null);
       setAuthError(null);
-    }
-  };
-
-  // Paste token directly from system clipboard
-  const handlePasteToken = async () => {
-    soundManager.playSound('select');
-    try {
-      if (navigator.clipboard && typeof navigator.clipboard.readText === 'function') {
-        const clipText = await navigator.clipboard.readText();
-        const clean = sanitizeLichessToken(clipText);
-        if (clean) {
-          setTokenInput(clean);
-          lichessService.setToken(clean);
-          await loadAccountAndGames(clean);
-          return;
-        }
-      }
-      setAuthError('Clipboard was empty or permission was denied. Click the input box and press Ctrl+V / Cmd+V.');
-    } catch {
-      setAuthError('Browser blocked direct clipboard read. Click inside the token box and press Ctrl+V (or Cmd+V).');
     }
   };
 
@@ -512,59 +504,38 @@ export const LichessModal: React.FC<LichessModalProps> = ({
                   <code className="text-slate-300">challenge:write</code>, <code className="text-slate-300">puzzle:read</code>
                 </span>
               </div>
-              <div className="flex flex-wrap items-center gap-1.5 w-full lg:w-auto">
-                <div className="relative flex-1 sm:w-64 min-w-[200px] flex items-center">
-                  <input
-                    type={showTokenText ? 'text' : 'password'}
-                    value={tokenInput}
-                    onChange={(e) => setTokenInput(e.target.value)}
-                    onPaste={(e) => {
-                      e.stopPropagation();
-                      const pasted = e.clipboardData?.getData('text');
-                      if (pasted) {
-                        e.preventDefault();
-                        const cleaned = sanitizeLichessToken(pasted);
-                        setTokenInput(cleaned);
-                      }
-                    }}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Escape') {
-                        (e.currentTarget as HTMLInputElement).blur();
-                        return;
-                      }
-                      e.stopPropagation();
-                      if (e.key === 'Enter') {
-                        e.preventDefault();
-                        handleSaveToken();
-                      }
-                    }}
-                    onKeyUp={(e) => e.stopPropagation()}
-                    onContextMenu={(e) => e.stopPropagation()}
-                    autoComplete="off"
-                    autoCorrect="off"
-                    autoCapitalize="off"
-                    spellCheck={false}
-                    placeholder="lip_xxxxxxxxxxxxxxxxxxxx"
-                    className="w-full pl-3 pr-8 py-1.5 rounded-xl bg-slate-900 border border-slate-700 text-xs font-mono text-white focus:outline-none focus:border-white select-text"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowTokenText((v) => !v)}
-                    title={showTokenText ? 'Hide Token' : 'Show Token'}
-                    className="absolute right-2 text-slate-400 hover:text-white cursor-pointer"
-                  >
-                    {showTokenText ? <EyeOff size={14} /> : <Eye size={14} />}
-                  </button>
-                </div>
-                <button
-                  type="button"
-                  onClick={handlePasteToken}
-                  title="Paste Token from Clipboard"
-                  className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 font-bold text-xs transition cursor-pointer shrink-0"
-                >
-                  <ClipboardPaste size={13} />
-                  Paste
-                </button>
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  handleSaveToken();
+                }}
+                className="flex flex-wrap items-center gap-1.5 w-full lg:w-auto"
+              >
+                <input
+                  ref={tokenInputRef}
+                  type="text"
+                  name="username"
+                  id="lichess-username-token"
+                  autoComplete="username"
+                  value={tokenInput}
+                  onChange={(e) => setTokenInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Escape') {
+                      (e.currentTarget as HTMLInputElement).blur();
+                      return;
+                    }
+                    e.stopPropagation();
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      handleSaveToken();
+                    }
+                  }}
+                  onKeyUp={(e) => e.stopPropagation()}
+                  onContextMenu={(e) => e.stopPropagation()}
+                  onDoubleClick={(e) => e.stopPropagation()}
+                  placeholder="Lichess username or lip_ token..."
+                  className="flex-1 sm:w-64 min-w-[200px] px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-700 text-xs text-white focus:outline-none focus:border-white select-text"
+                />
                 {tokenInput && (
                   <button
                     type="button"
@@ -577,14 +548,13 @@ export const LichessModal: React.FC<LichessModalProps> = ({
                   </button>
                 )}
                 <button
-                  type="button"
-                  onClick={handleSaveToken}
+                  type="submit"
                   disabled={loadingAccount}
                   className="px-4 py-1.5 rounded-xl bg-white hover:bg-slate-200 text-slate-950 font-extrabold text-xs transition cursor-pointer shrink-0"
                 >
                   {loadingAccount ? 'Verifying...' : 'Save Token'}
                 </button>
-              </div>
+              </form>
             </div>
             {authError && (
               <div className="text-xs text-red-300 bg-red-950/60 border border-red-800/70 rounded-lg px-3 py-2 flex items-center gap-2">

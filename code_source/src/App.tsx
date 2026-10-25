@@ -1703,8 +1703,26 @@ export const App: React.FC = () => {
     const onBodyContextMenu = (e: MouseEvent) => {
       const targetEl = e.target as HTMLElement | null;
       if (isElementTextInput(targetEl)) {
-        // Allow native browser Right-Click -> Paste menu inside text inputs
+        // Allow native browser Right-Click / iOS Long-Press -> Paste menu inside text inputs
         e.stopPropagation();
+      }
+    };
+
+    const onBodyDblClick = (e: MouseEvent) => {
+      const targetEl = e.target as HTMLElement | null;
+      if (isElementTextInput(targetEl)) {
+        // Allow iOS double-tap text selection / Paste callout inside text inputs
+        e.stopPropagation();
+      }
+    };
+
+    const onBodyFocusIn = (e: FocusEvent) => {
+      const targetEl = e.target as HTMLElement | null;
+      if (isElementTextInput(targetEl)) {
+        const rootStyle = document.documentElement.style as any;
+        rootStyle.webkitUserSelect = 'text';
+        rootStyle.userSelect = 'text';
+        rootStyle.webkitTouchCallout = 'default';
       }
     };
 
@@ -1757,11 +1775,15 @@ export const App: React.FC = () => {
     document.body.addEventListener('keydown', onBodyKeyDown);
     document.body.addEventListener('keyup', onBodyKeyUp);
     document.body.addEventListener('contextmenu', onBodyContextMenu);
+    document.body.addEventListener('dblclick', onBodyDblClick);
+    document.body.addEventListener('focusin', onBodyFocusIn);
     window.addEventListener('keydown', onKey);
     return () => {
       document.body.removeEventListener('keydown', onBodyKeyDown);
       document.body.removeEventListener('keyup', onBodyKeyUp);
       document.body.removeEventListener('contextmenu', onBodyContextMenu);
+      document.body.removeEventListener('dblclick', onBodyDblClick);
+      document.body.removeEventListener('focusin', onBodyFocusIn);
       window.removeEventListener('keydown', onKey);
     };
   }, [appState, settings.shortcuts, pendingPromotion, mobileChatOpen, dispatchUnifiedAction]);
