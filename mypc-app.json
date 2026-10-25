@@ -17,11 +17,11 @@
   "touch": {
     "buttons": [
       { "label": "OK", "action": "ok" },
-      { "label": "+", "action": "plus" }
+      { "label": "+", "action": "menu" }
     ],
     "catalog": [
       { "label": "OK", "action": "ok" },
-      { "label": "+", "action": "plus" },
+      { "label": "+", "action": "menu" },
       { "label": "B", "action": "run" },
       { "label": "C", "action": "cancel" }
     ]
