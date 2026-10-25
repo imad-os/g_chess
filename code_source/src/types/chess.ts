@@ -16,7 +16,35 @@ export type AppState =
   | 'analysis_view' 
   | 'analysis_learn';
 
-export type FontScale = 'small' | 'standard' | 'large' | 'xlarge';
+export type FontScale = 'small' | 'standard' | 'large' | 'xlarge' | number;
+
+export const MIN_FONT_SIZE = 10;
+export const MAX_FONT_SIZE = 24;
+export const DEFAULT_FONT_SIZE = 16;
+
+export const getNumericFontSize = (settings?: Partial<GameSettings>): number => {
+  if (!settings) return DEFAULT_FONT_SIZE;
+  if (typeof settings.font_size === 'number' && !isNaN(settings.font_size)) {
+    return Math.max(MIN_FONT_SIZE, Math.min(MAX_FONT_SIZE, Math.round(settings.font_size)));
+  }
+  if (typeof settings.font_scale === 'number' && !isNaN(settings.font_scale)) {
+    return Math.max(MIN_FONT_SIZE, Math.min(MAX_FONT_SIZE, Math.round(settings.font_scale)));
+  }
+  const map: Record<string, number> = {
+    small: 12,
+    standard: 15,
+    large: 18,
+    xlarge: 22,
+  };
+  return map[String(settings.font_scale)] || DEFAULT_FONT_SIZE;
+};
+
+export const getFontScaleCategory = (num: number): 'small' | 'standard' | 'large' | 'xlarge' => {
+  if (num <= 12) return 'small';
+  if (num <= 15) return 'standard';
+  if (num <= 19) return 'large';
+  return 'xlarge';
+};
 
 export type SoundPack = 'wooden' | 'broadcast';
 
@@ -34,6 +62,7 @@ export interface GameSettings {
   theme: 'dark' | 'light' | 'emerald';
   piece_theme: 'classic' | 'modern';
   font_scale: FontScale;
+  font_size?: number;
   shortcuts: KeyboardShortcuts;
   ai_elo: number;
   ai_depth: number;

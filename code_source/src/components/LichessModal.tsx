@@ -439,11 +439,19 @@ export const LichessModal: React.FC<LichessModalProps> = ({
   return (
     <div
       data-tv-modal="true"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-md p-2 sm:p-4 overflow-hidden"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-md p-2 sm:p-3 overflow-hidden"
     >
-      <div className="bg-slate-900 border border-slate-700/80 rounded-2xl max-w-4xl w-full max-h-[95vh] flex flex-col shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200">
-        {/* Top Header */}
-        <div className="flex flex-wrap items-center justify-between gap-2 px-5 py-3 border-b border-slate-800 bg-slate-950/80 shrink-0">
+      <div
+        className={`bg-slate-900 border border-slate-700/80 rounded-2xl w-full max-h-[96vh] flex flex-col shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200 ${
+          activeTab === 'puzzles' ? 'max-w-6xl' : 'max-w-4xl'
+        }`}
+      >
+        {/* Top Header (Hidden on wide screens md+ during Puzzles since it moves to the Left Side Space!) */}
+        <div
+          className={`flex flex-wrap items-center justify-between gap-2 px-5 py-3 border-b border-slate-800 bg-slate-950/80 shrink-0 ${
+            activeTab === 'puzzles' ? 'md:hidden' : ''
+          }`}
+        >
           <div className="flex items-center gap-3">
             <div className="w-9 h-9 rounded-xl bg-white text-slate-950 flex items-center justify-center font-black text-lg shadow">
               ♞
@@ -462,7 +470,7 @@ export const LichessModal: React.FC<LichessModalProps> = ({
                   </span>
                 )}
               </div>
-              <p className="text-[11px] text-slate-400">
+              <p className="text-[11px] text-slate-400 hidden sm:block">
                 Matchmaking • Rated Games • Tactical Puzzles • Old Games & Stats (MyPC Proxy Ready)
               </p>
             </div>
@@ -494,7 +502,11 @@ export const LichessModal: React.FC<LichessModalProps> = ({
 
         {/* Collapsible Personal API Access Token Bar */}
         {showTokenDrawer && (
-          <div className="px-5 py-3 bg-slate-950 border-b border-slate-800 space-y-2.5 shrink-0">
+          <div
+            className={`px-5 py-3 bg-slate-950 border-b border-slate-800 space-y-2.5 shrink-0 ${
+              activeTab === 'puzzles' ? 'md:hidden' : ''
+            }`}
+          >
             <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-2.5">
               <div className="text-xs text-slate-300">
                 <strong className="text-white">Personal API Access Token</strong> (saved to your MyPC User Profile):
@@ -565,11 +577,15 @@ export const LichessModal: React.FC<LichessModalProps> = ({
           </div>
         )}
 
-        {/* Navigation Tabs */}
-        <div className="flex border-b border-slate-800 bg-slate-950/40 px-4 pt-2 gap-1 sm:gap-2 overflow-x-auto shrink-0">
+        {/* Navigation Tabs (Hidden on wide screens md+ during Puzzles since tabs move to the Left Side Space!) */}
+        <div
+          className={`flex border-b border-slate-800 bg-slate-950/40 px-4 pt-2 gap-1 sm:gap-2 overflow-x-auto shrink-0 ${
+            activeTab === 'puzzles' ? 'md:hidden' : ''
+          }`}
+        >
           <button
-            data-tv-tab="true"
-            data-tv-autofocus="true"
+            data-tv-tab={activeTab !== 'puzzles' ? 'true' : undefined}
+            data-tv-autofocus={activeTab === 'play' ? 'true' : undefined}
             onClick={() => setActiveTab('play')}
             className={`flex items-center gap-1.5 px-3.5 py-2 text-xs sm:text-sm font-bold border-b-2 transition cursor-pointer whitespace-nowrap ${
               activeTab === 'play'
@@ -581,8 +597,11 @@ export const LichessModal: React.FC<LichessModalProps> = ({
             Quick Pairing Grid
           </button>
           <button
-            data-tv-tab="true"
-            onClick={() => setActiveTab('puzzles')}
+            data-tv-tab={activeTab !== 'puzzles' ? 'true' : undefined}
+            onClick={() => {
+              setShowTokenDrawer(false);
+              setActiveTab('puzzles');
+            }}
             className={`flex items-center gap-1.5 px-3.5 py-2 text-xs sm:text-sm font-bold border-b-2 transition cursor-pointer whitespace-nowrap ${
               activeTab === 'puzzles'
                 ? 'border-white text-white bg-white/10 rounded-t-lg'
@@ -593,7 +612,7 @@ export const LichessModal: React.FC<LichessModalProps> = ({
             Puzzles (Streak: {puzzleStats.streak})
           </button>
           <button
-            data-tv-tab="true"
+            data-tv-tab={activeTab !== 'puzzles' ? 'true' : undefined}
             onClick={() => setActiveTab('games')}
             className={`flex items-center gap-1.5 px-3.5 py-2 text-xs sm:text-sm font-bold border-b-2 transition cursor-pointer whitespace-nowrap ${
               activeTab === 'games'
@@ -605,7 +624,7 @@ export const LichessModal: React.FC<LichessModalProps> = ({
             My Lichess Games
           </button>
           <button
-            data-tv-tab="true"
+            data-tv-tab={activeTab !== 'puzzles' ? 'true' : undefined}
             onClick={() => setActiveTab('stats')}
             className={`flex items-center gap-1.5 px-3.5 py-2 text-xs sm:text-sm font-bold border-b-2 transition cursor-pointer whitespace-nowrap ${
               activeTab === 'stats'
@@ -619,7 +638,7 @@ export const LichessModal: React.FC<LichessModalProps> = ({
         </div>
 
         {/* Main Content Area */}
-        <div className="p-4 sm:p-5 overflow-y-auto flex-1">
+        <div className="p-3 sm:p-5 overflow-y-auto flex-1">
           {/* TAB 1: LICHESS 12-TILE MATCHMAKING GRID */}
           {activeTab === 'play' && (
             <div className="space-y-4">
@@ -861,17 +880,258 @@ export const LichessModal: React.FC<LichessModalProps> = ({
             </div>
           )}
 
-          {/* TAB 2: TACTICAL PUZZLES */}
+          {/* TAB 2: TACTICAL PUZZLES — Widescreen TV/PC puts Header + Tabs + Puzzle Info in the Left Side Space and full Board on the Right */}
           {activeTab === 'puzzles' && (
             <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-center">
-              <div className="md:col-span-7 flex items-center justify-center">
+              {/* LEFT SIDE SPACE on Wide Screens (TV / PC): Header + Navigation Tabs + Puzzle Info & Controls */}
+              <div className="order-2 md:order-1 md:col-span-5 flex flex-col gap-3">
+                {/* Widescreen Left-Side Header & Navigation Card */}
+                <div className="hidden md:flex md:flex-col gap-2.5 bg-slate-950/90 border border-slate-800 rounded-2xl p-3.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-8 h-8 rounded-xl bg-white text-slate-950 flex items-center justify-center font-black text-base shadow shrink-0">
+                        ♞
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-1.5">
+                          <h2 className="text-sm font-black text-white tracking-tight">Lichess Online</h2>
+                          {account && (
+                            <span className="flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-[10px] font-bold">
+                              <CheckCircle2 size={10} />
+                              {account.username}
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-[10px] text-slate-400">Tactical Puzzles & Online Suite</p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        onClick={() => setShowTokenDrawer((v) => !v)}
+                        className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-bold border transition cursor-pointer ${
+                          showTokenDrawer
+                            ? 'bg-white text-slate-950 border-white'
+                            : 'bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700'
+                        }`}
+                      >
+                        <Key size={12} />
+                        Token
+                      </button>
+                      <button
+                        onClick={() => {
+                          lichessService.cancelSeek();
+                          onClose();
+                        }}
+                        className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white transition cursor-pointer"
+                      >
+                        <X size={16} />
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Collapsible Token Input inside Left Side Space */}
+                  {showTokenDrawer && (
+                    <form
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        handleSaveToken();
+                      }}
+                      className="flex flex-col gap-1.5 pt-2 border-t border-slate-800"
+                    >
+                      <input
+                        type="text"
+                        name="username"
+                        autoComplete="username"
+                        value={tokenInput}
+                        onChange={(e) => setTokenInput(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Escape') {
+                            (e.currentTarget as HTMLInputElement).blur();
+                            return;
+                          }
+                          e.stopPropagation();
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            handleSaveToken();
+                          }
+                        }}
+                        onKeyUp={(e) => e.stopPropagation()}
+                        placeholder="Lichess username or lip_ token..."
+                        className="w-full px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-xs text-white focus:outline-none focus:border-white select-text"
+                      />
+                      <div className="flex gap-1.5">
+                        {tokenInput && (
+                          <button
+                            type="button"
+                            onClick={handleClearToken}
+                            className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-red-950 text-slate-300 hover:text-red-300 text-[11px] font-bold border border-slate-700 cursor-pointer"
+                          >
+                            Clear
+                          </button>
+                        )}
+                        <button
+                          type="submit"
+                          disabled={loadingAccount}
+                          className="flex-1 py-1 rounded-lg bg-white hover:bg-slate-200 text-slate-950 font-extrabold text-[11px] cursor-pointer"
+                        >
+                          {loadingAccount ? 'Verifying...' : 'Save Token'}
+                        </button>
+                      </div>
+                    </form>
+                  )}
+
+                  {/* 2x2 Navigation Tabs inside Left Side Space */}
+                  <div className="grid grid-cols-2 gap-1.5 pt-1 border-t border-slate-800/80">
+                    <button
+                      data-tv-tab="true"
+                      onClick={() => setActiveTab('play')}
+                      className="flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-lg text-[11px] font-bold bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800 transition cursor-pointer"
+                    >
+                      <Swords size={13} />
+                      Pairing Grid
+                    </button>
+                    <button
+                      data-tv-tab="true"
+                      onClick={() => setActiveTab('puzzles')}
+                      className="flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-lg text-[11px] font-bold bg-white text-slate-950 border border-white shadow transition cursor-pointer"
+                    >
+                      <Puzzle size={13} />
+                      Puzzles ({puzzleStats.streak})
+                    </button>
+                    <button
+                      data-tv-tab="true"
+                      onClick={() => setActiveTab('games')}
+                      className="flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-lg text-[11px] font-bold bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800 transition cursor-pointer"
+                    >
+                      <History size={13} />
+                      My Games
+                    </button>
+                    <button
+                      data-tv-tab="true"
+                      onClick={() => setActiveTab('stats')}
+                      className="flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-lg text-[11px] font-bold bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800 transition cursor-pointer"
+                    >
+                      <BarChart3 size={13} />
+                      Stats & Streaks
+                    </button>
+                  </div>
+                </div>
+
+                {/* Puzzle Info, Status & Controls Card */}
+                <div className="bg-slate-950/80 border border-slate-800 rounded-2xl p-3.5 sm:p-4 space-y-3">
+                  <div className="flex items-center justify-between border-b border-slate-800 pb-2.5">
+                    <div>
+                      <div className="text-[11px] uppercase font-bold text-amber-400 tracking-wider">
+                        Lichess Tactical Puzzle
+                      </div>
+                      <div className="text-sm sm:text-base font-black text-white">
+                        {puzzle ? `Puzzle #${puzzle.id} (Rating ${puzzle.rating})` : 'Daily Puzzle'}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-amber-500/20 border border-amber-500/40 text-amber-300 font-extrabold text-xs">
+                      <Flame size={14} />
+                      Streak: {puzzleStats.streak}
+                    </div>
+                  </div>
+
+                  {/* Turn Prompt / Status */}
+                  <div
+                    className={`p-3 rounded-xl border text-xs sm:text-sm font-bold flex items-center gap-2.5 ${
+                      puzzleStatus === 'correct'
+                        ? 'bg-emerald-950/60 border-emerald-600/50 text-emerald-200'
+                        : puzzleStatus === 'wrong'
+                        ? 'bg-red-950/60 border-red-600/50 text-red-200'
+                        : 'bg-slate-900 border-slate-800 text-slate-200'
+                    }`}
+                  >
+                    {puzzleStatus === 'correct' ? (
+                      <>
+                        <CheckCircle2 className="text-emerald-400 shrink-0" size={18} />
+                        <span>Puzzle Solved! Brilliant tactical vision!</span>
+                      </>
+                    ) : puzzleStatus === 'wrong' ? (
+                      <>
+                        <AlertCircle className="text-red-400 shrink-0" size={18} />
+                        <span>Not the best move! Streak reset. Try again or load next puzzle.</span>
+                      </>
+                    ) : (
+                      <>
+                        <div
+                          className={`w-4 h-4 rounded-full shrink-0 border ${
+                            puzzlePlayerColor === 'w' ? 'bg-white border-slate-300' : 'bg-slate-950 border-slate-500'
+                          }`}
+                        />
+                        <span>
+                          Find the best move for{' '}
+                          <strong className="text-white">{puzzlePlayerColor === 'w' ? 'White' : 'Black'}</strong>
+                        </span>
+                      </>
+                    )}
+                  </div>
+
+                  {/* Themes */}
+                  {puzzle && puzzle.themes.length > 0 && (
+                    <div className="space-y-1">
+                      <div className="text-[10px] font-bold text-slate-400 uppercase">Tactical Motifs</div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {puzzle.themes.slice(0, 5).map((th) => (
+                          <span
+                            key={th}
+                            className="px-2 py-0.5 rounded-full bg-slate-900 border border-slate-800 text-[10px] text-slate-300"
+                          >
+                            {th}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Puzzle Record */}
+                  <div className="grid grid-cols-3 gap-2 pt-0.5 text-center">
+                    <div className="p-2 rounded-xl bg-slate-900 border border-slate-800">
+                      <div className="text-[10px] text-slate-400 uppercase font-bold">Current Streak</div>
+                      <div className="text-sm sm:text-base font-black text-amber-400">{puzzleStats.streak}</div>
+                    </div>
+                    <div className="p-2 rounded-xl bg-slate-900 border border-slate-800">
+                      <div className="text-[10px] text-slate-400 uppercase font-bold">Best Streak</div>
+                      <div className="text-sm sm:text-base font-black text-emerald-400">{puzzleStats.bestStreak}</div>
+                    </div>
+                    <div className="p-2 rounded-xl bg-slate-900 border border-slate-800">
+                      <div className="text-[10px] text-slate-400 uppercase font-bold">Total Solved</div>
+                      <div className="text-sm sm:text-base font-black text-white">{puzzleStats.solved}</div>
+                    </div>
+                  </div>
+
+                  <div className="flex gap-2 pt-1">
+                    {puzzleStatus === 'wrong' && (
+                      <button
+                        onClick={() => setPuzzleStatus('solving')}
+                        className="flex-1 py-2.5 px-3 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-extrabold text-xs transition cursor-pointer"
+                      >
+                        Retry Move
+                      </button>
+                    )}
+                    <button
+                      onClick={() => loadNewPuzzle('next')}
+                      className="flex-1 flex items-center justify-center gap-1.5 py-2.5 px-4 rounded-xl bg-white hover:bg-slate-200 text-slate-950 font-extrabold text-xs transition cursor-pointer"
+                    >
+                      <RefreshCw size={14} />
+                      Next Puzzle
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* MAIN PUZZLE BOARD AREA (Right / Center on Wide Screens, Full Unobstructed Height) */}
+              <div className="order-1 md:order-2 md:col-span-7 flex items-center justify-center">
                 {loadingPuzzle ? (
                   <div className="flex flex-col items-center justify-center h-64 space-y-2">
                     <Loader2 className="animate-spin text-white" size={32} />
                     <span className="text-xs text-slate-400">Loading Lichess Tactical Puzzle...</span>
                   </div>
                 ) : (
-                  <div className="w-full max-w-[360px] flex items-center justify-center">
+                  <div className="flex items-center justify-center">
                     <ChessBoard
                       chess={puzzleChess}
                       flipped={puzzlePlayerColor === 'b'}
@@ -880,114 +1140,12 @@ export const LichessModal: React.FC<LichessModalProps> = ({
                       lastMove={puzzleLastMove}
                       cursorSquare={null}
                       settings={settings}
+                      sizeVariant="puzzle"
                       enableDomFocus={true}
                       onSquareClick={handlePuzzleSquareClick}
                     />
                   </div>
                 )}
-              </div>
-
-              <div className="md:col-span-5 bg-slate-950/80 border border-slate-800 rounded-2xl p-4 space-y-4">
-                <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-                  <div>
-                    <div className="text-xs uppercase font-bold text-amber-400 tracking-wider">
-                      Lichess Tactical Puzzle
-                    </div>
-                    <div className="text-sm sm:text-base font-black text-white">
-                      {puzzle ? `Puzzle #${puzzle.id} (Rating ${puzzle.rating})` : 'Daily Puzzle'}
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-1.5 px-3 py-1 rounded-xl bg-amber-500/20 border border-amber-500/40 text-amber-300 font-extrabold text-xs">
-                    <Flame size={15} />
-                    Streak: {puzzleStats.streak}
-                  </div>
-                </div>
-
-                {/* Turn Prompt / Status */}
-                <div
-                  className={`p-3.5 rounded-xl border text-xs sm:text-sm font-bold flex items-center gap-2.5 ${
-                    puzzleStatus === 'correct'
-                      ? 'bg-emerald-950/60 border-emerald-600/50 text-emerald-200'
-                      : puzzleStatus === 'wrong'
-                      ? 'bg-red-950/60 border-red-600/50 text-red-200'
-                      : 'bg-slate-900 border-slate-800 text-slate-200'
-                  }`}
-                >
-                  {puzzleStatus === 'correct' ? (
-                    <>
-                      <CheckCircle2 className="text-emerald-400 shrink-0" size={20} />
-                      <span>Puzzle Solved! Brilliant tactical vision!</span>
-                    </>
-                  ) : puzzleStatus === 'wrong' ? (
-                    <>
-                      <AlertCircle className="text-red-400 shrink-0" size={20} />
-                      <span>Not the best move! Streak reset. Try again or load next puzzle.</span>
-                    </>
-                  ) : (
-                    <>
-                      <div
-                        className={`w-4 h-4 rounded-full shrink-0 border ${
-                          puzzlePlayerColor === 'w' ? 'bg-white border-slate-300' : 'bg-slate-950 border-slate-500'
-                        }`}
-                      />
-                      <span>
-                        Find the best move for{' '}
-                        <strong className="text-white">{puzzlePlayerColor === 'w' ? 'White' : 'Black'}</strong>
-                      </span>
-                    </>
-                  )}
-                </div>
-
-                {/* Themes */}
-                {puzzle && puzzle.themes.length > 0 && (
-                  <div className="space-y-1.5">
-                    <div className="text-[11px] font-bold text-slate-400 uppercase">Tactical Motifs</div>
-                    <div className="flex flex-wrap gap-1.5">
-                      {puzzle.themes.slice(0, 5).map((th) => (
-                        <span
-                          key={th}
-                          className="px-2.5 py-0.5 rounded-full bg-slate-900 border border-slate-800 text-[11px] text-slate-300"
-                        >
-                          {th}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* Puzzle Record */}
-                <div className="grid grid-cols-3 gap-2 pt-1 text-center">
-                  <div className="p-2.5 rounded-xl bg-slate-900 border border-slate-800">
-                    <div className="text-[10px] text-slate-400 uppercase font-bold">Current Streak</div>
-                    <div className="text-base font-black text-amber-400">{puzzleStats.streak}</div>
-                  </div>
-                  <div className="p-2.5 rounded-xl bg-slate-900 border border-slate-800">
-                    <div className="text-[10px] text-slate-400 uppercase font-bold">Best Streak</div>
-                    <div className="text-base font-black text-emerald-400">{puzzleStats.bestStreak}</div>
-                  </div>
-                  <div className="p-2.5 rounded-xl bg-slate-900 border border-slate-800">
-                    <div className="text-[10px] text-slate-400 uppercase font-bold">Total Solved</div>
-                    <div className="text-base font-black text-white">{puzzleStats.solved}</div>
-                  </div>
-                </div>
-
-                <div className="flex gap-2 pt-2">
-                  {puzzleStatus === 'wrong' && (
-                    <button
-                      onClick={() => setPuzzleStatus('solving')}
-                      className="flex-1 py-2.5 px-3 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-extrabold text-xs transition cursor-pointer"
-                    >
-                      Retry Move
-                    </button>
-                  )}
-                  <button
-                    onClick={() => loadNewPuzzle('next')}
-                    className="flex-1 flex items-center justify-center gap-1.5 py-2.5 px-4 rounded-xl bg-white hover:bg-slate-200 text-slate-950 font-extrabold text-xs transition cursor-pointer"
-                  >
-                    <RefreshCw size={14} />
-                    Next Puzzle
-                  </button>
-                </div>
               </div>
             </div>
           )}

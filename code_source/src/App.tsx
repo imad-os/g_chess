@@ -9,6 +9,8 @@ import {
   SavedGameRecord,
   MoveRecord,
   ChatMessage,
+  getNumericFontSize,
+  getFontScaleCategory,
 } from './types/chess';
 import { ChessBoard } from './components/ChessBoard';
 import {
@@ -282,17 +284,15 @@ export const App: React.FC = () => {
     soundManager.setSoundPack(settings.sound_pack || 'wooden');
   }, [settings.sound_enabled, settings.music_enabled, settings.sound_pack]);
 
+  // Compute current numeric font size (10-24px, default 16px)
+  const numericFontSize = useMemo(() => getNumericFontSize(settings), [settings]);
+
   // Apply global root typography scaling so all rem-based Tailwind text & spacing scale cleanly
   useEffect(() => {
     if (typeof document === 'undefined') return;
-    const rootFontMap: Record<string, string> = {
-      small: '14px',
-      standard: '15.5px',
-      large: '17.5px',
-      xlarge: '20px',
-    };
-    document.documentElement.style.fontSize = rootFontMap[settings.font_scale] || '16px';
-  }, [settings.font_scale]);
+    document.documentElement.style.fontSize = `${numericFontSize}px`;
+    document.documentElement.style.setProperty('--app-font-size', `${numericFontSize}px`);
+  }, [numericFontSize]);
 
   // Free Stockfish Web Worker RAM when returning to Main Menu in low-CPU mode
   const isLowCpuActive = useMemo(() => {
@@ -562,14 +562,16 @@ export const App: React.FC = () => {
 
           setLastMove({ from, to });
 
-          // Remember each player's own last move square so when their turn comes, focus starts on their own last move!
+          // Remember each player's own last move square
           lastPlayerMoveSquareRef.current[move.color] = to;
           const nextTurn = nextChess.turn();
           if (gameMode === 'local') {
+            // Only 2-player Couch Play (sharing 1 device) switches cursor focus on turn change
             setCursorSquare(lastPlayerMoveSquareRef.current[nextTurn]);
-          } else {
-            // In AI / Online / Lichess: always keep the local player's cursor on their own last move square
-            setCursorSquare(lastPlayerMoveSquareRef.current[playerColor]);
+          } else if (move.color === playerColor) {
+            // In 1-player modes (AI, Online, Lichess): never reset cursorSquare on opponent's move
+            // so the player can freely move the cursor and prepare their next move during opponent's turn
+            setCursorSquare(to);
           }
 
           setSelectedSquare(null);
@@ -681,6 +683,8 @@ export const App: React.FC = () => {
         setLichessUsername(myUsername);
       }
 
+      let initialCursorInitialized = false;
+
       lichessService.streamBoardGame(
         gameId,
         myUsername,
@@ -734,7 +738,10 @@ export const App: React.FC = () => {
           }
 
           lastPlayerMoveSquareRef.current = { w: wLastSq, b: bLastSq };
-          setCursorSquare(lastPlayerMoveSquareRef.current[state.myColor]);
+          if (!initialCursorInitialized) {
+            initialCursorInitialized = true;
+            setCursorSquare(lastPlayerMoveSquareRef.current[state.myColor]);
+          }
 
           if (rebuiltMoves.length > gameHistoryRef.current.length && lastMoveObj) {
             if (rebChess.isCheckmate()) {
@@ -1456,7 +1463,14 @@ export const App: React.FC = () => {
           return;
         }
         if (action === 'resign') {
-          handleRequestResignConfirm();
+          const resignBtn = document.querySelector<HTMLButtonElement>(
+            'button[title*="Resign Match"], button[title*="confirm resignation"]'
+          );
+          if (resignBtn) {
+            resignBtn.click();
+          } else {
+            handleRequestResignConfirm();
+          }
           return;
         }
         if (action === 'chat') {
@@ -1909,11 +1923,16 @@ export const App: React.FC = () => {
 
   const handleCycleFontScale = useCallback(() => {
     soundManager.playSound('select');
-    const order: GameSettings['font_scale'][] = ['small', 'standard', 'large', 'xlarge'];
+    const cycleLevels = [12, 14, 16, 18, 20, 22];
     setSettings((prev) => {
-      const idx = order.indexOf(prev.font_scale);
-      const nextScale = order[(idx + 1) % order.length];
-      const updated = { ...prev, font_scale: nextScale };
+      const current = getNumericFontSize(prev);
+      const nextSize = cycleLevels.find((sz) => sz > current) || cycleLevels[0];
+      const nextCategory = getFontScaleCategory(nextSize);
+      const updated: GameSettings = {
+        ...prev,
+        font_scale: nextCategory,
+        font_size: nextSize,
+      };
       myPCService.save('config', updated);
       return updated;
     });
@@ -2068,11 +2087,11 @@ export const App: React.FC = () => {
 
   // Dynamic root typography scale
   const scaleClass = useMemo(() => {
-    if (settings.font_scale === 'xlarge') return 'text-base';
-    if (settings.font_scale === 'large') return 'text-sm';
-    if (settings.font_scale === 'small') return 'text-[11px]';
+    if (numericFontSize >= 20) return 'text-base';
+    if (numericFontSize >= 17) return 'text-sm';
+    if (numericFontSize <= 12) return 'text-[11px]';
     return 'text-xs';
-  }, [settings.font_scale]);
+  }, [numericFontSize]);
 
   const canUndo =
     (gameMode === 'ai' || gameMode === 'local') && gameHistory.length > 0;
@@ -2111,6 +2130,7 @@ export const App: React.FC = () => {
     soundEnabled: settings.sound_enabled,
     musicEnabled: settings.music_enabled,
     fontScale: settings.font_scale,
+    fontSize: numericFontSize,
     shortcuts: settings.shortcuts,
     moves: gameHistory,
     viewPly,
@@ -2144,7 +2164,7 @@ export const App: React.FC = () => {
       setInitialConfirmResign(false);
       setAppState('paused');
     },
-    onResign: handleRequestResignConfirm,
+    onResign: handleResign,
     chatInputRef,
   };
 
@@ -2354,7 +2374,7 @@ export const App: React.FC = () => {
               className="px-2 py-0.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-[11px] font-bold transition-colors cursor-pointer"
               title="Click to cycle Text Size"
             >
-              Text: {settings.font_scale.toUpperCase()}
+              Text: {numericFontSize}px
             </button>
           </div>
         </div>

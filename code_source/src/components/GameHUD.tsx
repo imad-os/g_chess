@@ -52,6 +52,7 @@ export interface ArenaHUDProps {
   soundEnabled: boolean;
   musicEnabled: boolean;
   fontScale: FontScale;
+  fontSize?: number;
   shortcuts: KeyboardShortcuts;
   moves: MoveRecord[];
   viewPly: number | null;
@@ -86,6 +87,71 @@ const formatDigitalClock = (ms?: number) => {
   const mins = Math.floor(totalSec / 60);
   const secs = totalSec % 60;
   return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+};
+
+/**
+ * Inline Resign Button: First click lights up bright red with "Confirm?",
+ * second click confirms resignation. Auto-reverts after 4 seconds.
+ */
+interface InlineResignButtonProps {
+  onResign: () => void;
+  shortcut: string;
+  isCompact?: boolean;
+}
+
+export const InlineResignButton: React.FC<InlineResignButtonProps> = ({
+  onResign,
+  shortcut,
+  isCompact,
+}) => {
+  const [confirming, setConfirming] = useState<boolean>(false);
+  const timerRef = useRef<NodeJS.Timeout | null>(null);
+
+  const handleClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (confirming) {
+      if (timerRef.current) clearTimeout(timerRef.current);
+      setConfirming(false);
+      onResign();
+    } else {
+      setConfirming(true);
+      if (timerRef.current) clearTimeout(timerRef.current);
+      timerRef.current = setTimeout(() => {
+        setConfirming(false);
+      }, 4000);
+    }
+  };
+
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) clearTimeout(timerRef.current);
+    };
+  }, []);
+
+  if (confirming) {
+    return (
+      <button
+        type="button"
+        onClick={handleClick}
+        title="Click again to confirm resignation"
+        className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-red-600 hover:bg-red-500 text-white font-extrabold text-[11px] border border-red-400 animate-pulse shadow-lg shadow-red-950 transition-all cursor-pointer shrink-0"
+      >
+        <Flag size={13} className="fill-current" />
+        <span>Confirm?</span>
+      </button>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={handleClick}
+      title={`Resign Match [${shortcut.toUpperCase()}]`}
+      className="p-1.5 rounded hover:bg-red-950/70 hover:text-red-400 text-slate-400 transition-colors cursor-pointer"
+    >
+      <Flag size={isCompact ? 16 : 17} />
+    </button>
+  );
 };
 
 /**
@@ -232,6 +298,7 @@ export const LeftArenaPanel: React.FC<ArenaHUDProps> = ({
   opponentName,
   myElo,
   aiElo,
+  fontSize,
   timeControlLabel = '10+0',
   ratedMatch = true,
   speedLabel = 'Rapid',
@@ -241,6 +308,7 @@ export const LeftArenaPanel: React.FC<ArenaHUDProps> = ({
   onChangeNotes,
   chatInputRef,
 }) => {
+  const fs = fontSize || 16;
   const [activeTab, setActiveTab] = useState<'chat' | 'notes'>('chat');
   const [draft, setDraft] = useState('');
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
@@ -308,20 +376,20 @@ export const LeftArenaPanel: React.FC<ArenaHUDProps> = ({
           </div>
         </div>
 
-        <div className="space-y-1 text-xs pt-1 border-t border-slate-800/80">
+        <div className="space-y-1.5 pt-1.5 border-t border-slate-800/80">
           {/* Black Player Line */}
-          <div className="flex items-center gap-2 text-slate-200 truncate">
+          <div className="flex items-center gap-2 text-slate-200 truncate" style={{ fontSize: `${fs}px` }}>
             <span className="inline-block w-3 h-3 rounded-full bg-slate-400 border border-slate-300 shrink-0" />
-            <span className="truncate font-medium">{blackName}</span>
-            <span className="text-[#629924] sm:text-sky-400 font-mono text-[11px]">
+            <span className="truncate font-semibold">{blackName}</span>
+            <span className="text-[#629924] sm:text-sky-400 font-mono font-bold" style={{ fontSize: `${Math.max(10, Math.round(fs * 0.9))}px` }}>
               ({blackElo}?)
             </span>
           </div>
           {/* White Player Line */}
-          <div className="flex items-center gap-2 text-slate-200 truncate">
+          <div className="flex items-center gap-2 text-slate-200 truncate" style={{ fontSize: `${fs}px` }}>
             <span className="inline-block w-3 h-3 rounded-full border-2 border-slate-300 bg-transparent shrink-0" />
-            <span className="truncate font-medium">{whiteName}</span>
-            <span className="text-[#629924] sm:text-sky-400 font-mono text-[11px]">
+            <span className="truncate font-semibold">{whiteName}</span>
+            <span className="text-[#629924] sm:text-sky-400 font-mono font-bold" style={{ fontSize: `${Math.max(10, Math.round(fs * 0.9))}px` }}>
               ({whiteElo}?)
             </span>
           </div>
@@ -459,6 +527,7 @@ export const RightArenaPanel: React.FC<ArenaHUDProps> = ({
   soundEnabled,
   musicEnabled,
   fontScale,
+  fontSize,
   shortcuts,
   moves,
   viewPly,
@@ -480,6 +549,7 @@ export const RightArenaPanel: React.FC<ArenaHUDProps> = ({
   onPause,
   onResign,
 }) => {
+  const fs = fontSize || 16;
   const moveListScrollRef = useRef<HTMLDivElement | null>(null);
   const turn = chess.turn();
   const opponentColor: Color = playerColor === 'w' ? 'b' : 'w';
@@ -561,7 +631,7 @@ export const RightArenaPanel: React.FC<ArenaHUDProps> = ({
                   isOpponentTurn ? 'bg-[#629924]' : 'bg-emerald-600/60'
                 }`}
               />
-              <span className="font-medium text-sm text-slate-100 truncate">
+              <span className="font-semibold text-slate-100 truncate" style={{ fontSize: `${fs}px` }}>
                 {opponentName}
               </span>
             </div>
@@ -572,7 +642,7 @@ export const RightArenaPanel: React.FC<ArenaHUDProps> = ({
               ownerColor={opponentColor}
             />
           </div>
-          <span className="font-mono tabular-nums text-xs sm:text-sm text-slate-400 shrink-0">
+          <span className="font-mono tabular-nums text-slate-400 shrink-0 font-bold" style={{ fontSize: `${Math.max(11, Math.round(fs * 0.9))}px` }}>
             {aiElo}?
           </span>
         </div>
@@ -623,10 +693,11 @@ export const RightArenaPanel: React.FC<ArenaHUDProps> = ({
               <button
                 type="button"
                 onClick={onCycleFontScale}
-                title={`Text Size: ${fontScale.toUpperCase()} (Click to cycle)`}
-                className="px-1.5 py-1 rounded hover:bg-slate-800 hover:text-white text-[11px] font-bold flex items-center gap-0.5 transition-colors cursor-pointer"
+                title={`Font Size: ${fs}px (Click to cycle ${fs >= 22 ? 'to 12px' : '+2px'})`}
+                className="px-2 py-1 rounded hover:bg-slate-800 hover:text-white text-xs font-mono font-bold flex items-center gap-1 transition-colors cursor-pointer bg-slate-900 border border-slate-800"
               >
-                <Type size={13} />
+                <Type size={13} className="text-amber-400" />
+                <span>{fs}</span>
               </button>
             )}
             <button
@@ -792,14 +863,10 @@ export const RightArenaPanel: React.FC<ArenaHUDProps> = ({
               ½
             </button>
           )}
-          <button
-            type="button"
-            onClick={onResign}
-            title={`Resign Match [${shortcuts.resign.toUpperCase()}]`}
-            className="p-1.5 rounded hover:bg-red-950/70 hover:text-red-400 transition-colors cursor-pointer"
-          >
-            <Flag size={17} />
-          </button>
+          <InlineResignButton
+            onResign={onResign}
+            shortcut={shortcuts.resign}
+          />
           <button
             type="button"
             onClick={onPause}
@@ -819,7 +886,7 @@ export const RightArenaPanel: React.FC<ArenaHUDProps> = ({
                   isMyTurn ? 'bg-[#629924]' : 'bg-emerald-600/60'
                 }`}
               />
-              <span className="font-medium text-sm text-slate-100 truncate">
+              <span className="font-semibold text-slate-100 truncate" style={{ fontSize: `${fs}px` }}>
                 {profileName}
               </span>
             </div>
@@ -830,20 +897,21 @@ export const RightArenaPanel: React.FC<ArenaHUDProps> = ({
               ownerColor={playerColor}
             />
           </div>
-          <span className="font-mono tabular-nums text-xs sm:text-sm text-slate-400 shrink-0">
+          <span className="font-mono tabular-nums text-slate-400 shrink-0 font-bold" style={{ fontSize: `${Math.max(11, Math.round(fs * 0.9))}px` }}>
             {myElo}?
           </span>
         </div>
 
         {/* Green Turn / Status Banner (Matching Screenshot) */}
         <div
-          className={`px-3 py-1.5 text-center text-xs font-semibold transition-colors ${
+          className={`px-3 py-1.5 text-center font-semibold transition-colors ${
             viewPly !== null
               ? 'bg-amber-600 text-white'
               : isMyTurn
               ? 'bg-[#629924] text-white'
               : 'bg-[#302e2c] text-slate-300'
           }`}
+          style={{ fontSize: `${Math.max(11, Math.round(fs * 0.9))}px` }}
         >
           {viewPly !== null ? (
             <span>
@@ -897,6 +965,7 @@ export const VerticalTopSection: React.FC<ArenaHUDProps> = ({
   soundEnabled,
   musicEnabled,
   fontScale,
+  fontSize,
   shortcuts,
   savedGames,
   onGiveMoreTime,
@@ -907,6 +976,7 @@ export const VerticalTopSection: React.FC<ArenaHUDProps> = ({
   onOpenSettings,
   onPause,
 }) => {
+  const fs = fontSize || 16;
   const turn = chess.turn();
   const opponentColor: Color = playerColor === 'w' ? 'b' : 'w';
   const isOpponentTurn = turn === opponentColor;
@@ -941,10 +1011,10 @@ export const VerticalTopSection: React.FC<ArenaHUDProps> = ({
       <div className="flex items-center justify-between bg-[#262421] border border-slate-800/90 rounded-lg px-2.5 py-1 shadow">
         <div className="flex items-center gap-2 min-w-0">
           {renderSmallModeIcon()}
-          <span className="text-[11px] sm:text-xs font-semibold text-slate-200 truncate">
+          <span className="font-semibold text-slate-200 truncate" style={{ fontSize: `${Math.max(10, Math.round(fs * 0.85))}px` }}>
             {headerLine}
           </span>
-          <span className="px-1.5 py-0.5 rounded bg-[#161512] border border-slate-800 text-[10px] font-mono text-slate-300 shrink-0">
+          <span className="px-1.5 py-0.5 rounded bg-[#161512] border border-slate-800 font-mono text-slate-300 shrink-0" style={{ fontSize: `${Math.max(9, Math.round(fs * 0.75))}px` }}>
             {headToHead.myWins} - {headToHead.oppWins}
           </span>
         </div>
@@ -954,10 +1024,11 @@ export const VerticalTopSection: React.FC<ArenaHUDProps> = ({
             <button
               type="button"
               onClick={onCycleFontScale}
-              title={`Text Size: ${fontScale.toUpperCase()} (Click to cycle)`}
-              className="p-1.5 rounded hover:bg-slate-800 hover:text-white transition-colors cursor-pointer"
+              title={`Font Size: ${fs}px (Click to cycle ${fs >= 22 ? 'to 12px' : '+2px'})`}
+              className="px-1.5 py-0.5 rounded hover:bg-slate-800 hover:text-white font-mono font-bold flex items-center gap-0.5 transition-colors cursor-pointer text-xs"
             >
-              <Type size={14} />
+              <Type size={13} className="text-amber-400" />
+              <span>{fs}</span>
             </button>
           )}
           <button
@@ -1014,10 +1085,10 @@ export const VerticalTopSection: React.FC<ArenaHUDProps> = ({
                 isOpponentTurn ? 'bg-[#629924]' : 'bg-emerald-600/60'
               }`}
             />
-            <span className="font-semibold text-xs sm:text-sm text-slate-100 truncate">
+            <span className="font-semibold text-slate-100 truncate" style={{ fontSize: `${fs}px` }}>
               {opponentName}
             </span>
-            <span className="font-mono tabular-nums text-[11px] sm:text-xs text-slate-400 shrink-0">
+            <span className="font-mono tabular-nums text-slate-400 shrink-0 font-bold" style={{ fontSize: `${Math.max(10, Math.round(fs * 0.9))}px` }}>
               ({aiElo}?)
             </span>
           </div>
@@ -1080,6 +1151,7 @@ export const VerticalBottomSection: React.FC<
   viewPly,
   onSelectPly,
   chatMessages,
+  fontSize,
   canUndo = false,
   onUndo,
   incomingDrawOffer = false,
@@ -1092,6 +1164,7 @@ export const VerticalBottomSection: React.FC<
   onOpenChatModal,
   unreadChatCount,
 }) => {
+  const fs = fontSize || 16;
   const moveListScrollRef = useRef<HTMLDivElement | null>(null);
   const turn = chess.turn();
   const opponentColor: Color = playerColor === 'w' ? 'b' : 'w';
@@ -1145,10 +1218,10 @@ export const VerticalBottomSection: React.FC<
                 isMyTurn ? 'bg-[#629924]' : 'bg-emerald-600/60'
               }`}
             />
-            <span className="font-semibold text-xs sm:text-sm text-slate-100 truncate">
+            <span className="font-semibold text-slate-100 truncate" style={{ fontSize: `${fs}px` }}>
               {profileName}
             </span>
-            <span className="font-mono tabular-nums text-[11px] sm:text-xs text-slate-400 shrink-0">
+            <span className="font-mono tabular-nums text-slate-400 shrink-0 font-bold" style={{ fontSize: `${Math.max(10, Math.round(fs * 0.9))}px` }}>
               ({myElo}?)
             </span>
           </div>
@@ -1175,13 +1248,14 @@ export const VerticalBottomSection: React.FC<
       <div className="flex-1 flex flex-col min-h-0 bg-[#262421] border border-slate-800/90 rounded-lg overflow-hidden shadow-lg">
         {/* Green Turn / Status Banner + Replay Navigation Buttons */}
         <div
-          className={`flex items-center justify-between px-2.5 py-1 text-[11px] sm:text-xs font-semibold shrink-0 transition-colors ${
+          className={`flex items-center justify-between px-2.5 py-1 font-semibold shrink-0 transition-colors ${
             viewPly !== null
               ? 'bg-amber-600 text-white'
               : isMyTurn
               ? 'bg-[#629924] text-white'
               : 'bg-[#302e2c] text-slate-200'
           }`}
+          style={{ fontSize: `${Math.max(11, Math.round(fs * 0.88))}px` }}
         >
           <div className="truncate pr-2">
             {viewPly !== null ? (
@@ -1367,14 +1441,11 @@ export const VerticalBottomSection: React.FC<
                 ½
               </button>
             )}
-            <button
-              type="button"
-              onClick={onResign}
-              title={`Resign Match [${shortcuts.resign.toUpperCase()}]`}
-              className="p-1.5 rounded hover:bg-red-950/70 hover:text-red-400 transition-colors cursor-pointer"
-            >
-              <Flag size={16} />
-            </button>
+            <InlineResignButton
+              onResign={onResign}
+              shortcut={shortcuts.resign}
+              isCompact
+            />
           </div>
 
           {/* Chat Button (Opens Chat Room & Notes Drawer/Modal) */}

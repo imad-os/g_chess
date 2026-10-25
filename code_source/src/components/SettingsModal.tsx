@@ -1,6 +1,15 @@
-// SettingsModal Component
 import React, { useState } from 'react';
-import { GameSettings, FontScale, KeyboardShortcuts, SoundPack, PerformanceMode } from '../types/chess';
+import {
+  GameSettings,
+  FontScale,
+  KeyboardShortcuts,
+  SoundPack,
+  PerformanceMode,
+  getNumericFontSize,
+  getFontScaleCategory,
+  MIN_FONT_SIZE,
+  MAX_FONT_SIZE,
+} from '../types/chess';
 import {
   Sliders,
   Monitor,
@@ -16,6 +25,8 @@ import {
   Gamepad2,
   Tv,
   Zap,
+  Minus,
+  Plus,
 } from 'lucide-react';
 import { soundManager } from '../services/sound';
 
@@ -107,11 +118,30 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     });
   };
 
-  const fontPresets: { id: FontScale; short: string; label: string; desc: string }[] = [
-    { id: 'small', short: 'Small (90%)', label: 'Small (90%)', desc: 'High-density compact layout' },
-    { id: 'standard', short: 'Standard (100%)', label: 'Standard (100%)', desc: 'Desktop & phone default' },
-    { id: 'large', short: 'Large TV (115%)', label: 'Large TV (115%)', desc: 'Living room 3-meter TV default' },
-    { id: 'xlarge', short: 'Extra Large (130%)', label: 'Extra Large (130%)', desc: 'Maximum readability & contrast' },
+  const currentFontSize = getNumericFontSize(current);
+
+  const handleSetFontSize = (val: number) => {
+    const clamped = Math.max(MIN_FONT_SIZE, Math.min(MAX_FONT_SIZE, Math.round(val)));
+    const cat = getFontScaleCategory(clamped);
+    setCurrent({
+      ...current,
+      font_size: clamped,
+      font_scale: cat,
+    });
+    soundManager.playSound('select');
+  };
+
+  const handleStepFontSize = (delta: number) => {
+    handleSetFontSize(currentFontSize + delta);
+  };
+
+  const numericFontPresets = [
+    { size: 12, label: '12', desc: 'Compact' },
+    { size: 14, label: '14', desc: 'Standard' },
+    { size: 16, label: '16', desc: 'Default' },
+    { size: 18, label: '18', desc: 'Large' },
+    { size: 20, label: '20', desc: 'TV' },
+    { size: 22, label: '22', desc: 'Extra' },
   ];
 
   return (
@@ -207,31 +237,63 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           {activeTab === 'display' && (
             <div className="flex flex-col gap-3">
               {/* Text Size Quick Selector in Display Tab */}
-              <div className="p-3 rounded-2xl bg-slate-950/70 border border-slate-800/80">
+              <div className="p-3 sm:p-3.5 rounded-2xl bg-slate-950/70 border border-slate-800/80">
                 <div className="flex items-center justify-between mb-2">
                   <label className="text-xs uppercase font-bold tracking-wider text-slate-300 flex items-center gap-1.5">
                     <Type size={14} className="text-amber-400" />
-                    Text Size
+                    Font Size
                   </label>
-                  <span className="text-[11px] font-semibold text-amber-400 uppercase">
-                    {current.font_scale}
-                  </span>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[11px] text-slate-400">Range: {MIN_FONT_SIZE}–{MAX_FONT_SIZE}</span>
+                    <span className="px-2 py-0.5 rounded-md bg-blue-600/30 border border-blue-400/50 text-blue-300 font-mono font-bold text-xs">
+                      {currentFontSize} px
+                    </span>
+                  </div>
                 </div>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                  {fontPresets.map((fp) => (
+
+                <div className="flex items-center gap-2 mb-2 bg-slate-900 p-2 rounded-xl border border-slate-800">
+                  <button
+                    type="button"
+                    onClick={() => handleStepFontSize(-1)}
+                    disabled={currentFontSize <= MIN_FONT_SIZE}
+                    className="w-8 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-30 disabled:pointer-events-none text-white font-bold flex items-center justify-center transition-colors cursor-pointer shrink-0"
+                    title="Decrease font size (-1)"
+                  >
+                    <Minus size={14} />
+                  </button>
+                  <input
+                    type="range"
+                    min={MIN_FONT_SIZE}
+                    max={MAX_FONT_SIZE}
+                    step={1}
+                    value={currentFontSize}
+                    onChange={(e) => handleSetFontSize(Number(e.target.value))}
+                    className="flex-1 accent-blue-500 cursor-pointer h-2 bg-slate-800 rounded-lg appearance-none"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => handleStepFontSize(1)}
+                    disabled={currentFontSize >= MAX_FONT_SIZE}
+                    className="w-8 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-30 disabled:pointer-events-none text-white font-bold flex items-center justify-center transition-colors cursor-pointer shrink-0"
+                    title="Increase font size (+1)"
+                  >
+                    <Plus size={14} />
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-6 gap-1.5">
+                  {numericFontPresets.map((preset) => (
                     <button
-                      key={fp.id}
-                      onClick={() => {
-                        setCurrent({ ...current, font_scale: fp.id });
-                        soundManager.playSound('select');
-                      }}
-                      className={`py-2 px-2 rounded-xl border text-xs font-bold transition-colors cursor-pointer flex items-center justify-center gap-1 ${
-                        current.font_scale === fp.id
-                          ? 'bg-blue-600 border-blue-400 text-white ring-2 ring-blue-500/50'
-                          : 'bg-slate-900 border-slate-800 text-slate-400 hover:bg-slate-800 hover:text-slate-200'
+                      key={preset.size}
+                      type="button"
+                      onClick={() => handleSetFontSize(preset.size)}
+                      className={`py-1 px-1 rounded-lg border text-center transition-colors cursor-pointer ${
+                        currentFontSize === preset.size
+                          ? 'bg-blue-600 border-blue-400 text-white font-black shadow ring-1 ring-blue-500/40'
+                          : 'bg-slate-900 border-slate-800 text-slate-300 hover:bg-slate-800'
                       }`}
                     >
-                      {fp.short}
+                      <span className="text-xs font-mono font-bold">{preset.label}</span>
                     </button>
                   ))}
                 </div>
@@ -463,70 +525,132 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             </div>
           )}
 
-          {/* TAB 2: Text Size & TV Scale */}
+          {/* TAB 2: Text Size & TV Scale (Numeric Control 10 to 24) */}
           {activeTab === 'scale' && (
             <div className="flex flex-col gap-3">
-              <div className="p-3 rounded-2xl bg-slate-950/70 border border-slate-800/80">
-                <label className="text-xs uppercase font-bold tracking-wider text-slate-300 block mb-2">
-                  Global Text Size & UI Scaling
-                </label>
-                <p className="text-[11px] text-slate-400 mb-3">
-                  Scales all menus, player clocks, move history tables, chat messages, and modals across the entire application.
-                </p>
+              <div className="p-3 sm:p-4 rounded-2xl bg-slate-950/70 border border-slate-800/80">
+                <div className="flex items-center justify-between mb-2">
+                  <div>
+                    <label className="text-xs uppercase font-bold tracking-wider text-slate-300 flex items-center gap-1.5">
+                      <Type size={15} className="text-amber-400" />
+                      Global Font Size
+                    </label>
+                    <span className="text-[10px] text-slate-400">
+                      Scales player usernames, Elo ratings, match HUD, move lists, and menus
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[11px] text-slate-400">Range: {MIN_FONT_SIZE}–{MAX_FONT_SIZE}</span>
+                    <span className="px-2.5 py-1 rounded-lg bg-blue-600/30 border border-blue-400/50 text-blue-300 font-mono font-black text-sm">
+                      {currentFontSize} px
+                    </span>
+                  </div>
+                </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 mb-4">
-                  {fontPresets.map((preset) => (
+                {/* Number Stepper and Slider */}
+                <div className="flex items-center gap-3 my-3 bg-slate-900 p-2.5 rounded-xl border border-slate-800">
+                  <button
+                    type="button"
+                    onClick={() => handleStepFontSize(-1)}
+                    disabled={currentFontSize <= MIN_FONT_SIZE}
+                    className="w-10 h-10 rounded-xl bg-slate-800 hover:bg-slate-700 disabled:opacity-30 disabled:pointer-events-none text-white font-bold flex items-center justify-center transition-colors cursor-pointer shrink-0 shadow"
+                    title="Decrease font size (-1)"
+                  >
+                    <Minus size={18} />
+                  </button>
+
+                  <div className="flex-1 flex flex-col gap-1.5">
+                    <input
+                      type="range"
+                      min={MIN_FONT_SIZE}
+                      max={MAX_FONT_SIZE}
+                      step={1}
+                      value={currentFontSize}
+                      onChange={(e) => handleSetFontSize(Number(e.target.value))}
+                      className="w-full accent-blue-500 cursor-pointer h-2.5 bg-slate-800 rounded-lg appearance-none"
+                    />
+                    <div className="flex justify-between text-[10px] text-slate-400 font-mono">
+                      <span>{MIN_FONT_SIZE}px (Min)</span>
+                      <span>16px (Default)</span>
+                      <span>{MAX_FONT_SIZE}px (Max)</span>
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => handleStepFontSize(1)}
+                    disabled={currentFontSize >= MAX_FONT_SIZE}
+                    className="w-10 h-10 rounded-xl bg-slate-800 hover:bg-slate-700 disabled:opacity-30 disabled:pointer-events-none text-white font-bold flex items-center justify-center transition-colors cursor-pointer shrink-0 shadow"
+                    title="Increase font size (+1)"
+                  >
+                    <Plus size={18} />
+                  </button>
+                </div>
+
+                {/* Quick Number Presets */}
+                <div className="grid grid-cols-2 sm:grid-cols-6 gap-2 mb-4">
+                  {numericFontPresets.map((preset) => (
                     <button
-                      key={preset.id}
-                      onClick={() => {
-                        setCurrent({ ...current, font_scale: preset.id });
-                        soundManager.playSound('select');
-                      }}
-                      className={`flex flex-col p-3 rounded-xl border text-left transition-colors cursor-pointer ${
-                        current.font_scale === preset.id
-                          ? 'bg-blue-600/30 border-blue-400 text-white ring-2 ring-blue-500/50'
-                          : 'bg-slate-900 border-slate-800 text-slate-400 hover:bg-slate-850 hover:text-slate-200'
+                      key={preset.size}
+                      type="button"
+                      onClick={() => handleSetFontSize(preset.size)}
+                      className={`py-2 px-2 rounded-xl border text-center transition-colors cursor-pointer ${
+                        currentFontSize === preset.size
+                          ? 'bg-blue-600 border-blue-400 text-white font-black shadow ring-2 ring-blue-500/50'
+                          : 'bg-slate-900 border-slate-800 text-slate-300 hover:bg-slate-800 hover:text-white'
                       }`}
                     >
-                      <div className="flex items-center justify-between mb-1">
-                        <span className="text-xs font-bold">{preset.label}</span>
-                        {current.font_scale === preset.id && <Check size={14} className="text-cyan-400" />}
-                      </div>
-                      <span className="text-[10px] text-slate-400">{preset.desc}</span>
+                      <div className="text-xs font-mono font-bold">{preset.label} px</div>
+                      <div className="text-[10px] text-slate-400">{preset.desc}</div>
                     </button>
                   ))}
                 </div>
 
-                {/* Live Preview Sample */}
-                <div className="p-3.5 rounded-xl bg-slate-900 border border-slate-800 flex flex-col gap-1.5">
-                  <span className="text-[10px] uppercase font-bold text-slate-500 tracking-wider">
-                    Live Typography Preview
-                  </span>
-                  <div
-                    className={`${
-                      current.font_scale === 'xlarge'
-                        ? 'text-xl'
-                        : current.font_scale === 'large'
-                        ? 'text-base'
-                        : current.font_scale === 'small'
-                        ? 'text-xs'
-                        : 'text-sm'
-                    } font-bold text-slate-100`}
-                  >
-                    Grandmaster AI • Elo 2400
+                {/* Live Real-Time In-Modal Preview of Player Names & Elo Ratings */}
+                <div className="p-3.5 rounded-xl bg-slate-900 border border-slate-800 flex flex-col gap-2">
+                  <div className="flex items-center justify-between text-[10px] uppercase font-bold text-slate-400 tracking-wider">
+                    <span>Live In-Game HUD Preview ({currentFontSize}px)</span>
+                    <span className="text-emerald-400 font-semibold lowercase">visibly scales usernames & elo</span>
                   </div>
+
+                  {/* Player 1 Row */}
+                  <div className="p-2.5 rounded-lg bg-[#262421] border border-slate-800 flex items-center justify-between">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="w-2.5 h-2.5 rounded-full bg-[#629924] shrink-0" />
+                      <span className="font-semibold text-slate-100 truncate" style={{ fontSize: `${currentFontSize}px` }}>
+                        Player 1 (White)
+                      </span>
+                    </div>
+                    <span
+                      className="font-mono tabular-nums text-slate-400 shrink-0 font-bold ml-2"
+                      style={{ fontSize: `${Math.max(10, Math.round(currentFontSize * 0.9))}px` }}
+                    >
+                      1200?
+                    </span>
+                  </div>
+
+                  {/* Opponent Row */}
+                  <div className="p-2.5 rounded-lg bg-[#262421] border border-slate-800 flex items-center justify-between">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="w-2.5 h-2.5 rounded-full bg-emerald-600/60 shrink-0" />
+                      <span className="font-semibold text-slate-100 truncate" style={{ fontSize: `${currentFontSize}px` }}>
+                        Stockfish AI (Black)
+                      </span>
+                    </div>
+                    <span
+                      className="font-mono tabular-nums text-slate-400 shrink-0 font-bold ml-2"
+                      style={{ fontSize: `${Math.max(10, Math.round(currentFontSize * 0.9))}px` }}
+                    >
+                      1000?
+                    </span>
+                  </div>
+
+                  {/* Move status row */}
                   <div
-                    className={`${
-                      current.font_scale === 'xlarge'
-                        ? 'text-base'
-                        : current.font_scale === 'large'
-                        ? 'text-sm'
-                        : current.font_scale === 'small'
-                        ? 'text-[10px]'
-                        : 'text-xs'
-                    } text-slate-400`}
+                    className="p-2 rounded-lg bg-[#629924] text-white text-center font-semibold"
+                    style={{ fontSize: `${Math.max(11, Math.round(currentFontSize * 0.88))}px` }}
                   >
-                    White to move • 1. e4 e5 2. Nf3 Nc6 3. Bb5 a6
+                    Your turn — select a piece to move (1. e4 e5 2. Nf3 Nc6)
                   </div>
                 </div>
               </div>

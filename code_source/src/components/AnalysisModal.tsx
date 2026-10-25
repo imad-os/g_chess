@@ -231,10 +231,14 @@ export const AnalysisModal: React.FC<AnalysisModalProps> = ({
   return (
     <div
       data-tv-modal="true"
-      className="fixed inset-0 bg-slate-950/95 backdrop-blur-md z-50 flex flex-col p-4 sm:p-6 overflow-y-auto"
+      className="fixed inset-0 bg-slate-950/95 backdrop-blur-md z-50 flex flex-col p-3 sm:p-5 overflow-y-auto"
     >
-      {/* Top Header */}
-      <div className="flex items-center justify-between pb-4 border-b border-slate-800 max-w-6xl w-full mx-auto">
+      {/* Top Header (Hidden on wide screens lg+ when viewing Board/Mistake Training since it moves to the Left Side Space!) */}
+      <div
+        className={`flex items-center justify-between pb-3 border-b border-slate-800 max-w-6xl w-full mx-auto ${
+          !analyzing && (viewMode === 'board' || viewMode === 'learn') ? 'lg:hidden' : ''
+        }`}
+      >
         <div className="flex items-center gap-3">
           {viewMode !== 'stats' && (
             <button
@@ -354,34 +358,39 @@ export const AnalysisModal: React.FC<AnalysisModalProps> = ({
         </div>
       )}
 
-      {/* Board & Move Stepper View */}
+      {/* Board & Move Stepper View — Widescreen TV/PC puts Header + Controls in the Left Side Space and Board on the Right */}
       {!analyzing && summary && (viewMode === 'board' || viewMode === 'learn') && (
-        <div className="max-w-6xl w-full mx-auto py-3 flex flex-col lg:flex-row items-center justify-center gap-6">
-          {/* Board + Dominant Evaluation Bar on the left + Lichess Best Move Arrows */}
-          <div className="flex items-center gap-3">
-            <EvaluationBar score={currentMove?.score || 0} />
-            <ChessBoard
-              chess={currentChess}
-              flipped={playerColor === 'b'}
-              selectedSquare={null}
-              validMoves={[]}
-              lastMove={
-                currentMove
-                  ? { from: currentMove.from as Square, to: currentMove.to as Square }
-                  : null
-              }
-              cursorSquare={null}
-              settings={settings}
-              disabled={true}
-              arrows={activeArrows}
-              sizeVariant="analysis"
-              onSquareClick={() => {}}
-            />
-          </div>
-
-          {/* Right side navigation & info */}
-          <div className="flex flex-col justify-between w-full lg:max-w-sm h-full min-h-[410px] bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl">
+        <div className="max-w-6xl w-full my-auto mx-auto py-1 flex flex-col lg:flex-row items-center justify-center gap-6">
+          {/* LEFT SIDE SPACE on Wide Screens (lg+): Header + Move Stepper & Diagnostics */}
+          <div className="order-2 lg:order-1 flex flex-col justify-between w-full lg:max-w-sm h-full bg-slate-900 border border-slate-800 rounded-2xl p-4 sm:p-5 shadow-xl gap-3">
             <div>
+              {/* Widescreen Left-Side Header */}
+              <div className="hidden lg:flex items-center justify-between pb-3 mb-3 border-b border-slate-800">
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setViewMode('stats')}
+                    className="p-1.5 rounded-xl bg-slate-950 border border-slate-700 text-slate-300 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"
+                    title="Back to Stats"
+                  >
+                    <ArrowLeft size={16} />
+                  </button>
+                  <div>
+                    <h2 className="text-base font-black text-white flex items-center gap-1.5">
+                      <BarChart3 size={16} className="text-blue-500" />
+                      Game Analysis
+                    </h2>
+                    <p className="text-[10px] text-slate-400">Stockfish Best Move Lab</p>
+                  </div>
+                </div>
+                <button
+                  onClick={onClose}
+                  className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-slate-950 hover:bg-slate-800 border border-slate-700 text-xs font-semibold text-slate-300 hover:text-white transition-colors cursor-pointer"
+                >
+                  <Home size={14} />
+                  Exit
+                </button>
+              </div>
+
               {/* Header Badge + Best Move Arrow Toggle */}
               <div className="flex items-center justify-between pb-3 border-b border-slate-800 mb-3">
                 <span className="text-xs font-bold uppercase tracking-wider text-slate-400">
@@ -522,6 +531,28 @@ export const AnalysisModal: React.FC<AnalysisModalProps> = ({
                 <ChevronsRight size={18} />
               </button>
             </div>
+          </div>
+
+          {/* Board + Dominant Evaluation Bar on the right/center + Lichess Best Move Arrows */}
+          <div className="order-1 lg:order-2 flex items-center gap-3">
+            <EvaluationBar score={currentMove?.score || 0} />
+            <ChessBoard
+              chess={currentChess}
+              flipped={playerColor === 'b'}
+              selectedSquare={null}
+              validMoves={[]}
+              lastMove={
+                currentMove
+                  ? { from: currentMove.from as Square, to: currentMove.to as Square }
+                  : null
+              }
+              cursorSquare={null}
+              settings={settings}
+              disabled={true}
+              arrows={activeArrows}
+              sizeVariant="puzzle"
+              onSquareClick={() => {}}
+            />
           </div>
         </div>
       )}

@@ -87,62 +87,28 @@ export const PauseModal: React.FC<PauseModalProps> = ({
   };
   const stepLast = () => onSelectPly(null);
 
+  // Auto-reset confirmingResign state after 4 seconds
+  useEffect(() => {
+    if (confirmingResign) {
+      const timer = setTimeout(() => {
+        setConfirmingResign(false);
+      }, 4000);
+      return () => clearTimeout(timer);
+    }
+  }, [confirmingResign]);
+
   return (
     <div
       data-tv-modal="true"
       className="fixed inset-0 bg-black/55 backdrop-blur-[2px] z-50 flex items-center justify-center p-3 sm:p-4"
     >
       <div className="bg-slate-900/95 border-2 border-slate-700 rounded-3xl p-5 sm:p-6 max-w-md w-full shadow-2xl text-center">
-        {confirmingResign ? (
-          /* RESIGN CONFIRMATION VIEW */
-          <div className="flex flex-col items-center">
-            <div className="w-14 h-14 rounded-2xl bg-red-500/20 border border-red-500/40 flex items-center justify-center text-red-400 mb-3">
-              <AlertTriangle size={30} />
-            </div>
-            <h2 className="text-2xl sm:text-3xl font-extrabold text-white mb-1.5">
-              Resign Match?
-            </h2>
-            <p className="text-xs sm:text-sm text-slate-300 mb-6 max-w-xs leading-relaxed">
-              Are you sure you want to resign against{' '}
-              <strong className="text-white">{opponentName}</strong>? This will immediately end the
-              match as a loss.
-            </p>
-
-            <div className="flex flex-col sm:flex-row gap-3 w-full">
-              <button
-                type="button"
-                data-tv-autofocus="true"
-                onClick={() => {
-                  if (initialConfirmResign) {
-                    onResume();
-                  } else {
-                    setConfirmingResign(false);
-                  }
-                }}
-                className="flex-1 flex items-center justify-center gap-2 py-3.5 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-600 font-bold text-white transition-colors cursor-pointer"
-              >
-                <X size={18} />
-                Cancel
-              </button>
-
-              <button
-                type="button"
-                onClick={onConfirmResign}
-                className="flex-1 flex items-center justify-center gap-2 py-3.5 px-4 rounded-xl bg-red-600 hover:bg-red-500 border border-red-400 font-bold text-white shadow-lg transition-colors cursor-pointer"
-              >
-                <Flag size={18} />
-                Confirm Resign
-              </button>
-            </div>
-          </div>
-        ) : (
-          /* MAIN MATCH MENU (+) VIEW */
-          <>
-            <div className="flex items-center justify-between mb-1">
-              <span className="px-2 py-0.5 rounded bg-slate-800 border border-slate-700 text-[10px] font-mono font-bold text-amber-400 uppercase tracking-wider">
-                + Match Menu
-              </span>
-              <span className="text-[11px] font-mono text-slate-400">
+        <>
+          <div className="flex items-center justify-between mb-1">
+            <span className="px-2 py-0.5 rounded bg-slate-800 border border-slate-700 text-[10px] font-mono font-bold text-amber-400 uppercase tracking-wider">
+              + Match Menu
+            </span>
+            <span className="text-[11px] font-mono text-slate-400">
                 Ply {activePly} / {moves.length}
               </span>
             </div>
@@ -280,11 +246,30 @@ export const PauseModal: React.FC<PauseModalProps> = ({
 
                 <button
                   type="button"
-                  onClick={() => setConfirmingResign(true)}
-                  className="flex items-center justify-center gap-2 py-3 px-3 rounded-xl bg-red-950/70 hover:bg-red-900/80 border border-red-800/70 font-semibold text-red-200 text-xs sm:text-sm transition-colors cursor-pointer"
+                  onClick={() => {
+                    if (confirmingResign) {
+                      onConfirmResign();
+                    } else {
+                      setConfirmingResign(true);
+                    }
+                  }}
+                  className={`flex items-center justify-center gap-2 py-3 px-3 rounded-xl border font-semibold text-xs sm:text-sm transition-all cursor-pointer ${
+                    confirmingResign
+                      ? 'bg-red-600 hover:bg-red-500 border-red-400 font-bold text-white animate-pulse shadow-lg shadow-red-900/60'
+                      : 'bg-red-950/70 hover:bg-red-900/80 border-red-800/70 text-red-200'
+                  }`}
                 >
-                  <Flag size={17} />
-                  <span>Resign Match</span>
+                  {confirmingResign ? (
+                    <>
+                      <AlertTriangle size={17} />
+                      <span>Confirm Resign?</span>
+                    </>
+                  ) : (
+                    <>
+                      <Flag size={17} />
+                      <span>Resign Match</span>
+                    </>
+                  )}
                 </button>
               </div>
 
@@ -318,7 +303,6 @@ export const PauseModal: React.FC<PauseModalProps> = ({
               </button>
             </div>
           </>
-        )}
       </div>
     </div>
   );
