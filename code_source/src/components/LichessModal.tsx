@@ -8,7 +8,7 @@ import {
   LichessPuzzle,
   MoveRecord,
 } from '../types/chess';
-import { lichessService } from '../services/lichess';
+import { lichessService, sanitizeLichessToken } from '../services/lichess';
 import { myPCService } from '../services/mypc';
 import { soundManager } from '../services/sound';
 import { ChessBoard } from './ChessBoard';
@@ -29,6 +29,10 @@ import {
   RefreshCw,
   Sliders,
   ShieldCheck,
+  Eye,
+  EyeOff,
+  ClipboardPaste,
+  Trash2,
 } from 'lucide-react';
 
 interface LichessModalProps {
@@ -74,6 +78,7 @@ export const LichessModal: React.FC<LichessModalProps> = ({
   // Token & Account state
   const [tokenInput, setTokenInput] = useState<string>(() => lichessService.getToken());
   const [showTokenDrawer, setShowTokenDrawer] = useState<boolean>(() => !lichessService.getToken());
+  const [showTokenText, setShowTokenText] = useState<boolean>(true);
   const [account, setAccount] = useState<LichessUserStats | null>(null);
   const [lookupUsername, setLookupUsername] = useState<string>(() => lichessService.getUsername());
   const [loadingAccount, setLoadingAccount] = useState<boolean>(false);
@@ -114,13 +119,13 @@ export const LichessModal: React.FC<LichessModalProps> = ({
 
   // Connect with Personal API Token or load public user
   const loadAccountAndGames = useCallback(async (tok?: string) => {
-    const activeToken = tok !== undefined ? tok : lichessService.getToken();
+    const activeToken = sanitizeLichessToken(tok !== undefined ? tok : lichessService.getToken());
     if (!activeToken) return;
 
     setLoadingAccount(true);
     setAuthError(null);
     try {
-      const acc = await lichessService.fetchAccount();
+      const acc = await lichessService.fetchAccount(activeToken);
       setAccount(acc);
       setLookupUsername(acc.username);
       onUsernameChange?.(acc.username);
@@ -131,6 +136,8 @@ export const LichessModal: React.FC<LichessModalProps> = ({
       const recent = await lichessService.fetchUserGames(acc.username, 20);
       setGamesList(recent);
     } catch (err: any) {
+      setAccount(null);
+      setShowTokenDrawer(true);
       setAuthError(err?.message || 'Could not authenticate with Lichess.');
     } finally {
       setLoadingAccount(false);
@@ -139,8 +146,10 @@ export const LichessModal: React.FC<LichessModalProps> = ({
   }, [onUsernameChange]);
 
   useEffect(() => {
-    if (lichessService.getToken()) {
-      loadAccountAndGames();
+    const initialTok = lichessService.getToken();
+    if (initialTok) {
+      setTokenInput(initialTok);
+      loadAccountAndGames(initialTok);
     }
     return () => {
       lichessService.cancelSeek();
@@ -150,12 +159,44 @@ export const LichessModal: React.FC<LichessModalProps> = ({
   // Save token to user's profile data
   const handleSaveToken = async () => {
     soundManager.playSound('click');
-    lichessService.setToken(tokenInput);
-    if (tokenInput.trim()) {
-      await loadAccountAndGames(tokenInput.trim());
+    const clean = sanitizeLichessToken(tokenInput);
+    setTokenInput(clean);
+    lichessService.setToken(clean);
+    if (clean) {
+      await loadAccountAndGames(clean);
     } else {
       setAccount(null);
+      setAuthError(null);
     }
+  };
+
+  // Paste token directly from system clipboard
+  const handlePasteToken = async () => {
+    soundManager.playSound('select');
+    try {
+      if (navigator.clipboard && typeof navigator.clipboard.readText === 'function') {
+        const clipText = await navigator.clipboard.readText();
+        const clean = sanitizeLichessToken(clipText);
+        if (clean) {
+          setTokenInput(clean);
+          lichessService.setToken(clean);
+          await loadAccountAndGames(clean);
+          return;
+        }
+      }
+      setAuthError('Clipboard was empty or permission was denied. Click the input box and press Ctrl+V / Cmd+V.');
+    } catch {
+      setAuthError('Browser blocked direct clipboard read. Click inside the token box and press Ctrl+V (or Cmd+V).');
+    }
+  };
+
+  // Clear saved token
+  const handleClearToken = () => {
+    soundManager.playSound('select');
+    setTokenInput('');
+    lichessService.clearInvalidToken();
+    setAccount(null);
+    setAuthError(null);
   };
 
   // Load puzzle helper
@@ -217,10 +258,15 @@ export const LichessModal: React.FC<LichessModalProps> = ({
       onStartLiveLichessGame(gameId, account?.username || 'Me');
     } catch (err: any) {
       setSeeking(false);
-      setSeekError(
+      const msg =
         err?.message ||
-          'Could not pair this time control via Board API. Try 10+0 Rapid or Lichess AI.'
-      );
+        'Could not pair this time control via Board API. Try 10+0 Rapid or Lichess AI.';
+      setSeekError(msg);
+      if (msg.includes('401') || msg.toLowerCase().includes('token')) {
+        setAccount(null);
+        setShowTokenDrawer(true);
+        setAuthError(msg);
+      }
     }
   };
 
@@ -241,7 +287,13 @@ export const LichessModal: React.FC<LichessModalProps> = ({
       onStartLiveLichessGame(gameId, account?.username || 'Me');
     } catch (err: any) {
       setSeeking(false);
-      setSeekError(err?.message || 'Failed to create Lichess AI match.');
+      const msg = err?.message || 'Failed to create Lichess AI match.';
+      setSeekError(msg);
+      if (msg.includes('401') || msg.toLowerCase().includes('token')) {
+        setAccount(null);
+        setShowTokenDrawer(true);
+        setAuthError(msg);
+      }
     }
   };
 
@@ -450,8 +502,8 @@ export const LichessModal: React.FC<LichessModalProps> = ({
 
         {/* Collapsible Personal API Access Token Bar */}
         {showTokenDrawer && (
-          <div className="px-5 py-3 bg-slate-950 border-b border-slate-800 space-y-2 shrink-0">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+          <div className="px-5 py-3 bg-slate-950 border-b border-slate-800 space-y-2.5 shrink-0">
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-2.5">
               <div className="text-xs text-slate-300">
                 <strong className="text-white">Personal API Access Token</strong> (saved to your MyPC User Profile):
                 <span className="block text-[11px] text-slate-400">
@@ -460,15 +512,72 @@ export const LichessModal: React.FC<LichessModalProps> = ({
                   <code className="text-slate-300">challenge:write</code>, <code className="text-slate-300">puzzle:read</code>
                 </span>
               </div>
-              <div className="flex items-center gap-2 w-full sm:w-auto">
-                <input
-                  type="password"
-                  value={tokenInput}
-                  onChange={(e) => setTokenInput(e.target.value)}
-                  placeholder="lip_xxxxxxxxxxxxxxxxxxxx"
-                  className="flex-1 sm:w-64 px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-700 text-xs font-mono text-white focus:outline-none focus:border-white"
-                />
+              <div className="flex flex-wrap items-center gap-1.5 w-full lg:w-auto">
+                <div className="relative flex-1 sm:w-64 min-w-[200px] flex items-center">
+                  <input
+                    type={showTokenText ? 'text' : 'password'}
+                    value={tokenInput}
+                    onChange={(e) => setTokenInput(e.target.value)}
+                    onPaste={(e) => {
+                      e.stopPropagation();
+                      const pasted = e.clipboardData?.getData('text');
+                      if (pasted) {
+                        e.preventDefault();
+                        const cleaned = sanitizeLichessToken(pasted);
+                        setTokenInput(cleaned);
+                      }
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Escape') {
+                        (e.currentTarget as HTMLInputElement).blur();
+                        return;
+                      }
+                      e.stopPropagation();
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        handleSaveToken();
+                      }
+                    }}
+                    onKeyUp={(e) => e.stopPropagation()}
+                    onContextMenu={(e) => e.stopPropagation()}
+                    autoComplete="off"
+                    autoCorrect="off"
+                    autoCapitalize="off"
+                    spellCheck={false}
+                    placeholder="lip_xxxxxxxxxxxxxxxxxxxx"
+                    className="w-full pl-3 pr-8 py-1.5 rounded-xl bg-slate-900 border border-slate-700 text-xs font-mono text-white focus:outline-none focus:border-white select-text"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowTokenText((v) => !v)}
+                    title={showTokenText ? 'Hide Token' : 'Show Token'}
+                    className="absolute right-2 text-slate-400 hover:text-white cursor-pointer"
+                  >
+                    {showTokenText ? <EyeOff size={14} /> : <Eye size={14} />}
+                  </button>
+                </div>
                 <button
+                  type="button"
+                  onClick={handlePasteToken}
+                  title="Paste Token from Clipboard"
+                  className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 font-bold text-xs transition cursor-pointer shrink-0"
+                >
+                  <ClipboardPaste size={13} />
+                  Paste
+                </button>
+                {tokenInput && (
+                  <button
+                    type="button"
+                    onClick={handleClearToken}
+                    title="Clear Token"
+                    className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-red-950/80 border border-slate-700 hover:border-red-700 text-slate-300 hover:text-red-300 font-bold text-xs transition cursor-pointer shrink-0"
+                  >
+                    <Trash2 size={13} />
+                    Clear
+                  </button>
+                )}
+                <button
+                  type="button"
                   onClick={handleSaveToken}
                   disabled={loadingAccount}
                   className="px-4 py-1.5 rounded-xl bg-white hover:bg-slate-200 text-slate-950 font-extrabold text-xs transition cursor-pointer shrink-0"
@@ -478,8 +587,8 @@ export const LichessModal: React.FC<LichessModalProps> = ({
               </div>
             </div>
             {authError && (
-              <div className="text-xs text-red-400 flex items-center gap-1.5">
-                <AlertCircle size={14} />
+              <div className="text-xs text-red-300 bg-red-950/60 border border-red-800/70 rounded-lg px-3 py-2 flex items-center gap-2">
+                <AlertCircle size={15} className="text-red-400 shrink-0" />
                 <span>{authError}</span>
               </div>
             )}
@@ -926,8 +1035,21 @@ export const LichessModal: React.FC<LichessModalProps> = ({
                     type="text"
                     value={lookupUsername}
                     onChange={(e) => setLookupUsername(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Escape') {
+                        (e.currentTarget as HTMLInputElement).blur();
+                        return;
+                      }
+                      e.stopPropagation();
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        handleFetchUserGamesAndStats(lookupUsername);
+                      }
+                    }}
+                    onKeyUp={(e) => e.stopPropagation()}
+                    onContextMenu={(e) => e.stopPropagation()}
                     placeholder="Lichess username..."
-                    className="px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-700 text-xs text-white focus:outline-none focus:border-white"
+                    className="px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-700 text-xs text-white focus:outline-none focus:border-white select-text"
                   />
                   <button
                     onClick={() => handleFetchUserGamesAndStats(lookupUsername)}
@@ -1038,8 +1160,21 @@ export const LichessModal: React.FC<LichessModalProps> = ({
                       type="text"
                       value={lookupUsername}
                       onChange={(e) => setLookupUsername(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Escape') {
+                          (e.currentTarget as HTMLInputElement).blur();
+                          return;
+                        }
+                        e.stopPropagation();
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          handleFetchUserGamesAndStats(lookupUsername);
+                        }
+                      }}
+                      onKeyUp={(e) => e.stopPropagation()}
+                      onContextMenu={(e) => e.stopPropagation()}
                       placeholder="Lichess username..."
-                      className="px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-700 text-xs text-white focus:outline-none"
+                      className="px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-700 text-xs text-white focus:outline-none select-text"
                     />
                     <button
                       onClick={() => handleFetchUserGamesAndStats(lookupUsername)}

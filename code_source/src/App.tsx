@@ -1590,8 +1590,34 @@ export const App: React.FC = () => {
 
   // Keep MyPC SDK onInput callback always synchronized with latest state (fixes stale closure)
   useEffect(() => {
-    myPCService.setInputHandler((rawAction, pressed) => {
+    myPCService.setInputHandler((rawAction, pressed, _repeat, dev) => {
       if (!pressed) return;
+      const activeEl = document.activeElement as HTMLElement | null;
+      const tag = activeEl?.tagName;
+      const isTextInput =
+        (tag === 'INPUT' &&
+          (activeEl as HTMLInputElement).type !== 'range' &&
+          (activeEl as HTMLInputElement).type !== 'checkbox' &&
+          (activeEl as HTMLInputElement).type !== 'button') ||
+        tag === 'TEXTAREA';
+
+      if (isTextInput && activeEl) {
+        // When typing on a keyboard in standalone mode, ignore MyPC key-mapped actions
+        if (dev === 'keys') return;
+        const mapped = mapMyPCAction(rawAction);
+        if (mapped === 'cancel') {
+          activeEl.blur();
+          soundManager.playSound('select');
+          return;
+        }
+        if (mapped === 'up' || mapped === 'down') {
+          activeEl.blur();
+          dispatchUnifiedAction(mapped, 'mypc');
+          return;
+        }
+        return;
+      }
+
       const mapped = mapMyPCAction(rawAction);
       if (mapped) {
         dispatchUnifiedAction(mapped, 'mypc');
@@ -1621,37 +1647,70 @@ export const App: React.FC = () => {
     return () => clearTimeout(timer);
   }, [appState, pendingPromotion, mobileChatOpen, playFocusZone, analyzing]);
 
-  // Global Keyboard & Smart TV Remote listener
+  // Global Keyboard & Smart TV Remote listener + document.body shield for text inputs
   useEffect(() => {
+    const isElementTextInput = (el: HTMLElement | null): boolean => {
+      if (!el) return false;
+      const tag = el.tagName;
+      return (
+        (tag === 'INPUT' &&
+          (el as HTMLInputElement).type !== 'range' &&
+          (el as HTMLInputElement).type !== 'checkbox' &&
+          (el as HTMLInputElement).type !== 'button') ||
+        tag === 'TEXTAREA'
+      );
+    };
+
+    // Intercept bubbling events on document.body BEFORE they reach document (where mypc-sdk.js
+    // registers standaloneKey and contextmenu e.preventDefault() in standalone / GitHub Pages mode)
+    const onBodyKeyDown = (e: KeyboardEvent) => {
+      const targetEl = (e.target as HTMLElement) || (document.activeElement as HTMLElement);
+      if (!isElementTextInput(targetEl)) return;
+
+      if (
+        e.key === 'Escape' ||
+        e.key === 'BrowserBack' ||
+        e.key === 'GoBack' ||
+        e.keyCode === 4
+      ) {
+        e.preventDefault();
+        e.stopPropagation();
+        targetEl.blur();
+        soundManager.playSound('select');
+        return;
+      }
+
+      if (targetEl.tagName === 'INPUT' && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+        e.preventDefault();
+        e.stopPropagation();
+        targetEl.blur();
+        dispatchUnifiedAction(e.key === 'ArrowUp' ? 'up' : 'down', 'keyboard');
+        return;
+      }
+
+      // Stop propagation to document so mypc-sdk.js standaloneKey never calls e.preventDefault()
+      // on 'p' (80), 'x' (88), 'z' (90), Backspace (8), Space (32), Enter (13), or ArrowLeft/Right
+      e.stopPropagation();
+    };
+
+    const onBodyKeyUp = (e: KeyboardEvent) => {
+      const targetEl = (e.target as HTMLElement) || (document.activeElement as HTMLElement);
+      if (isElementTextInput(targetEl)) {
+        e.stopPropagation();
+      }
+    };
+
+    const onBodyContextMenu = (e: MouseEvent) => {
+      const targetEl = e.target as HTMLElement | null;
+      if (isElementTextInput(targetEl)) {
+        // Allow native browser Right-Click -> Paste menu inside text inputs
+        e.stopPropagation();
+      }
+    };
+
     const onKey = (e: KeyboardEvent) => {
       const activeEl = document.activeElement as HTMLElement | null;
-      const tag = activeEl?.tagName;
-      const isTextInput =
-        (tag === 'INPUT' &&
-          (activeEl as HTMLInputElement).type !== 'range' &&
-          (activeEl as HTMLInputElement).type !== 'checkbox' &&
-          (activeEl as HTMLInputElement).type !== 'button') ||
-        tag === 'TEXTAREA';
-
-      if (isTextInput && activeEl) {
-        if (
-          e.key === 'Escape' ||
-          e.key === 'BrowserBack' ||
-          e.key === 'GoBack' ||
-          e.keyCode === 4
-        ) {
-          e.preventDefault();
-          activeEl.blur();
-          soundManager.playSound('select');
-          return;
-        }
-        // Allow Up/Down arrows to exit single-line <input> fields so TV remote users never get stuck
-        if (tag === 'INPUT' && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
-          e.preventDefault();
-          activeEl.blur();
-          dispatchUnifiedAction(e.key === 'ArrowUp' ? 'up' : 'down', 'keyboard');
-          return;
-        }
+      if (isElementTextInput(activeEl) && activeEl) {
         return;
       }
 
@@ -1695,8 +1754,16 @@ export const App: React.FC = () => {
       }
     };
 
+    document.body.addEventListener('keydown', onBodyKeyDown);
+    document.body.addEventListener('keyup', onBodyKeyUp);
+    document.body.addEventListener('contextmenu', onBodyContextMenu);
     window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    return () => {
+      document.body.removeEventListener('keydown', onBodyKeyDown);
+      document.body.removeEventListener('keyup', onBodyKeyUp);
+      document.body.removeEventListener('contextmenu', onBodyContextMenu);
+      window.removeEventListener('keydown', onKey);
+    };
   }, [appState, settings.shortcuts, pendingPromotion, mobileChatOpen, dispatchUnifiedAction]);
 
   // W3C HTML5 Gamepad Controller Polling Loop (supports Xbox, PlayStation, Switch, Android TV Gamepads)

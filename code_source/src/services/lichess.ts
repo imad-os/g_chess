@@ -68,6 +68,48 @@ export interface ActiveLichessGameState {
   bdraw?: boolean;
 }
 
+/**
+ * Sanitizes and normalizes a Lichess Personal API Access Token.
+ * - Strips invisible zero-width characters, control characters, quotes, and "Bearer " prefixes.
+ * - Repairs accidental double-pastes into masked inputs (e.g. "lip_abclip_abc") or swallowed "p" in "li_...".
+ */
+export function sanitizeLichessToken(raw: unknown): string {
+  if (!raw) return '';
+  let str = typeof raw === 'string' ? raw : '';
+  if (!str && typeof raw === 'object' && raw !== null && 'token' in (raw as any)) {
+    str = String((raw as any).token || '');
+  }
+  // Remove zero-width characters, BOM, and control chars
+  str = str.replace(/[\u200B-\u200D\uFEFF\u0000-\u001F\u007F-\u009F]/g, '').trim();
+  // Strip surrounding quotes or backticks (even if double-JSON-encoded)
+  str = str.replace(/^['"`\s]+|['"`\s]+$/g, '');
+  // Strip leading "Bearer " prefix if user pasted "Bearer lip_..."
+  str = str.replace(/^bearer\s+/i, '').trim();
+  str = str.replace(/^['"`\s]+|['"`\s]+$/g, '');
+
+  // If the user accidentally pasted a lip_ token multiple times into a masked input, take the last lip_ token
+  const allLip = str.match(/lip_[A-Za-z0-9_]+/g);
+  if (allLip && allLip.length > 0) {
+    const candidate = allLip[allLip.length - 1];
+    // Also check if a single match is actually two identical tokens concatenated (lip_XXXlip_XXX)
+    const secondLipIdx = candidate.indexOf('lip_', 4);
+    if (secondLipIdx > 8) {
+      return candidate.slice(secondLipIdx);
+    }
+    return candidate;
+  }
+
+  // Strip any remaining whitespace
+  str = str.replace(/\s+/g, '');
+
+  // Repair tokens where standaloneKey previously swallowed 'p' (keyCode 80) in 'lip_' -> 'li_'
+  if (/^li_[A-Za-z0-9_]{12,}$/.test(str)) {
+    str = 'lip_' + str.slice(3);
+  }
+
+  return str;
+}
+
 class LichessService {
   private token: string = '';
   private username: string = '';
@@ -76,21 +118,29 @@ class LichessService {
   private puzzleIndex: number = 0;
 
   constructor() {
-    this.syncFromMyPC();
+    // Sync lazily or when MyPC.init completes
   }
 
   /**
    * Synchronizes the connected Lichess Personal API Token and username from MyPC cloud profile storage.
-   * Called both at startup and inside MyPC.init({ onInit }) so switching devices restores credentials automatically.
+   * Called inside MyPC.init({ onInit }) and lazily when credentials are requested.
    */
   public syncFromMyPC(): { token: string; username: string } {
+    const savedToken = sanitizeLichessToken(myPCService.load<string>('lichess_token', ''));
     const authBundle = myPCService.load<{ token?: string; username?: string }>('lichess_auth', {});
-    const savedToken = myPCService.load<string>('lichess_token', '');
-    const configToken = myPCService.getAppConfig()?.lichess_token || '';
-    const savedUser = myPCService.load<string>('lichess_username', '');
+    const bundleToken = sanitizeLichessToken(authBundle?.token);
+    const appCfg = myPCService.getAppConfig();
+    const configToken = sanitizeLichessToken(
+      appCfg?.lichess_token || appCfg?.lichessToken || appCfg?.lichess_api_key || appCfg?.apiKey || ''
+    );
+    const currentToken = sanitizeLichessToken(this.token);
 
-    const resolvedToken = (authBundle?.token || savedToken || configToken || this.token || '').trim();
-    const resolvedUser = (authBundle?.username || savedUser || this.username || '').trim();
+    const savedUser = (myPCService.load<string>('lichess_username', '') || '').trim();
+    const bundleUser = (authBundle?.username || '').trim();
+
+    // Prioritize current in-memory token or direct lichess_token over older bundle/config fallbacks
+    const resolvedToken = currentToken || savedToken || bundleToken || configToken || '';
+    const resolvedUser = (this.username || savedUser || bundleUser || '').trim();
 
     this.token = resolvedToken;
     this.username = resolvedUser;
@@ -124,17 +174,33 @@ class LichessService {
   }
 
   public setToken(newToken: string) {
-    this.token = newToken.trim();
-    myPCService.save('lichess_token', this.token);
+    const clean = sanitizeLichessToken(newToken);
+    this.token = clean;
+    if (clean) {
+      myPCService.save('lichess_token', clean);
+      myPCService.save('lichess_auth', {
+        token: clean,
+        username: this.username,
+      });
+    } else {
+      this.clearInvalidToken();
+    }
+  }
+
+  public clearInvalidToken() {
+    this.token = '';
+    myPCService.remove('lichess_token');
     myPCService.save('lichess_auth', {
-      token: this.token,
+      token: '',
       username: this.username,
     });
   }
 
   public getUsername(): string {
     if (!this.username) {
-      this.syncFromMyPC();
+      const savedUser = (myPCService.load<string>('lichess_username', '') || '').trim();
+      const authBundle = myPCService.load<{ token?: string; username?: string }>('lichess_auth', {});
+      this.username = (savedUser || authBundle?.username || '').trim();
     }
     return this.username;
   }
@@ -148,13 +214,19 @@ class LichessService {
     });
   }
 
-  private getHeaders(accept: string = 'application/json', contentType?: string): Record<string, string> {
+  private getHeaders(
+    accept: string = 'application/json',
+    contentType?: string,
+    includeAuth: boolean = true
+  ): Record<string, string> {
     const headers: Record<string, string> = {
       Accept: accept,
     };
-    const tok = this.getToken();
-    if (tok) {
-      headers['Authorization'] = `Bearer ${tok}`;
+    if (includeAuth) {
+      const tok = sanitizeLichessToken(this.getToken());
+      if (tok) {
+        headers['Authorization'] = `Bearer ${tok}`;
+      }
     }
     if (contentType) {
       headers['Content-Type'] = contentType;
@@ -165,7 +237,10 @@ class LichessService {
   /**
    * Fetch authenticated account profile & stats
    */
-  public async fetchAccount(): Promise<LichessUserStats> {
+  public async fetchAccount(explicitToken?: string): Promise<LichessUserStats> {
+    if (explicitToken !== undefined) {
+      this.setToken(explicitToken);
+    }
     const tok = this.getToken();
     if (!tok) {
       throw new Error('No Lichess Personal API Token set.');
@@ -174,6 +249,12 @@ class LichessService {
       method: 'GET',
       headers: this.getHeaders('application/json'),
     });
+    if (res.status === 401) {
+      this.clearInvalidToken();
+      throw new Error(
+        'Lichess rejected this API token (401 Unauthorized). Please paste or enter a valid Personal API Access Token (starting with lip_).'
+      );
+    }
     if (!res.ok) {
       throw new Error(`Lichess auth failed (${res.status}). Check your API token.`);
     }
@@ -189,10 +270,17 @@ class LichessService {
    */
   public async fetchUserStats(username: string): Promise<LichessUserStats> {
     const clean = username.trim();
-    const res = await myPCService.proxyFetch(`${LICHESS_BASE}/api/user/${encodeURIComponent(clean)}`, {
+    let res = await myPCService.proxyFetch(`${LICHESS_BASE}/api/user/${encodeURIComponent(clean)}`, {
       method: 'GET',
       headers: this.getHeaders('application/json'),
     });
+    if (res.status === 401) {
+      this.clearInvalidToken();
+      res = await myPCService.proxyFetch(`${LICHESS_BASE}/api/user/${encodeURIComponent(clean)}`, {
+        method: 'GET',
+        headers: this.getHeaders('application/json', undefined, false),
+      });
+    }
     if (!res.ok) {
       throw new Error(`Could not find Lichess user "${clean}"`);
     }
@@ -209,10 +297,17 @@ class LichessService {
   public async fetchUserGames(username: string, max: number = 15): Promise<LichessGameRecord[]> {
     const clean = username.trim();
     const url = `${LICHESS_BASE}/api/games/user/${encodeURIComponent(clean)}?max=${max}&pgnInJson=true&opening=true`;
-    const res = await myPCService.proxyFetch(url, {
+    let res = await myPCService.proxyFetch(url, {
       method: 'GET',
       headers: this.getHeaders('application/x-ndjson'),
     });
+    if (res.status === 401) {
+      this.clearInvalidToken();
+      res = await myPCService.proxyFetch(url, {
+        method: 'GET',
+        headers: this.getHeaders('application/x-ndjson', undefined, false),
+      });
+    }
 
     if (!res.ok) {
       throw new Error(`Failed to load games for ${clean} (${res.status})`);
@@ -333,10 +428,17 @@ class LichessService {
   public async fetchPuzzle(mode: 'daily' | 'next' = 'daily'): Promise<LichessPuzzle> {
     try {
       const endpoint = mode === 'next' ? '/api/puzzle/next' : '/api/puzzle/daily';
-      const res = await myPCService.proxyFetch(`${LICHESS_BASE}${endpoint}`, {
+      let res = await myPCService.proxyFetch(`${LICHESS_BASE}${endpoint}`, {
         method: 'GET',
         headers: this.getHeaders('application/json'),
       });
+      if (res.status === 401) {
+        this.clearInvalidToken();
+        res = await myPCService.proxyFetch(`${LICHESS_BASE}/api/puzzle/daily`, {
+          method: 'GET',
+          headers: this.getHeaders('application/json', undefined, false),
+        });
+      }
       if (res.ok) {
         const data = await res.json();
         if (data?.game?.pgn && data?.puzzle?.solution) {
@@ -404,6 +506,13 @@ class LichessService {
       body: body.toString(),
     });
 
+    if (res.status === 401) {
+      this.clearInvalidToken();
+      throw new Error(
+        'Lichess API token rejected (401 Unauthorized). Please re-enter or paste your Personal API Token (starting with lip_) above.'
+      );
+    }
+
     if (!res.ok) {
       const errText = await res.text();
       throw new Error(`Lichess AI challenge failed: ${errText || res.status}`);
@@ -445,6 +554,17 @@ class LichessService {
           headers: this.getHeaders('application/x-ndjson'),
           signal: controller.signal,
         });
+
+        if (eventRes.status === 401) {
+          this.clearInvalidToken();
+          controller.abort();
+          reject(
+            new Error(
+              'Lichess API token rejected (401 Unauthorized). Please re-enter or paste your Personal API Token (starting with lip_) above.'
+            )
+          );
+          return;
+        }
 
         if (!eventRes.ok || !eventRes.body) {
           reject(new Error(`Event stream failed (${eventRes.status})`));
@@ -496,6 +616,14 @@ class LichessService {
         signal: controller.signal,
       });
 
+      if (seekRes.status === 401) {
+        this.clearInvalidToken();
+        controller.abort();
+        throw new Error(
+          'Lichess API token rejected (401 Unauthorized). Please re-enter or paste your Personal API Token (starting with lip_) above.'
+        );
+      }
+
       if (!seekRes.ok) {
         let errDetail = '';
         try {
@@ -511,6 +639,10 @@ class LichessService {
         );
       }
     })();
+
+    // Prevent unhandled rejection if one branch fails before the other
+    gameIdPromise.catch(() => {});
+    seekPromise.catch(() => {});
 
     // Race gameId discovery against seek failure
     return Promise.race([

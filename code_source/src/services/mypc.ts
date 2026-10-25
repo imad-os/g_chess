@@ -13,6 +13,8 @@ export interface MyPCHandlers {
 class MyPCService {
   private isMyPCAvailable: boolean = false;
   private initialized: boolean = false;
+  private isReady: boolean = false;
+  private pendingSaves: Map<string, any> = new Map();
   private profileName: string = 'Player 1';
   private currentHandlers: MyPCHandlers = {};
 
@@ -30,6 +32,19 @@ class MyPCService {
     this.currentHandlers.onInput = handler;
   }
 
+  private flushPendingSaves() {
+    if (!this.isReady || this.pendingSaves.size === 0) return;
+    const MyPC = typeof window !== 'undefined' ? (window as any).MyPC : null;
+    if (MyPC && typeof MyPC.save === 'function') {
+      this.pendingSaves.forEach((val, key) => {
+        try {
+          MyPC.save(key, val);
+        } catch {}
+      });
+    }
+    this.pendingSaves.clear();
+  }
+
   public init(handlers: MyPCHandlers) {
     this.currentHandlers = { ...this.currentHandlers, ...handlers };
     if (typeof window === 'undefined') return;
@@ -41,6 +56,8 @@ class MyPCService {
       this.isMyPCAvailable = true;
       MyPC.init({
         onInit: (info: any) => {
+          this.isReady = true;
+          this.flushPendingSaves();
           if (info?.profile?.name) {
             this.profileName = info.profile.name;
           }
@@ -68,8 +85,9 @@ class MyPCService {
         ownMenu: true,
       });
     } else {
-      // Standalone mode in regular browser
+      // Standalone mode in regular browser without SDK script
       setTimeout(() => {
+        this.isReady = true;
         this.currentHandlers.onInit?.({ standalone: true, profile: { name: 'Player 1' } });
         this.currentHandlers.onStart?.();
       }, 50);
@@ -94,18 +112,35 @@ class MyPCService {
   public save(key: string, value: any) {
     const MyPC = typeof window !== 'undefined' ? (window as any).MyPC : null;
     if (MyPC && typeof MyPC.save === 'function') {
-      try {
-        MyPC.save(key, value);
-      } catch {}
+      if (this.isReady) {
+        try {
+          MyPC.save(key, value);
+        } catch {}
+      } else {
+        this.pendingSaves.set(key, value);
+      }
     }
     try {
       localStorage.setItem(`mypc_chess_${key}`, JSON.stringify(value));
     } catch {}
   }
 
+  public remove(key: string) {
+    this.pendingSaves.delete(key);
+    const MyPC = typeof window !== 'undefined' ? (window as any).MyPC : null;
+    if (MyPC && typeof MyPC.save === 'function' && this.isReady) {
+      try {
+        MyPC.save(key, '');
+      } catch {}
+    }
+    try {
+      localStorage.removeItem(`mypc_chess_${key}`);
+    } catch {}
+  }
+
   public load<T>(key: string, defaultValue: T): T {
     const MyPC = typeof window !== 'undefined' ? (window as any).MyPC : null;
-    if (MyPC && typeof MyPC.load === 'function') {
+    if (this.isReady && MyPC && typeof MyPC.load === 'function') {
       try {
         const loaded = MyPC.load(key, undefined);
         if (loaded !== undefined && loaded !== null && loaded !== '') {
@@ -120,8 +155,8 @@ class MyPCService {
       const stored = localStorage.getItem(`mypc_chess_${key}`);
       if (stored !== null) {
         const parsed = JSON.parse(stored);
-        if (parsed !== undefined && parsed !== null) {
-          if (MyPC && typeof MyPC.save === 'function' && parsed !== '') {
+        if (parsed !== undefined && parsed !== null && parsed !== '') {
+          if (this.isReady && MyPC && typeof MyPC.save === 'function') {
             try {
               MyPC.save(key, parsed);
             } catch {}
@@ -164,43 +199,41 @@ class MyPCService {
   }
 
   /**
-   * Uses the MyPC SDK local proxy if available in the TV host environment
-   * to bypass WebView CORS restrictions, with automatic fallback to standard fetch.
+   * Executes CORS-friendly fetch for Lichess API (which natively sends Access-Control-Allow-Origin: *
+   * and supports NDJSON ReadableStreams), with fallback to MyPC.net.fetch on restricted TV WebViews.
    */
   public async proxyFetch(url: string, options: RequestInit = {}): Promise<Response> {
-    const MyPC = typeof window !== 'undefined' ? (window as any).MyPC : null;
-
-    // 1. Check if MyPC.fetch is provided directly
-    if (MyPC && typeof MyPC.fetch === 'function') {
-      try {
-        return await MyPC.fetch(url, options);
-      } catch {
-        // Fallback to standard fetch
+    try {
+      return await fetch(url, {
+        ...options,
+        mode: 'cors',
+        credentials: 'omit',
+      });
+    } catch (fetchErr: any) {
+      // If aborted intentionally, rethrow immediately
+      if (fetchErr?.name === 'AbortError') {
+        throw fetchErr;
       }
-    }
 
-    // 2. Check if MyPC.proxy is provided (either as a function or a base URL string)
-    if (MyPC?.proxy) {
-      try {
-        if (typeof MyPC.proxy === 'function') {
-          const proxied = MyPC.proxy(url, options);
-          if (typeof proxied === 'string') {
-            return await fetch(proxied, options);
-          }
-          return await proxied;
-        } else if (typeof MyPC.proxy === 'string') {
-          const proxyUrl = MyPC.proxy.includes('{url}')
-            ? MyPC.proxy.replace('{url}', encodeURIComponent(url))
-            : `${MyPC.proxy}${encodeURIComponent(url)}`;
-          return await fetch(proxyUrl, options);
-        }
-      } catch {
-        // Fallback to direct fetch
+      // Fallback to MyPC.net.fetch (API level 10) if direct fetch failed due to TV WebView network policy
+      const MyPC = typeof window !== 'undefined' ? (window as any).MyPC : null;
+      if (MyPC?.net && typeof MyPC.net.fetch === 'function') {
+        const r = await MyPC.net.fetch(url, {
+          method: options.method || 'GET',
+          headers: (options.headers as Record<string, string>) || {},
+          body: options.body,
+          responseType: 'text',
+        });
+        const bodyText = typeof r.text === 'function' ? r.text() : String(r.body ?? '');
+        return new Response(bodyText, {
+          status: r.status || 200,
+          statusText: r.statusText || '',
+          headers: r.headers || {},
+        });
       }
-    }
 
-    // 3. Direct fetch (Lichess API natively sets Access-Control-Allow-Origin: *)
-    return fetch(url, options);
+      throw fetchErr;
+    }
   }
 }
 
