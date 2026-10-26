@@ -43,10 +43,12 @@ this guide and the SDK fresh before every task.
   player quits, the iframe is **destroyed**, which frees all its memory.
 - **My PC owns the input.** Your page never receives focus on the TV. My PC sends you
   **actions** (`left`, `jump`...), not keys. Never read `keydown` yourself; use the SDK.
-- **Back is My PC's.** It opens the pause menu (Resume, your own menu items, Quit). You get
-  `onPause` / `onResume` / `onDestroy`. On a gamepad, **holding Start** (Switch **+**, Xbox Menu,
-  PlayStation Options) does the same. A **short press of Start** opens My PC's menu too, unless your
-  app has its own menu: then init with `ownMenu: true` and you receive the `menu` action instead.
+- **My PC's pause menu** (Resume, your own menu items, Quit) opens with **the TV remote's Back** or by
+  **holding Start + Select together for 1 s** on a gamepad (Switch **+** and **-**, Xbox Menu + View,
+  PlayStation Options + Share). You get `onPause` / `onResume` / `onDestroy`. Nothing else opens it
+  while your app runs: a keyboard's **Esc / Backspace**, gamepad **B** and the phone controller's buttons
+  come to your app, each with what the same button of a real Nintendo pad does (**A** = `run` + `cancel`, **B** = `confirm` + `jump`, **X** and **Y** = `run`; the phone's **+** is Start = `menu`). Start or Select alone is `menu`, sent to apps that init with
+  `ownMenu: true` (on a gamepad it does nothing in other apps).
 - **Standalone mode:** opened directly in a browser (not inside My PC), the SDK acts as the host:
   the keyboard sends actions, Esc or P pauses, and saves go to `localStorage`. You can develop and
   test with any browser, no TV needed.
@@ -113,7 +115,7 @@ MyPC.init({
     onDestroy: function () {},       // REQUIRED: stop everything: loops, timers, AudioContext.close()
     onInput:   function (action, pressed, repeat, dev) {},  // optional: one call per action change
     onMenu:    function (id) {},     // optional: one of your pause-menu items was chosen
-    onVolume:  function (v) {},      // optional: v = { music: 0..1, sfx: 0..1 } changed in Settings
+    onVolume:  function (v) {},      // optional: v = { music: 0..1, sfx: 0..1 } changed in the Control Panel
     ownMenu:   false                 // optional: true = gamepad Start (short press) sends you 'menu'
 });
 ```
@@ -121,6 +123,14 @@ MyPC.init({
 The lifecycle is always:
 `onInit` → (you call `ready()`) → `onStart` → (`onPause` ↔ `onResume`)* → `onDestroy`.
 After `onPause` the game **MUST NOT** move or make sound until `onResume`.
+
+**My PC in the background pauses the game.** When My PC loses the focus (the TV switches to another app or
+source, the PC window is minimized or another window is clicked, the phone goes to another app), My PC pauses the
+game (`onPause`) and shows its menu (with a short sound, like every time the menu opens); the player picks **Resume** (`onResume`). Nothing to do in your app.
+An app that must keep going in the background (a music player, a timer, a live multiplayer host) asks the owner to set
+`"allow_background_running": true` in its config (`MyPC.app_config`, App Store Manager > Config, or the default in
+`mypc-app.json` `"config"`): My PC then leaves it alone (no menu, no `onPause` / `onResume`). The browser or TV may
+still slow down a hidden page by itself. Standalone, outside My PC, the SDK does not do this.
 
 ### `info` (given to `onInit`, also `MyPC.info()`)
 
@@ -140,7 +150,7 @@ After `onPause` the game **MUST NOT** move or make sound until `onResume`.
 itself. Your app only sees `info.profile` and keeps progress with `MyPC.save` / `MyPC.load`, which are already per
 profile and backed up. **Never** build your own login, accounts, cloud saves, name entry for scores, Firebase or backend.
 
-Check `MyPC.apiLevel` before using a newer API (3 multiplayer, 4 pad, 7 bluetooth, 8 sensors) and hide the feature
+Check `MyPC.apiLevel` before using a newer API (3 multiplayer, 4 pad, 7 bluetooth, 8 sensors, 9 gamepad, 10 net / ai / mic, 11 error reports) and hide the feature
 when it is missing.
 
 ### App config: `MyPC.app_config`
@@ -160,6 +170,8 @@ MyPC.app_config.speed      // e.g. 2
 - It is **not secret**: every TV downloads it, and the app's site can see it. No passwords or keys.
 - Put sensible defaults in `mypc-app.json` as `"config": { ... }`; the App Store Manager uses them
   when the app is added, and updates never overwrite what the owner has set.
+- My PC itself reads one key: `"allow_background_running": true` keeps the app running when My PC loses the focus
+  (no menu; see the lifecycle above).
 - Standalone (opened directly in a browser) it is `{}` unless you add `?app_config={"speed":2}`
   to the address, which lets you test different configs.
 
@@ -167,34 +179,40 @@ MyPC.app_config.speed      // e.g. 2
 
 My PC also runs on phones and tablets. **On a touch device My PC draws a customizable virtual pad above every app and game by
 itself, so your app needs no touch code.** The pad is a joystick plus buttons; the player customizes it (gear button: add or hide
-buttons, resize, drag anywhere, reset) and the layout is saved per app on the device (`vpad:app:<app id>`). It is never drawn on
+buttons, including **+** and **Home**, resize, drag anywhere, Stick or **D-pad**, reset) and the layout is saved per app on the device
+(`vpad:app:<app id>`). With the D-pad nothing takes the left half of the screen, so taps there reach your app. It is never drawn on
 a TV, and not while a gamepad is the active input. It is hidden while My PC's own screens are open (pause menu, multiplayer, dialogs)
-and the pause menu gets a **Touch pad settings** entry on touch devices.
+and the pause menu gets **Touch pad settings** and **Hide touch pad** / **Show touch pad** entries on touch devices (the player may
+hide the pad for one app, e.g. to play it by tapping; kept per app on the device). Do not rely on the pad being shown.
 
 What the pad sends (the same actions the TV remote and gamepads send, device `'touch'`):
 
 | Pad control | Action your `onInput` gets |
 |---|---|
 | stick | `left` `right` `up` `down` (a diagonal sends two) |
-| button **A** (default) | `confirm` **and** `jump` (like the remote's OK) |
-| button **B** (default) | `run` |
-| button **C** (in the catalog) | `cancel` |
-| button **&#9776;** (in the catalog) | `menu`: your own menu when you init with `ownMenu: true`, otherwise My PC's pause menu |
-| pause button (top) | My PC's pause menu |
+| button **A** (right, default) | `run` **and** `cancel` (what A does on a real Nintendo controller) |
+| button **B** (bottom, default) | `confirm` **and** `jump` (like the remote's OK; what B does on a real Nintendo controller) |
+| button **X** (top, in the catalog) | `run` (like the real X) |
+| button **Y** (left, in the catalog) | `run` (like the real Y) |
+| **+** button (top centre, movable) | My PC's pause menu |
+| **Home** button (hidden at first, the player can add it) | My PC's pause menu (like a pad's Guide / Home button) |
 
-Defaults: **A** (ok) and **B** (run) are shown; **C** (cancel) and **&#9776;** (menu) can be added by the player.
+**Owner rule: the buttons are always called and placed A B X Y like a Nintendo controller (A right, B bottom, X top, Y left).
+Never A B C, never a menu symbol (&#9776;) or the word "Menu" as a button. Pause / menu is the Nintendo-style **+** button.** The phone and the touch pad send exactly what the same button of a real Nintendo controller connected to the TV sends (My PC reads a pad by position:
+the bottom button confirms / jumps, the right one runs / goes back), so a game plays the same with either. On the phone controller **+** is
+Start (`menu`) and **Home** is the Guide button. Defaults: **A** and **B** are shown; **X** and **Y** can be added by the player.
 
 **Change the buttons in `mypc-app.json`** (optional; the App Store Manager stores it with the app):
 
 ```json
 "touch": {
-  "buttons": [ { "label": "A", "action": "ok" }, { "label": "B", "action": "run" } ],
-  "catalog": [ { "label": "A", "action": "ok" }, { "label": "B", "action": "run" }, { "label": "C", "action": "cancel" }, { "label": "\u2630", "action": "menu" } ],
+  "buttons": [ { "label": "A", "action": "b", "place": "right" }, { "label": "B", "action": "ok", "place": "bottom" } ],
+  "catalog": [ { "label": "A", "action": "b", "place": "right" }, { "label": "B", "action": "ok", "place": "bottom" }, { "label": "X", "action": "run", "place": "top" }, { "label": "Y", "action": "run", "place": "left" } ],
   "scale": { "stick": 1, "btn": 1 }
 }
 ```
 - `buttons` = shown at first, `catalog` = everything the player may add (8 entries at most each), `label` 3 characters at most,
-  `action` one of `ok` `run` `cancel` `menu`, `scale` = starting size multipliers (0.5 to 2.5; use about 1.3 for a game that is only played
+  `action` one of `ok` `b` (run + cancel) `run` `cancel` `menu`, `place` one of `right` `bottom` `top` `left` (the Nintendo diamond), `scale` = starting size multipliers (0.5 to 2.5; use about 1.3 for a game that is only played
   with the pad). Invalid entries are ignored (the App Store Manager refuses them when you add the app).
 - **`"touch": false`**: your app has its **own touch UI**: My PC draws nothing.
 - The same can be said from code: `MyPC.init({ pad: false | { buttons, catalog, scale } })`; it wins over the manifest.
@@ -291,7 +309,8 @@ Rules for app authors:
 |---|---|
 | `MyPC.progress(p)` | loading progress 0..1 (My PC shows its own loading bar until `ready()`) |
 | `MyPC.ready()` | **MUST** be called once, when the first screen can be shown. Then `onStart` comes. |
-| `MyPC.fail(reason)` | loading failed: My PC shows Retry / Back |
+| `MyPC.fail(reason)` | loading failed: My PC shows Retry / Back (and saves `reason` as an error report, section 15) |
+| `MyPC.report(error, data)` | an error you caught yourself: My PC saves it with the device, versions and time for the App Store Manager (section 15); `data` = a small JSON value |
 | `MyPC.isDown(action)` | `true` while an action is held (read it in your fixed-step update) |
 | `MyPC.save(key, value)` | save JSON data (per My PC profile; 64 KB per app in total) |
 | `MyPC.load(key, default)` | read saved data (synchronous; available from `onInit`) |
@@ -300,8 +319,65 @@ Rules for app authors:
 | `MyPC.setMenu([{id, label}])` | up to 6 extra pause-menu items (e.g. Restart, Level select); `label` already translated |
 | `MyPC.pause()` | ask My PC to open the pause menu (e.g. your own on-screen pause button) |
 | `MyPC.exit()` | close the app and go back to the desktop |
+| `MyPC.net.fetch(url, opts)` | a web request through My PC, no CORS limit on the TV (section 14) |
+| `MyPC.ai.generate(req)` / `MyPC.ai.chat(text)` | AI: Gemini, ChatGPT, Claude, NVIDIA, any OpenAI-compatible service; text, images, audio, video in and out (section 14) |
+| `MyPC.mic.start(opts)` / `stop()` / `record(opts)` | the microphone, after the user allows it (section 14) |
 
 ## 5. Input
+
+### Game controllers come first (MUST)
+
+Design every game for a **game controller first** (Xbox, PlayStation, Switch Pro, 8BitDo, any Bluetooth or USB pad), then
+make sure it still works with the other inputs. Players should never have to fight the button mapping:
+
+- **Read every button with `MyPC.gamepad`** (API level 9), not only the few mapped actions below. All buttons, analog
+  triggers and both sticks reach your app, with no limit on the number of buttons. Give every button a sensible job
+  (for example A jump, B attack / back, X and Y abilities, LB / RB switch weapon or page, LT / RT analog brake and speed,
+  the right stick the camera or aim, Start your own menu), and show the controls on screen with the button names.
+- **Support up to 4 controllers** at once: `dev` (`'pad0'`..`'pad3'`) tells them apart, so local multiplayer is one
+  hero per `dev`.
+- The left stick and the D-pad also arrive as `left right up down`, A as `confirm` + `jump`: menus can stay on `onInput`.
+- Reserved for My PC: holding **Start + Select** together for 1 s (its pause menu) and the **Home / Guide** button.
+  You still receive their button events, but don't give them an essential job of their own.
+- Never call `navigator.getGamepads()` or listen to `gamepadconnected` yourself: on the TV your page has no focus and gets
+  nothing. The SDK does it for you (also standalone, where it reads the pads itself, so you can test with a pad on a PC).
+- Physical controllers only: the TV remote, the keyboard, the touch pad send actions (a phone in Buttons or Keyboard mode is a real gamepad: `MyPC.gamepad` sees it as a standard pad with 18 buttons like a Switch Pro controller, device `pad101` / `pad102`)
+  (`onInput`), so the game must also be playable with `left right up down` + `confirm` (see the rules below).
+
+```js
+// every change of every button: index, pressed, value (0..1, analog triggers), dev 'pad0'..'pad3', name
+MyPC.gamepad.on('button', function (i, pressed, value, dev, name) {
+    if (name === 'X' && pressed) castSpell(dev);
+});
+// sticks moved: axes[0], axes[1] = left stick x / y, axes[2], axes[3] = right stick x / y (-1..1)
+MyPC.gamepad.on('axes', function (axes, dev) {});       // `axes` is the SDK's own array: read it now, don't keep it
+MyPC.gamepad.on('pads', function (list) {});            // [{ dev: 'pad0', name: 'Xbox Wireless Controller', standard: true, buttons: 17, axes: 4 }]
+
+// or read the state in your fixed-step update (no allocation):
+MyPC.gamepad.pressed(2, 'pad0');   // X held on the first pad (without dev: on any pad)
+MyPC.gamepad.value(7);             // RT, 0..1 (the highest value of all pads)
+MyPC.gamepad.axis(2, 'pad0');      // right stick x; apply your own dead zone (about 0.15)
+MyPC.gamepad.name(3);              // 'Y'
+MyPC.gamepad.pads();               // the connected controllers
+```
+
+Button indices follow the W3C **standard** layout (by position, whatever is printed on the pad):
+
+| Index | Name | Xbox | PlayStation | Switch |
+|---|---|---|---|---|
+| 0 / 1 / 2 / 3 | `A` `B` `X` `Y` | A B X Y | Cross Circle Square Triangle | B A Y X |
+| 4 / 5 | `LB` `RB` | LB RB | L1 R1 | L R |
+| 6 / 7 | `LT` `RT` (analog) | LT RT | L2 R2 | ZL ZR |
+| 8 / 9 | `Select` `Start` | View Menu | Share/Create Options | − + |
+| 10 / 11 | `L3` `R3` | stick clicks | L3 R3 | stick clicks |
+| 12 / 13 / 14 / 15 | `Up` `Down` `Left` `Right` | D-pad | D-pad | D-pad |
+| 16 | `Home` (My PC's) | Xbox | PS | Home |
+| 17 and up | `Button17`... | extra buttons (Share, paddles, touchpad click) | | Capture |
+
+A pad that is not in the standard layout (`standard: false`) names every button `Button<i>`: let players see which
+button does what, and keep the defaults on the standard indices.
+
+### Actions (`onInput`)
 
 Actions: `left right up down` (directions), `jump` and `confirm` (OK / Enter / Space / gamepad A),
 `run` (gamepad B/X, Shift, X: also "fire"), `cancel`, `pause`.
@@ -314,10 +390,12 @@ Actions: `left right up down` (directions), `jump` and `confirm` (OK / Enter / S
   or `'pad0'`..`'pad3'`. Use it for local multiplayer (one hero per device).
 - **Every action MUST be reachable with the TV remote alone:** arrows + OK. Don't rely on
   `run`/`cancel` (the remote has no such buttons), and never require a mouse, touch or text typing.
-- Back / Esc always belongs to My PC (pause menu). Never use it for in-game actions.
-- `menu`: gamepad Start (or Select), short press. Sent only to apps that init with `ownMenu: true`
-  (open your own menu on it, and close it on `menu` or `cancel`); for other apps it opens My PC's
-  pause menu. Holding Start for 0.7 s always opens My PC's pause menu, so players can still quit.
+- The TV remote's Back always belongs to My PC (pause menu); you never receive it. A keyboard's Esc and
+  Backspace reach you as `cancel` (use it as your own "back": close a sub-menu, leave a screen).
+- `menu`: gamepad Start or Select pressed alone (sent when let go). Sent only to apps that init with
+  `ownMenu: true` (open your own menu on it, and close it on `menu` or `cancel`); on a gamepad other
+  apps get nothing (the touch pad's + and the phone controller's + open My PC's pause menu for them).
+  **Holding Start + Select together for 1 s** always opens My PC's pause menu, so players can still quit.
   The TV remote has no Start: give your menu another way in too (e.g. an on-screen button with OK).
 
 ## 6. Screen
@@ -442,7 +520,9 @@ Voice Guide announcements.
    in, paste the app address, press **Check**, then **Add to store** (or tick it under **Apps from
    imad-os** if the repository is named `g_…`).
 5. It is in the **App Store** of every My PC right away (Home shows the newest apps and the popular
-   ones). People install it there; it then appears on their desktop, in Start and in File Explorer.
+   ones). An **administrator** profile of a TV or phone installs it there (standard users only see it); it
+   then appears on the desktop of every user of that device, in Start and in File Explorer, and each user can
+   remove the shortcut from their own home screen. Your app does not need to do anything for this.
 
 **To update an app** (TVs get it the next time the app is opened, no need to restart My PC):
 1. Bump `version` in `mypc-app.json` (e.g. `1.2.0` -> `1.3.0`), and put that same version on every
@@ -465,8 +545,9 @@ the World records.
 - [ ] `MyPC.init()` called once; `MyPC.ready()` called once after loading
 - [ ] `onPause` stops the loop and sound; `onResume` restarts them; `onDestroy` stops everything
       and closes the `AudioContext`
-- [ ] input only through the SDK (`onInput` / `MyPC.isDown`), playable with arrows + OK only
-- [ ] no `keydown` listeners of your own, no use of Back/Esc
+- [ ] **game controller first**: every button, trigger and both sticks used through `MyPC.gamepad`, controls shown on screen, up to 4 pads by `dev`
+- [ ] input only through the SDK (`onInput` / `MyPC.isDown` / `MyPC.gamepad`), still playable with arrows + OK only
+- [ ] no `keydown` listeners of your own (Esc reaches you as `cancel`; the remote's Back is never yours)
 - [ ] fills the window at any 16:9 size, readable text, obvious focus
 - [ ] runs on Chromium 108 (Tizen 8, 2024 TVs): no CSS nesting, nothing newer than Chrome 108; no allocation in the game loop
 - [ ] saves through `MyPC.save/load`; scores through `MyPC.submitScore` (games with points)
@@ -475,17 +556,33 @@ the World records.
 - [ ] any owner-changeable setting comes from `MyPC.app_config` (with defaults in code), not hard-coded
 - [ ] texts in `en` (and `fr`, `es`, `ar` if possible), using `info.lang`
 - [ ] works standalone: open `index.html` in Chrome, play with the arrows + Enter, Esc pauses
+- [ ] requests to other sites through `MyPC.net`, AI through `MyPC.ai`, the microphone through `MyPC.mic` (section 14): no own proxy, AI SDK or `getUserMedia`; each error code handled (`denied`, `no-provider`...)
+- [ ] the SDK `<script>` is the **first** script of the page (so errors of your own scripts are reported, section 15); errors you catch that matter go to `MyPC.report`
 - [ ] served over https with CORS (GitHub Pages)
 - [ ] every own script, stylesheet and asset is loaded with `?v=<version>`, the same as `version` in `mypc-app.json` (bumped for every release)
 
 ## 12. Phone controllers with motion: `MyPC.sensors` (API level 8)
 
+The Android app (**My PC for Android**, `android-controller/My-PC.apk`, downloaded from the desktop's **Get the app**)
+is **the whole My PC app** on the phone, not a separate controller: your app runs in it like on any device, and the phone
+controller is its **Game controller** app. Never build or describe a controller-only APK.
+
 Players can use a phone as a controller (My PC > **Game controller** on the phone). Besides **Buttons** (the virtual pad;
 your app just gets the usual actions) the phone has two motion modes: **Motion moves** (the phone, in the player's right
 hand, detects moves such as `LEFT` `RIGHT` `JUMP` `DUCK` `DUCK_END` and sends only the ones you ask for, plus running
-metrics if you want them) and **Motion data** (raw sensor samples at the rate you ask for). On the My PC screens a
-Motion data phone is a magic-remote style pointer for the TV; it starts sending your app samples as soon as you call
-`setup` with `raw`, and your app never sees the pointer.
+metrics if you want them) and **Motion data** (raw sensor samples at the rate you ask for). A fourth mode, **Pointer**,
+is a magic-remote style pointer for the My PC screens only: your app never sees it (its A / B buttons arrive as the
+usual actions), and `players` may report `'pointer'` for such a phone. **Buttons** has A B X Y where a Nintendo
+controller has them (A right, B bottom, X top, Y left), a **+** (Start) and a Home (Guide) button that My PC keeps for itself (your app never gets Home); the player may swap the stick for a D-pad (same `left` `right` `up` `down`). Each button sends exactly what the same
+button of a real Nintendo controller on the TV sends: A = `run` + `cancel`, B = OK / `jump`, X = `run`, Y = `run`, **+** = Start (`menu`), Home = Guide. The pad's gear can also add L, R, ZL, ZR, −, Capture and the stick clicks (standard buttons 4 to 11 and 17).
+**Keyboard** mode: a keyboard plugged into the phone (USB or Bluetooth) is a whole Switch Pro style controller: the
+player maps each key to a control (every button, the D-pad and both sticks; ZQSD = D-pad, arrows = left stick, numeric
+keypad = right stick, I J K L = X Y B A by default) and your app gets **gamepad buttons and axes, never keys**: the same
+standard pad as Buttons mode, with the right stick on axes 2 / 3 and Capture as button 17. `players` reports
+`'keyboard'` for such a phone. How strong each move must be (per move, harder while running) and the repeat guard (one move,
+not two, for a step and its bounce back) are set by the player on the TV (Control Panel > Devices > Phone controller >
+Motion moves) and apply to your app too; your own `define` rules still win for the moves they name. Actions may carry
+`gait` (`IDLE`, `WALK`, `RUN`).
 
 ```js
 MyPC.init({ onInit: function () {
@@ -552,3 +649,218 @@ What My PC does for you:
   `tizen-api-unavailable` (not on a TV).
 
 The native side is `js/core/hr-ble.js` (unit tests in `tests/unit-tests.mjs` with fake Garmin, Polar and Decathlon devices).
+
+## 14. Web requests, AI and the microphone: `MyPC.net`, `MyPC.ai`, `MyPC.mic` (API level 10)
+
+Your app runs in a sandboxed iframe on its own website, so it **cannot** call most APIs directly (CORS errors), use the
+TV's own (Tizen) APIs, or open the microphone on a TV. My PC does these things for you over the SDK. **MUST**: use
+these calls for any request to another website, any AI call and any microphone use; never put your own proxy, a CORS
+workaround, `getUserMedia` or a third-party AI SDK in the app. Check `MyPC.apiLevel >= 10` (an older My PC rejects the
+calls with `code: 'unsupported'`).
+
+Every call returns a Promise. Errors are `Error` objects with a `code` (and `status` for HTTP errors):
+`denied` (the user said no) · `no-provider` (no AI service set up) · `unsupported` · `bad-request` · `blocked` ·
+`http` · `network` · `timeout` · `too-big` · `busy` · `cancelled` · `not-running` · `no-mic` · `safety`.
+Show a short message and keep the app usable without the feature.
+
+**Standalone** (your page opened directly in a browser) the same calls work inside the page: the SDK loads My PC's own
+modules next to it. There only APIs that send CORS headers answer, AI needs your own provider object with a key (see
+below), and the microphone is the browser's (it asks the user).
+
+### `MyPC.net`: web requests without CORS limits
+
+```js
+var r = await MyPC.net.fetch('https://api.example.com/items?page=1', {
+    method: 'POST',                        // GET (default) POST PUT PATCH DELETE HEAD OPTIONS
+    headers: { 'X-Api-Key': '...' },       // the browser's own headers (Cookie, Origin, User-Agent, Referer...) cannot be set
+    json: { name: 'x' },                   // or body: string | ArrayBuffer | Uint8Array | Blob, or form: { field: 'text', file: blob }
+    responseType: 'json',                  // 'text' (default) | 'json' | 'arraybuffer' (images, audio, any binary)
+    timeout: 30000,                        // ms (30 s default, 10 min at most)
+    onChunk: function (text) { }           // optional: the answer piece by piece while it arrives (Server-Sent Events, long answers)
+});
+r.ok; r.status; r.statusText; r.url; r.headers['content-type']; r.body;   // body: string, parsed JSON or ArrayBuffer
+r.text(); r.json();
+var req = MyPC.net.fetch(url); req.abort();                 // stop a request
+```
+
+- On a **TV** the request goes out from My PC itself, which has no CORS limit: any public API works. In a browser or on
+  the Android app My PC is a web page too, so there only APIs that allow other sites (CORS) answer; keep a message for that.
+- Addresses of the **local network** (192.168.x.x, 10.x, localhost, `*.local`...) are refused (`blocked`) unless the
+  owner sets `"lan": true` in the app's config in the App Store Manager. Only `http` and `https` addresses.
+- At most 8 requests at once and 32 MB per answer. Requests stop when the app closes.
+
+### `MyPC.ai`: AI for your app (Gemini, ChatGPT, Claude, NVIDIA, any OpenAI-compatible API)
+
+The store's owner sets the AI services once for every My PC in the **App Store Manager > AI services** (with their API
+keys; each TV, phone and computer copies them at start, and Control Panel > AI on the TV only shows them): Google Gemini, OpenAI (ChatGPT), Anthropic Claude,
+NVIDIA, OpenRouter, Groq, Mistral, DeepSeek, xAI, Together, Ollama / LM Studio on a computer at home, or any custom
+OpenAI-compatible address with any model. **Your app never sees the keys.** The first AI request of an app asks the user
+"*<app> wants to use AI*" (Allow / Don't allow); the answer is kept until Control Panel > Privacy & security > *Forget what
+apps were allowed*. If no service is set up you get `no-provider` (and the TV says to add one in the App Store Manager).
+
+```js
+var res = await MyPC.ai.generate({
+    provider: 'gemini',                 // optional: a service id or kind ('gemini' 'openai' 'anthropic' 'nvidia' 'groq' 'ollama'...);
+                                        // default: the app config's ai.provider, else the TV's default service
+    model: 'gemini-2.5-flash',          // optional: else the app config's ai.model, else the service's model from the App Store Manager
+    system: 'You are a quiz master for children.',            // string or [lines]
+    rules: ['Answer in ' + MyPC.info().lang, 'Never more than 3 sentences'],
+    context: { level: 3, score: 1200 },                       // string or any JSON: added to the instructions
+    examples: [{ input: 'Easy question about cats', output: '{"q":"How many legs does a cat have?","a":"4"}' }],
+    messages: [ { role: 'user', content: 'Hi' }, { role: 'assistant', content: 'Hello!' } ],   // earlier turns (optional)
+    prompt: ['What is in this picture?', { type: 'image', data: arrayBuffer, mime: 'image/jpeg' }],   // the new user turn
+    output: 'json',                     // 'text' (default) | 'json' | 'image' | 'audio' | 'video' | ['text', 'image'] ...
+    schema: { type: 'object', properties: { q: { type: 'string' }, a: { type: 'string' } }, required: ['q', 'a'] },
+    temperature: 0.7, maxTokens: 400, topP: 0.9, stop: ['END'], seed: 1,
+    extra: { }                          // optional: fields copied as they are into the service's own request body
+}, {
+    onDelta: function (text) { }        // optional: streaming, the answer piece by piece (text output)
+});
+res.text;      // the whole text answer
+res.json;      // output 'json': the parsed object (undefined if the model did not answer valid JSON)
+res.parts;     // [{ type: 'text', text }, { type: 'image' | 'audio' | 'video', mime, data: ArrayBuffer }]
+res.usage;     // { input, output, total } tokens (when the service says), res.model, res.provider, res.finish
+
+var txt = await MyPC.ai.chat('Tell me a joke');           // shortcut: prompt in, text out
+var list = await MyPC.ai.providers();                     // [{ id, name, type, preset, model, isDefault, tasks }] (no keys)
+// tasks: { chat, image, speech, transcribe, video, embed } true / false: hide a feature no service has
+var job = MyPC.ai.generate(req); job.cancel();            // stop a request
+```
+
+**Parts** (in `prompt`, or in `messages[].content` as an array): a string, `{ type: 'text', text }`, or
+`{ type: 'image' | 'audio' | 'video' | 'file', data, mime, url, name }` where `data` is an ArrayBuffer, a typed array,
+a Blob, base64 or a `data:` URL, or `url` an https address My PC downloads. `file` is for PDF documents.
+
+**Tasks**: `task` is guessed from `output` ('image' → image, 'audio' → speech, 'video' → video) or set it yourself:
+
+| `task` | What | Gemini | OpenAI / compatible | Claude |
+|---|---|---|---|---|
+| `chat` (default) | text / JSON answer; input text, images, audio, video, PDF | ✓ (all inputs; image / audio output with `output: ['text', 'image']`) | ✓ text, images, audio (`input_audio`), PDF; audio answer with `output: ['text', 'audio']` | ✓ text, images, PDF |
+| `image` | make or edit an image (give an image part to edit) | `gemini-2.5-flash-image`, or `imagen-*` | `gpt-image-1` (`size`, `n`, `quality`, `format`) | – |
+| `speech` | text to speech (`voice`, `format`) | `gemini-2.5-flash-preview-tts` (`voice: 'Kore'`), comes back as .wav | `gpt-4o-mini-tts` (`voice: 'alloy'`, `format: 'mp3'`) | – |
+| `transcribe` | speech to text (an audio part; `language`) | ✓ | `gpt-4o-mini-transcribe` / `whisper-1` | – |
+| `video` | make a video (`duration`, `aspectRatio`, `size`; an image part to animate); takes minutes, `onEvent` gets `{ ev: 'status' }` | Veo (`veo-3.0-fast-generate-001`) | Sora (`sora-2`) | – |
+| `embed` | vectors for text (`input: ['a', 'b']`) → `res.vectors` | `gemini-embedding-001` | `text-embedding-3-small` | – |
+
+The models in the table are used when neither the request nor the service names one for that task; NVIDIA, Groq,
+OpenRouter and the other OpenAI-compatible services take the model names of their own catalog (for example NVIDIA
+`meta/llama-3.3-70b-instruct`, `deepseek-ai/deepseek-r1`, `nvidia/llama-3.1-nemotron-70b-instruct`). What a model can do
+depends on the service: a service that cannot do something answers with an `http` or `unsupported` error.
+
+**NVIDIA speech (Magpie-Multilingual)**: with the NVIDIA service, `task: 'speech'` goes to NVIDIA's Magpie-Multilingual
+text-to-speech (an NVCF function; its id is set in the App Store Manager > AI services > NVIDIA > Voice (Magpie) function, filled in already).
+Languages `en-US`, `es-US`, `fr-FR`, `de-DE` (`'en'`, `'es'`, `'fr'`, `'de'` work too; others, Arabic included, give
+`unsupported`). `voice` is the speaker (`'Aria'` by default) or a whole voice name like `'Magpie-Multilingual.EN-US.Aria'`.
+The answer is a .wav file. One request at a time is best; play it after a user action (OK button), as browsers require.
+
+```js
+var res = await MyPC.ai.generate({ provider: 'nvidia', task: 'speech', model: 'magpie-multilingual',
+                                   prompt: 'Hola', voice: 'Aria', language: 'es-US' });
+var wav = res.parts[0];          // { type: 'audio', mime: 'audio/wav', data: ArrayBuffer }
+var ctx = new AudioContext(); ctx.decodeAudioData(wav.data, function (b) { var s = ctx.createBufferSource(); s.buffer = b; s.connect(ctx.destination); s.start(); });
+```
+
+`task: 'transcribe'` with NVIDIA works only when the owner set a speech-to-text function (Parakeet / Riva) with an HTTP
+API in the App Store Manager > AI services > NVIDIA > Speech-to-text function (it gets the audio as a multipart `file` at
+`/v1/audio/transcriptions`); many NVCF speech-to-text functions only speak gRPC, which My PC cannot call. Check
+`providers()` (`tasks.transcribe`) before showing the feature; `Gemini` and `OpenAI` transcribe without any setup.
+
+**Anything else of a service's API** (tools / function calling, a special endpoint): `MyPC.ai.raw({ provider, method,
+path: 'models', json, responseType })` calls the service's own API with its key added (only on the service's own site;
+for NVIDIA also its own https hosts `*.invocation.api.nvcf.nvidia.com` and `ai.api.nvidia.com`, with `url`, a multipart
+`form: { name: value | { data, name, type } }` and `responseType: 'arraybuffer'`), and `extra` adds fields to a
+`generate` body (for Magpie: more form fields).
+
+**The app's own key** (an app whose maker pays for the AI): give a provider object instead of a name; no permission
+question then, and it also works standalone:
+
+```js
+MyPC.ai.generate({ provider: { type: 'openai', url: 'https://integrate.api.nvidia.com/v1', key: MyPC.app_config.aiKey, model: 'meta/llama-3.3-70b-instruct' },
+                   prompt: 'Hello' });
+// type: 'openai' (any OpenAI-compatible address) | 'gemini' | 'anthropic'; optional headers: { ... }
+```
+
+Keys in an app's config or code can be read by anyone who opens the app's website: prefer the services set in the App Store Manager (never sent to apps).
+
+**App config** (App Store Manager > Config) can pick the service and model for an app: `{ "ai": { "provider": "nvidia", "model": "meta/llama-3.3-70b-instruct" } }`.
+
+### `MyPC.mic`: the microphone
+
+My PC opens the microphone and sends you the sound. The first use asks the user "*<app> wants to use the microphone*";
+a red microphone shows on the screen while it listens. Which microphone a TV gives to apps depends on the model (a USB
+or Bluetooth microphone or headset, the TV camera's microphone, the remote's microphone on many models; some keep the
+remote's for Bixby); on phones and computers it is the device's own. Needs My PC package 1.5.0 on a TV;
+`MyPC.mic.available()` says whether there is a microphone path.
+
+```js
+// simplest: record until the person stops talking (or 10 s), then send it to AI
+var rec = await MyPC.mic.record({ maxSeconds: 10, silence: { ms: 1200, threshold: 0.02 } });
+var said = await MyPC.ai.generate({ task: 'transcribe', prompt: [{ type: 'audio', data: rec.audio, mime: rec.mime }] });
+
+// live: chunks while it listens (speech recognition services, visualisers)
+MyPC.mic.on('data', function (e) { send(e.chunk); });         // e.chunk: ArrayBuffer (16-bit PCM, little endian, mono), e.seq
+MyPC.mic.on('level', function (e) { meter(e.v); });          // 0..1, 10 times a second
+MyPC.mic.on('end', function (e) { });                        // stopped by itself: e.reason 'silence' | 'max' | 'paused' | 'closed', e.result
+var info = await MyPC.mic.start({
+    format: 'wav',          // 'wav' (default: PCM chunks, a .wav file at the end) | 'pcm16' | 'float32' | 'webm' (Opus, much smaller)
+    sampleRate: 16000,      // 8000..48000 (wav / pcm16 / float32)
+    chunkMs: 250,           // chunk length; 0 = no live chunks
+    keep: true,             // false: no recording at the end (live chunks only)
+    maxSeconds: 60,         // up to 600
+    silence: null,          // { ms, threshold }: stop by itself after someone spoke and then was silent
+    echoCancellation: true, noiseSuppression: true, autoGainControl: true
+});                         // -> { sampleRate, format, mime, label }
+var res = await MyPC.mic.stop();       // { audio: ArrayBuffer, mime: 'audio/wav', format, sampleRate, seconds }
+MyPC.mic.cancel();                     // stop and drop it
+```
+
+My PC stops the microphone when its menu opens or the app closes (`end` with reason `paused` / `closed`); start it
+again from your own button. Only while the app runs (not under My PC's menu). One recording at a time.
+
+### Protocol (for reference)
+
+App → My PC: `{ mypc: 1, type: 'net' | 'ai' | 'mic', data: { rid, op, req | opts } }` with `op` `request` / `abort`
+(net), `generate` / `raw` / `providers` / `cancel` (ai), `start` / `stop` / `cancel` (mic). My PC → app:
+`{ rid, result }` or `{ rid, error: { code, message, status } }`; events `{ rid, ev: 'chunk' | 'delta' | 'status', ... }`
+and for the microphone `{ ev: 'data' | 'level' | 'end', of: rid, ... }`. ArrayBuffers are transferred, not copied.
+The init message carries `bridges: { net: 1, ai: 1, mic: 0 | 1 }` (`MyPC.info().bridges`).
+My PC side: `js/core/web-proxy.js`, `js/core/ai.js`, `js/core/mic.js`, `js/launcher/bridges.js`.
+
+## 15. Errors and reports (API level 11)
+
+When something goes wrong on a TV, the App Store Manager (page **Errors**) shows it: which app, what happened, when, on
+which device (model, TV code, TV / Android app / browser), the My PC version and build, the app version (`version` of
+the store), the SDK level, the profile, the language and the stack. Nothing to set up: **load the SDK first** and it is on.
+
+What is saved, with no code of yours:
+
+| Kind | When |
+|---|---|
+| `load` | the app never opened: no answer from the SDK (page missing, offline, a script error before `MyPC.init`, `MyPC.init` not called), `MyPC.ready()` not called within 20 s, or the user gave up while it was still loading (after 8 s). The reason says which, with the progress reached |
+| `failed` | the app called `MyPC.fail(reason)` |
+| `error` | an uncaught error (file, line and column, stack), also before `MyPC.init` |
+| `rejection` | a promise rejected with no `catch` |
+| `resource` | a script, picture, sound or stylesheet of the page that did not load |
+| `handler` | one of your `MyPC.init` handlers (`onInit`, `onStart`, `onInput`...) threw: the SDK catches it so the app keeps going, and reports it |
+| `report` | your own `MyPC.report(error, data)` |
+
+Built-in games are covered the same way (their uncaught errors and failed loads), and so is My PC itself (`mypc`).
+
+```js
+try { level = JSON.parse(text); }
+catch (e) { MyPC.report(e, { level: n }); level = DEFAULT; }   // keep going; the owner sees it with { "level": 3 }
+```
+
+Rules, to stay cheap on small TVs (the SDK and My PC enforce them):
+- The same error (kind + message + place) is sent **once**; repeats only add to its count (`n`). An error in your game loop
+  is one report, not one per frame. Still, **fix errors in the loop**: catching and re-throwing every frame costs time.
+- At most 20 different errors per page from the SDK, 8 reports per app per page and 60 per TV per day are saved.
+- Reports are batched (one request a few seconds after the first one), queued while offline and expire after 30 days.
+- Never put personal data, keys or passwords in a message or in `data` (the stack and message are saved as they are).
+- Opened standalone (in a browser, outside My PC) nothing is sent: errors stay in the console.
+- Users can turn reports off: Settings > Privacy & security > Send error reports.
+
+Protocol (for reference): app → My PC `{ mypc: 1, type: 'err', data: { kind, msg, stack, src, n, sdk } }`, sent even
+before `hello` (to `location.ancestorOrigins[0]`); `hello` carries `sdkApi`. My PC side: `js/core/reports.js` (Firestore
+`errors`, rules in `firebase/firestore.rules`), `js/launcher/game-host.js`; dashboard: `installer/index.html#errors`.
+

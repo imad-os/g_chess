@@ -1,6 +1,6 @@
 {
-  "summary":  "Implementation plan for Lichess real-time presence and auto-reconnect, resuming ongoing cloud and local matches, typography scaling up to 50px, adaptive widescreen left-panel layout, clock progress bar with 10-second red alert and audio warning, larger HUD controls, and multi-zone TV/controller/keyboard navigation.",
-  "updatedAt":  "2026-10-26T09:51:19.902228899Z",
+  "summary":  "Implementation plan for flipping usernames/clocks with board orientation, upgrading the Game Over modal with personalized You/Opponent copy, live Rematch offers, and Checkmate animations, and building the multilingual Learn mode taught by Checko the White Rooster with MyPC AI TTS support.",
+  "updatedAt":  "2026-10-26T11:17:00.291337613Z",
   "requestFeedback":  true,
   "userFacing":  true
 }

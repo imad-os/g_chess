@@ -20,6 +20,9 @@ export type SoundEffect =
   | 'click'
   | 'illegal'
   | 'low_time'
+  | 'checko_crow'
+  | 'checko_correct'
+  | 'checko_wrong'
   | 'end';
 
 class SoundService {
@@ -542,6 +545,73 @@ class SoundService {
         acousticNote(t - 0.04, 1318.51, 28, 0.3, 1.45);
       return [snap + alertPing * 0.96, snap + alertPing * 1.04];
     });
+
+    // =========================================================================
+    // CHECKO THE WHITE ROOSTER SOUND EFFECTS (Shared across both packs)
+    // =========================================================================
+    // Helper for warm vocal rooster cluck/chirp formant
+    const roosterCluck = (
+      t: number,
+      noise: number,
+      startFreq: number,
+      endFreq: number,
+      dur: number,
+      amp: number
+    ): number => {
+      if (t < 0 || t > dur) return 0;
+      const u = t / dur;
+      const env = Math.sin(Math.PI * u) * Math.exp(-u * 2.2);
+      const f = startFreq + (endFreq - startFreq) * Math.pow(u, 0.75);
+      const vib = 1 + 0.025 * Math.sin(2 * Math.PI * 28 * t);
+      const phase = 2 * Math.PI * f * vib * t;
+      const formant =
+        Math.sin(phase) * 0.58 +
+        Math.sin(phase * 2) * 0.28 +
+        Math.sin(phase * 3) * 0.14 +
+        noise * 0.08 * Math.exp(-u * 5);
+      return formant * env * amp;
+    };
+
+    // 1. Checko Crow ("Cock-a-doodle-doo!" cheerful 5-syllable melodic rooster greeting)
+    const crowBuf = createBuffer(1.05, (t, _i, noise) => {
+      const s1 = roosterCluck(t - 0.0, noise, 520, 680, 0.11, 0.42); // Cock-
+      const s2 = roosterCluck(t - 0.13, noise, 620, 740, 0.09, 0.38); // a-
+      const s3 = roosterCluck(t - 0.24, noise, 740, 920, 0.13, 0.46); // doo-
+      const s4 = roosterCluck(t - 0.39, noise, 660, 790, 0.1, 0.4); // dle-
+      const s5 = roosterCluck(t - 0.51, noise, 880, 720, 0.48, 0.52); // doo!
+      const sparkle =
+        acousticNote(t - 0.51, 880.0, 5.5, 0.18, 1.1) +
+        acousticNote(t - 0.62, 1174.66, 4.5, 0.22, 1.2);
+      const v = s1 + s2 + s3 + s4 + s5 + sparkle;
+      return [v * 0.97, v * 1.03];
+    });
+    this.packBuffers.wooden.checko_crow = crowBuf;
+    this.packBuffers.broadcast.checko_crow = crowBuf;
+
+    // 2. Checko Correct Move (Happy double cluck + bright golden chime)
+    const correctBuf = createBuffer(0.65, (t, _i, noise) => {
+      const cluck1 = roosterCluck(t - 0.0, noise, 560, 760, 0.09, 0.44);
+      const cluck2 = roosterCluck(t - 0.11, noise, 680, 980, 0.13, 0.48);
+      const chime =
+        acousticNote(t - 0.05, 587.33, 8.0, 0.26, 1.2) + // D5
+        acousticNote(t - 0.14, 880.0, 6.5, 0.32, 1.3) + // A5
+        acousticNote(t - 0.23, 1174.66, 4.8, 0.36, 1.4); // D6
+      const v = cluck1 + cluck2 + chime;
+      return [v * 0.96, v * 1.04];
+    });
+    this.packBuffers.wooden.checko_correct = correctBuf;
+    this.packBuffers.broadcast.checko_correct = correctBuf;
+
+    // 3. Checko Wrong Move (Gentle, curious head-tilt "buk-buk?" cluck)
+    const wrongBuf = createBuffer(0.42, (t, _i, noise) => {
+      const cluck1 = roosterCluck(t - 0.0, noise, 420, 340, 0.12, 0.42);
+      const cluck2 = roosterCluck(t - 0.15, noise, 360, 290, 0.18, 0.45);
+      const softWood = woodKnock(t, noise, 180, 160, 0.25);
+      const v = cluck1 + cluck2 + softWood;
+      return [v, v * 0.98];
+    });
+    this.packBuffers.wooden.checko_wrong = wrongBuf;
+    this.packBuffers.broadcast.checko_wrong = wrongBuf;
   }
 
   public playMusic() {

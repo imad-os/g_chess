@@ -12,6 +12,7 @@ export type AppState =
   | 'multiplayer_menu' 
   | 'history'
   | 'lichess_hub'
+  | 'learn'
   | 'analysis_stats' 
   | 'analysis_view' 
   | 'analysis_learn';

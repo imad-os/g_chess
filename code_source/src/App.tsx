@@ -26,12 +26,13 @@ import {
 } from './components/GameHUD';
 import { PromotionModal } from './components/PromotionModal';
 import { PauseModal } from './components/PauseModal';
-import { GameOverModal } from './components/GameOverModal';
+import { GameOverModal, RematchState } from './components/GameOverModal';
 import { AnalysisModal } from './components/AnalysisModal';
 import { SettingsModal } from './components/SettingsModal';
 import { MultiplayerModal } from './components/MultiplayerModal';
 import { HistoryModal } from './components/HistoryModal';
 import { LichessModal } from './components/LichessModal';
+import { LearnModal } from './components/LearnModal';
 import { MiniBoardPreview } from './components/MiniBoardPreview';
 import { soundManager } from './services/sound';
 import { stockfishService } from './services/stockfish';
@@ -54,7 +55,7 @@ import {
   stepRangeInput,
   triggerSpatialConfirm,
 } from './services/spatialInput';
-import { Bot, Users, Wifi, Sliders, ChevronRight, History, Play } from 'lucide-react';
+import { Bot, Users, Wifi, Sliders, ChevronRight, History, Play, GraduationCap } from 'lucide-react';
 
 export const App: React.FC = () => {
   // App state
@@ -243,15 +244,24 @@ export const App: React.FC = () => {
   const [isHost, setIsHost] = useState<boolean>(false);
   const [connectingOnline, setConnectingOnline] = useState<boolean>(false);
 
-  // Draw offer & Resign confirmation state
+  // Draw offer, Rematch & Resign confirmation state
   const [incomingDrawOffer, setIncomingDrawOffer] = useState<boolean>(false);
   const [drawOfferSent, setDrawOfferSent] = useState<boolean>(false);
   const [initialConfirmResign, setInitialConfirmResign] = useState<boolean>(false);
+  const [rematchState, setRematchState] = useState<RematchState>('idle');
+  const rematchStateRef = useRef<RematchState>('idle');
+  useEffect(() => {
+    rematchStateRef.current = rematchState;
+  }, [rematchState]);
+  const playerColorRef = useRef<Color>('w');
+  useEffect(() => {
+    playerColorRef.current = playerColor;
+  }, [playerColor]);
 
   // TV remote / Controller / Keyboard navigation state
   const [menuIndex, setMenuIndex] = useState<number>(0);
   const hasContinueGameOption = ongoingLichessGames.length > 0 || savedLocalMatch !== null;
-  const menuItemsCount = hasContinueGameOption ? 7 : 6;
+  const menuItemsCount = hasContinueGameOption ? 8 : 7;
   const [playFocusZone, setPlayFocusZone] = useState<'left' | 'board' | 'right'>('board');
   const lastDispatchedRef = useRef<{
     action: UnifiedAction;
@@ -533,6 +543,7 @@ export const App: React.FC = () => {
       setIncomingDrawOffer(false);
       setDrawOfferSent(false);
       setInitialConfirmResign(false);
+      setRematchState('idle');
       currentMatchSavedRef.current = false;
 
       const newChess = new Chess();
@@ -791,6 +802,7 @@ export const App: React.FC = () => {
       setIncomingDrawOffer(false);
       setDrawOfferSent(false);
       setInitialConfirmResign(false);
+      setRematchState('idle');
       setPlayFocusZone('board');
       clearAllSpatialFocus();
       setGameHistory([]);
@@ -1764,12 +1776,14 @@ export const App: React.FC = () => {
           } else if (menuIndex === 1 + offset) {
             setAppState('lichess_hub');
           } else if (menuIndex === 2 + offset) {
-            startNewGame('local');
+            setAppState('learn');
           } else if (menuIndex === 3 + offset) {
-            setAppState('multiplayer_menu');
+            startNewGame('local');
           } else if (menuIndex === 4 + offset) {
-            setAppState('history');
+            setAppState('multiplayer_menu');
           } else if (menuIndex === 5 + offset) {
+            setAppState('history');
+          } else if (menuIndex === 6 + offset) {
             openSettings('menu');
           }
           return;
@@ -2467,6 +2481,26 @@ export const App: React.FC = () => {
             );
             setGameOverInfo({ winner: w, reason: r });
             setAppState('game_over');
+          } else if (msg.type === 'rematch_offer') {
+            soundManager.playSound('check');
+            if (rematchStateRef.current === 'sent') {
+              // Both players requested rematch — start immediately with swapped colors!
+              setRematchState('idle');
+              const nextColor: Color = playerColorRef.current === 'w' ? 'b' : 'w';
+              peer.send({ type: 'rematch_accept', sender: profileName });
+              startNewGame('online', nextColor);
+            } else {
+              setRematchState('received');
+              appendChatMessage('System', `${msg.sender || guestName} wants a rematch!`, true);
+            }
+          } else if (msg.type === 'rematch_accept') {
+            setRematchState('idle');
+            const nextColor: Color = playerColorRef.current === 'w' ? 'b' : 'w';
+            startNewGame('online', nextColor);
+          } else if (msg.type === 'rematch_decline') {
+            soundManager.playSound('select');
+            setRematchState('declined');
+            appendChatMessage('System', `${msg.sender || guestName} declined the rematch.`, true);
           }
         });
 
@@ -2544,6 +2578,25 @@ export const App: React.FC = () => {
           );
           setGameOverInfo({ winner: w, reason: r });
           setAppState('game_over');
+        } else if (msg.type === 'rematch_offer') {
+          soundManager.playSound('check');
+          if (rematchStateRef.current === 'sent') {
+            setRematchState('idle');
+            const nextColor: Color = playerColorRef.current === 'w' ? 'b' : 'w';
+            host.send({ type: 'rematch_accept', sender: profileName });
+            startNewGame('online', nextColor);
+          } else {
+            setRematchState('received');
+            appendChatMessage('System', `${msg.sender || hostName} wants a rematch!`, true);
+          }
+        } else if (msg.type === 'rematch_accept') {
+          setRematchState('idle');
+          const nextColor: Color = playerColorRef.current === 'w' ? 'b' : 'w';
+          startNewGame('online', nextColor);
+        } else if (msg.type === 'rematch_decline') {
+          soundManager.playSound('select');
+          setRematchState('declined');
+          appendChatMessage('System', `${msg.sender || hostName} declined the rematch.`, true);
         }
       });
 
@@ -2558,6 +2611,98 @@ export const App: React.FC = () => {
       startNewGame('online', 'b');
     }
   };
+
+  // Trigger AI's opening move when starting a new game vs AI as Black ('b')
+  useEffect(() => {
+    if (
+      appState === 'playing' &&
+      gameMode === 'ai' &&
+      playerColor === 'b' &&
+      gameHistory.length === 0 &&
+      chess.turn() === 'w' &&
+      !chess.isGameOver()
+    ) {
+      const t = setTimeout(() => {
+        stockfishService.requestMove(
+          {
+            fen: chess.fen(),
+            elo: settings.ai_elo,
+            depth: settings.ai_depth,
+            timeMs: settings.ai_time,
+          },
+          (aiFrom, aiTo, aiPromo) => {
+            executeMove(aiFrom as Square, aiTo as Square, aiPromo);
+          }
+        );
+      }, 280);
+      return () => clearTimeout(t);
+    }
+  }, [
+    appState,
+    gameMode,
+    playerColor,
+    gameHistory.length,
+    chess,
+    settings.ai_elo,
+    settings.ai_depth,
+    settings.ai_time,
+    executeMove,
+  ]);
+
+  // Send / Accept / Decline Rematch handlers across all modes
+  const handleSendRematch = useCallback(() => {
+    soundManager.playSound('click');
+    if (gameMode === 'online' && onlineSession) {
+      const peer = isHost ? onlineSession.peers?.[0] : onlineSession;
+      if (rematchState === 'received') {
+        if (peer?.send) {
+          peer.send({ type: 'rematch_accept', sender: profileName });
+        }
+        setRematchState('idle');
+        const nextColor: Color = playerColor === 'w' ? 'b' : 'w';
+        startNewGame('online', nextColor);
+        return;
+      }
+      if (peer?.send) {
+        peer.send({ type: 'rematch_offer', sender: profileName });
+        setRematchState('sent');
+        return;
+      }
+    }
+    if (gameMode === 'lichess') {
+      setRematchState('idle');
+      setAppState('lichess_hub');
+      return;
+    }
+    // AI or Local mode: instant rematch swapping colors for fairness
+    setRematchState('idle');
+    const nextColor: Color = gameMode === 'ai' ? (playerColor === 'w' ? 'b' : 'w') : 'w';
+    startNewGame(gameMode, nextColor);
+  }, [gameMode, onlineSession, isHost, rematchState, profileName, playerColor, startNewGame]);
+
+  const handleAcceptRematch = useCallback(() => {
+    soundManager.playSound('game_start');
+    if (gameMode === 'online' && onlineSession) {
+      const peer = isHost ? onlineSession.peers?.[0] : onlineSession;
+      if (peer?.send) {
+        peer.send({ type: 'rematch_accept', sender: profileName });
+      }
+    }
+    setRematchState('idle');
+    const nextColor: Color = playerColor === 'w' ? 'b' : 'w';
+    startNewGame(gameMode, nextColor);
+  }, [gameMode, onlineSession, isHost, profileName, playerColor, startNewGame]);
+
+  const handleDeclineRematch = useCallback(() => {
+    soundManager.playSound('select');
+    if (gameMode === 'online' && onlineSession) {
+      const peer = isHost ? onlineSession.peers?.[0] : onlineSession;
+      if (peer?.send) {
+        peer.send({ type: 'rematch_decline', sender: profileName });
+      }
+    }
+    setRematchState('idle');
+  }, [gameMode, onlineSession, isHost, profileName]);
 
   // Dynamic root typography scale (supports up to 50px)
   const scaleClass = useMemo(() => {
@@ -2870,12 +3015,63 @@ export const App: React.FC = () => {
                 <ChevronRight size={18} className="text-slate-800" />
               </button>
 
-              {/* Couch Play */}
+              {/* Learn with Checko (0 to 1500 Elo) */}
               <button
-                onClick={() => startNewGame('local')}
+                onClick={() => {
+                  soundManager.playSound('click');
+                  setAppState('learn');
+                }}
                 onMouseEnter={() => setMenuIndex(2 + menuOffset)}
                 className={`flex items-center justify-between p-3 rounded-2xl border transition-colors cursor-pointer ${
                   menuIndex === 2 + menuOffset
+                    ? 'bg-gradient-to-r from-amber-500 to-emerald-600 border-amber-300 text-slate-950 shadow-lg ring-2 ring-amber-400/60'
+                    : 'bg-slate-900 border-amber-500/40 text-slate-100 hover:bg-slate-800'
+                }`}
+              >
+                <div className="flex items-center gap-3.5">
+                  <div
+                    className={`p-2 rounded-xl flex items-center justify-center border ${
+                      menuIndex === 2 + menuOffset
+                        ? 'bg-slate-950/20 text-slate-950 border-slate-950/30'
+                        : 'bg-amber-500/20 text-amber-400 border-amber-400/30'
+                    }`}
+                  >
+                    <GraduationCap size={20} />
+                  </div>
+                  <div className="text-left">
+                    <div className="font-black text-sm sm:text-base flex items-center gap-2">
+                      <span>Learn with Checko</span>
+                      <span
+                        className={`px-1.5 py-0.5 rounded text-[9px] font-black uppercase ${
+                          menuIndex === 2 + menuOffset
+                            ? 'bg-slate-950 text-amber-300'
+                            : 'bg-amber-400 text-slate-950'
+                        }`}
+                      >
+                        🐓 0–1500 Elo
+                      </span>
+                    </div>
+                    <div
+                      className={`text-[11px] font-medium ${
+                        menuIndex === 2 + menuOffset ? 'text-slate-900' : 'text-slate-300'
+                      }`}
+                    >
+                      Interactive lessons, arrows & AI voice with Checko the Rooster
+                    </div>
+                  </div>
+                </div>
+                <ChevronRight
+                  size={18}
+                  className={menuIndex === 2 + menuOffset ? 'text-slate-950' : 'text-amber-400'}
+                />
+              </button>
+
+              {/* Couch Play */}
+              <button
+                onClick={() => startNewGame('local')}
+                onMouseEnter={() => setMenuIndex(3 + menuOffset)}
+                className={`flex items-center justify-between p-3 rounded-2xl border transition-colors cursor-pointer ${
+                  menuIndex === 3 + menuOffset
                     ? 'bg-blue-600 border-blue-400 text-white shadow-lg ring-2 ring-blue-400/50'
                     : 'bg-slate-900 border-slate-800 text-slate-200 hover:bg-slate-800'
                 }`}
@@ -2900,9 +3096,9 @@ export const App: React.FC = () => {
                   soundManager.playSound('click');
                   setAppState('multiplayer_menu');
                 }}
-                onMouseEnter={() => setMenuIndex(3 + menuOffset)}
+                onMouseEnter={() => setMenuIndex(4 + menuOffset)}
                 className={`flex items-center justify-between p-3 rounded-2xl border transition-colors cursor-pointer ${
-                  menuIndex === 3 + menuOffset
+                  menuIndex === 4 + menuOffset
                     ? 'bg-blue-600 border-blue-400 text-white shadow-lg ring-2 ring-blue-400/50'
                     : 'bg-slate-900 border-slate-800 text-slate-200 hover:bg-slate-800'
                 }`}
@@ -2927,9 +3123,9 @@ export const App: React.FC = () => {
                   soundManager.playSound('click');
                   setAppState('history');
                 }}
-                onMouseEnter={() => setMenuIndex(4 + menuOffset)}
+                onMouseEnter={() => setMenuIndex(5 + menuOffset)}
                 className={`flex items-center justify-between p-3 rounded-2xl border transition-colors cursor-pointer ${
-                  menuIndex === 4 + menuOffset
+                  menuIndex === 5 + menuOffset
                     ? 'bg-blue-600 border-blue-400 text-white shadow-lg ring-2 ring-blue-400/50'
                     : 'bg-slate-900 border-slate-800 text-slate-200 hover:bg-slate-800'
                 }`}
@@ -2958,9 +3154,9 @@ export const App: React.FC = () => {
               {/* Settings */}
               <button
                 onClick={() => openSettings('menu')}
-                onMouseEnter={() => setMenuIndex(5 + menuOffset)}
+                onMouseEnter={() => setMenuIndex(6 + menuOffset)}
                 className={`flex items-center justify-between p-3 rounded-2xl border transition-colors cursor-pointer ${
-                  menuIndex === 5 + menuOffset
+                  menuIndex === 6 + menuOffset
                     ? 'bg-blue-600 border-blue-400 text-white shadow-lg ring-2 ring-blue-400/50'
                     : 'bg-slate-900 border-slate-800 text-slate-200 hover:bg-slate-800'
                 }`}
@@ -3008,8 +3204,8 @@ export const App: React.FC = () => {
         </div>
       )}
 
-      {/* Playing Board State - Adaptive Vertical Phone Screen vs 3-Column Widescreen TV Arena */}
-      {appState === 'playing' &&
+      {/* Playing Board State - Kept visible behind Pause and Game Over modals so Checkmate animations shine */}
+      {(appState === 'playing' || appState === 'paused' || appState === 'game_over') &&
         (isVerticalScreen ? (
           <div className="w-full h-full max-w-[540px] mx-auto flex flex-col justify-between gap-1.5 px-1 py-0.5 overflow-hidden">
             {/* TOP SPACE: Match Info & Utilities + Opponent Info & Opponent Digital Clock */}
@@ -3135,8 +3331,19 @@ export const App: React.FC = () => {
         <GameOverModal
           winner={gameOverInfo.winner}
           reason={gameOverInfo.reason}
+          gameMode={gameMode}
+          playerColor={playerColor}
+          profileName={activeMyName}
+          opponentName={activeOpponentName}
+          isCheckmate={
+            chess.isCheckmate() || gameOverInfo.reason.toLowerCase().includes('mate')
+          }
           eloChange={gameOverInfo.eloChange}
           newElo={gameOverInfo.newElo}
+          rematchState={rematchState}
+          onSendRematch={handleSendRematch}
+          onAcceptRematch={handleAcceptRematch}
+          onDeclineRematch={handleDeclineRematch}
           onStartAnalysis={() => startAnalysisForMoves(gameHistory, 'menu', playerColor)}
           onPlayAgain={() =>
             gameMode === 'lichess'
@@ -3144,6 +3351,18 @@ export const App: React.FC = () => {
               : startNewGame(gameMode, playerColor)
           }
           onQuitToMenu={() => {
+            soundManager.playSound('click');
+            setRematchState('idle');
+            setAppState('menu');
+          }}
+        />
+      )}
+
+      {/* Checko's Learn Academy Modal */}
+      {appState === 'learn' && (
+        <LearnModal
+          settings={settings}
+          onClose={() => {
             soundManager.playSound('click');
             setAppState('menu');
           }}

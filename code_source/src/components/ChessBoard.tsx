@@ -19,6 +19,7 @@ interface ChessBoardProps {
   settings: GameSettings;
   disabled?: boolean;
   arrows?: BoardArrow[];
+  highlightSquares?: Square[];
   sizeVariant?: 'arena' | 'vertical' | 'analysis' | 'puzzle';
   enableDomFocus?: boolean;
   onSquareClick: (sq: Square) => void;
@@ -34,6 +35,7 @@ export const ChessBoard: React.FC<ChessBoardProps> = React.memo(({
   settings,
   disabled = false,
   arrows = [],
+  highlightSquares = [],
   sizeVariant = 'arena',
   enableDomFocus = false,
   onSquareClick,
@@ -52,24 +54,32 @@ export const ChessBoard: React.FC<ChessBoardProps> = React.memo(({
     return map;
   }, [validMoves, chess]);
 
-  // Find king in check
+  const highlightSet = React.useMemo(() => new Set<Square>(highlightSquares), [highlightSquares]);
+
+  // Find king in check & checkmate squares
   const inCheck = chess.inCheck();
-  const checkSquare = React.useMemo<Square | null>(() => {
-    if (!inCheck) return null;
+  const isCheckmate = chess.isCheckmate();
+  const { checkSquare, winnerKingSquare } = React.useMemo<{
+    checkSquare: Square | null;
+    winnerKingSquare: Square | null;
+  }>(() => {
+    if (!inCheck && !isCheckmate) return { checkSquare: null, winnerKingSquare: null };
     const turn = chess.turn();
     const board = chess.board();
+    let chkSq: Square | null = null;
+    let winKingSq: Square | null = null;
     for (let r = 0; r < 8; r++) {
       for (let c = 0; c < 8; c++) {
         const p = board[r][c];
-        if (p && p.type === 'k' && p.color === turn) {
-          const file = files[c];
-          const rank = 8 - r;
-          return `${file}${rank}` as Square;
+        if (p && p.type === 'k') {
+          const sq = `${files[c]}${8 - r}` as Square;
+          if (p.color === turn) chkSq = sq;
+          else winKingSq = sq;
         }
       }
     }
-    return null;
-  }, [chess, inCheck]);
+    return { checkSquare: chkSq, winnerKingSquare: winKingSq };
+  }, [chess, inCheck, isCheckmate]);
 
   const getSquareColor = (fileIdx: number, rankIdx: number) => {
     const isLight = (fileIdx + rankIdx) % 2 === 0;
@@ -132,6 +142,10 @@ export const ChessBoard: React.FC<ChessBoardProps> = React.memo(({
               const isLastMoveFrom = lastMove?.from === square;
               const isLastMoveTo = lastMove?.to === square;
               const isKingInCheck = checkSquare === square;
+              const isMatedKing = isCheckmate && checkSquare === square;
+              const isMatingPiece = isCheckmate && isLastMoveTo;
+              const isWinnerKing = isCheckmate && winnerKingSquare === square;
+              const isHighlighted = highlightSet.has(square);
               const moveInfo = validMoveMap.get(square);
 
               const squareBg = getSquareColor(fileIdx, rankIdx);
@@ -148,13 +162,30 @@ export const ChessBoard: React.FC<ChessBoardProps> = React.memo(({
                   } ${
                     isLastMove ? '!bg-[#cdd26a]/85' : ''
                   } ${
-                    isKingInCheck ? '!bg-red-500/75 ring-inset ring-4 ring-red-600 animate-pulse' : ''
+                    isHighlighted
+                      ? '!bg-amber-400/55 ring-inset ring-4 ring-amber-400 shadow-[inset_0_0_16px_rgba(251,191,36,0.75)]'
+                      : ''
+                  } ${
+                    isMatedKing
+                      ? '!bg-red-600/85 ring-inset ring-4 ring-red-300 shadow-[inset_0_0_26px_rgba(220,38,38,0.95)] z-10'
+                      : isKingInCheck
+                      ? '!bg-red-500/75 ring-inset ring-4 ring-red-600 animate-pulse'
+                      : ''
+                  } ${
+                    isMatingPiece || isWinnerKing
+                      ? '!bg-amber-400/75 ring-inset ring-4 ring-amber-300 shadow-[inset_0_0_22px_rgba(251,191,36,0.85)] z-10'
+                      : ''
                   } ${
                     isCursor
                       ? 'ring-inset ring-4 ring-cyan-400 bg-cyan-400/30 shadow-[inset_0_0_16px_rgba(34,211,238,0.55)] z-10'
                       : ''
                   }`}
                 >
+                  {/* Checkmate Shockwave Ripple on Mated King */}
+                  {isMatedKing && (
+                    <span className="absolute inset-1 rounded-full border-4 border-red-300/90 animate-ping pointer-events-none" />
+                  )}
+
                   {/* Inside-corner Rank & File Labels */}
                   {fileIdx === 0 && (
                     <span
@@ -175,12 +206,18 @@ export const ChessBoard: React.FC<ChessBoardProps> = React.memo(({
                     </span>
                   )}
 
-                  {/* Piece Image */}
+                  {/* Piece Image (with Checkmate topple on defeated King and bounce on Mating piece) */}
                   {piece && (
                     <img
                       src={getPieceImage(piece.type, piece.color)}
                       alt={`${piece.color} ${piece.type}`}
-                      className={`w-[86%] h-[86%] object-contain pointer-events-none ${
+                      className={`w-[86%] h-[86%] object-contain pointer-events-none transition-transform duration-500 ${
+                        isMatedKing
+                          ? '-rotate-[28deg] translate-y-1 scale-90 opacity-90'
+                          : isMatingPiece
+                          ? 'scale-110 -translate-y-0.5'
+                          : ''
+                      } ${
                         settings.performance_mode === 'low_cpu'
                           ? ''
                           : settings.piece_theme === 'modern'
@@ -189,6 +226,18 @@ export const ChessBoard: React.FC<ChessBoardProps> = React.memo(({
                       }`}
                       draggable={false}
                     />
+                  )}
+
+                  {/* Checkmate Corner Badges (# on mated King, Crown on mating piece) */}
+                  {isMatedKing && (
+                    <span className="absolute -top-0.5 -right-0.5 px-1 py-0.2 rounded-bl-md bg-red-700 text-white font-black text-[10px] sm:text-xs shadow pointer-events-none">
+                      #
+                    </span>
+                  )}
+                  {isMatingPiece && (
+                    <span className="absolute -top-0.5 -right-0.5 px-1 py-0.2 rounded-bl-md bg-amber-400 text-slate-950 font-black text-[10px] sm:text-xs shadow pointer-events-none">
+                      ★
+                    </span>
                   )}
 
                   {/* Valid Moves Dots & Capture Rings */}
@@ -261,6 +310,17 @@ export const ChessBoard: React.FC<ChessBoardProps> = React.memo(({
                 );
               })}
             </svg>
+          )}
+
+          {/* Animated On-Board Checkmate Banner Overlay */}
+          {isCheckmate && (
+            <div className="absolute inset-x-0 top-3 flex justify-center pointer-events-none z-30 animate-in fade-in zoom-in-95 duration-300">
+              <div className="px-4 py-1.5 rounded-full bg-gradient-to-r from-red-600 via-amber-500 to-red-600 text-white font-black text-xs sm:text-sm uppercase tracking-widest shadow-[0_0_24px_rgba(239,68,68,0.85)] border border-amber-300 flex items-center gap-2">
+                <span>♚</span>
+                <span>Checkmate!</span>
+                <span>👑</span>
+              </div>
+            </div>
           )}
         </div>
 

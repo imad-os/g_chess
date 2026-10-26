@@ -449,6 +449,7 @@ export const LeftArenaPanel: React.FC<ArenaHUDProps> = ({
   reconnectRetrySec,
   activeFocusZone,
   fontSize,
+  flipped,
   timeControlLabel = '10+0',
   ratedMatch = true,
   speedLabel = 'Rapid',
@@ -483,12 +484,14 @@ export const LeftArenaPanel: React.FC<ArenaHUDProps> = ({
     { label: 'U2', text: 'You too!' },
   ];
 
-  const whiteName = playerColor === 'w' ? profileName : opponentName;
-  const whiteElo = playerColor === 'w' ? myElo : aiElo;
-  const isWhiteMe = playerColor === 'w';
-  const blackName = playerColor === 'b' ? profileName : opponentName;
-  const blackElo = playerColor === 'b' ? myElo : aiElo;
-  const isBlackMe = playerColor === 'b';
+  const topColor: Color = flipped ? 'w' : 'b';
+  const bottomColor: Color = flipped ? 'b' : 'w';
+  const isTopMe = topColor === playerColor;
+  const topName = isTopMe ? profileName : opponentName;
+  const topElo = isTopMe ? myElo : aiElo;
+  const isBottomMe = bottomColor === playerColor;
+  const bottomName = isBottomMe ? profileName : opponentName;
+  const bottomElo = isBottomMe ? myElo : aiElo;
 
   const renderModeIcon = () => {
     if (gameMode === 'ai') return <Bot size={24} className="text-slate-300 shrink-0" />;
@@ -537,32 +540,44 @@ export const LeftArenaPanel: React.FC<ArenaHUDProps> = ({
         </div>
 
         <div className="space-y-1.5 pt-1.5 border-t border-slate-800/80">
-          {/* Black Player Line */}
+          {/* Top-Side Player Line (Matches Top of Chessboard) */}
           <div className="flex items-center gap-2 text-slate-200 truncate" style={{ fontSize: `${fs}px` }}>
             <PresenceDot
-              isMe={isBlackMe}
+              isMe={isTopMe}
               isMeOnline={isMeOnline}
               isOpponentOnline={isOpponentOnline}
               gameMode={gameMode}
               streamStatus={streamStatus}
             />
-            <span className="truncate font-semibold">{blackName}</span>
+            <span
+              title={topColor === 'w' ? 'Playing White' : 'Playing Black'}
+              className={`w-2.5 h-2.5 rounded-xs border shrink-0 ${
+                topColor === 'w' ? 'bg-white border-slate-400' : 'bg-slate-950 border-slate-500'
+              }`}
+            />
+            <span className="truncate font-semibold">{topName}</span>
             <span className="text-[#629924] sm:text-sky-400 font-mono font-bold" style={{ fontSize: `${Math.max(10, Math.round(fs * 0.9))}px` }}>
-              ({blackElo}?)
+              ({topElo}?)
             </span>
           </div>
-          {/* White Player Line */}
+          {/* Bottom-Side Player Line (Matches Bottom of Chessboard) */}
           <div className="flex items-center gap-2 text-slate-200 truncate" style={{ fontSize: `${fs}px` }}>
             <PresenceDot
-              isMe={isWhiteMe}
+              isMe={isBottomMe}
               isMeOnline={isMeOnline}
               isOpponentOnline={isOpponentOnline}
               gameMode={gameMode}
               streamStatus={streamStatus}
             />
-            <span className="truncate font-semibold">{whiteName}</span>
+            <span
+              title={bottomColor === 'w' ? 'Playing White' : 'Playing Black'}
+              className={`w-2.5 h-2.5 rounded-xs border shrink-0 ${
+                bottomColor === 'w' ? 'bg-white border-slate-400' : 'bg-slate-950 border-slate-500'
+              }`}
+            />
+            <span className="truncate font-semibold">{bottomName}</span>
             <span className="text-[#629924] sm:text-sky-400 font-mono font-bold" style={{ fontSize: `${Math.max(10, Math.round(fs * 0.9))}px` }}>
-              ({whiteElo}?)
+              ({bottomElo}?)
             </span>
           </div>
         </div>
@@ -702,6 +717,7 @@ export const RightArenaPanel: React.FC<ArenaHUDProps> = ({
   isOpponentOnline = true,
   streamStatus,
   activeFocusZone,
+  flipped,
   soundEnabled,
   musicEnabled,
   fontScale,
@@ -730,9 +746,21 @@ export const RightArenaPanel: React.FC<ArenaHUDProps> = ({
   const fs = fontSize || 16;
   const moveListScrollRef = useRef<HTMLDivElement | null>(null);
   const turn = chess.turn();
-  const opponentColor: Color = playerColor === 'w' ? 'b' : 'w';
-  const isOpponentTurn = turn === opponentColor;
   const isMyTurn = turn === playerColor;
+
+  // Resolve which player sits at the top vs bottom of the board based on `flipped`
+  const topColor: Color = flipped ? 'w' : 'b';
+  const bottomColor: Color = flipped ? 'b' : 'w';
+  const isTopMe = topColor === playerColor;
+  const isBottomMe = bottomColor === playerColor;
+  const topName = isTopMe ? profileName : opponentName;
+  const bottomName = isBottomMe ? profileName : opponentName;
+  const topElo = isTopMe ? myElo : aiElo;
+  const bottomElo = isBottomMe ? myElo : aiElo;
+  const topClockMs = isTopMe ? myClockMs : opponentClockMs;
+  const bottomClockMs = isBottomMe ? myClockMs : opponentClockMs;
+  const isTopTurn = turn === topColor;
+  const isBottomTurn = turn === bottomColor;
 
   const { capturedPieces, materialAdvantage } = useBoardMaterial(chess);
 
@@ -776,12 +804,12 @@ export const RightArenaPanel: React.FC<ArenaHUDProps> = ({
         activeFocusZone === 'right' ? 'ring-2 ring-amber-400/90 shadow-[0_0_20px_rgba(251,191,36,0.2)]' : ''
       }`}
     >
-      {/* Top Opponent Digital Clock Row */}
+      {/* Top Side Player Digital Clock Row */}
       <div className="flex items-end justify-between mb-0.5">
         <DigitalClockBox
-          clockMs={opponentClockMs}
+          clockMs={topClockMs}
           initialClockMs={initialClockMs}
-          isActiveTurn={isOpponentTurn}
+          isActiveTurn={isTopTurn}
           variant="top"
         />
 
@@ -799,30 +827,30 @@ export const RightArenaPanel: React.FC<ArenaHUDProps> = ({
 
       {/* Main Center Right Panel Box */}
       <div className="flex flex-col bg-[#262421] border border-slate-800/90 rounded-r-lg rounded-bl-none shadow-xl overflow-hidden min-h-[340px] max-h-[54vh]">
-        {/* Opponent Header Bar */}
+        {/* Top Side Player Header Bar */}
         <div className="flex items-center justify-between px-3.5 py-2.5 bg-[#262421] border-b border-slate-800">
           <div className="flex flex-col min-w-0">
             <div className="flex items-center gap-2">
               <PresenceDot
-                isMe={false}
+                isMe={isTopMe}
                 isMeOnline={isMeOnline}
                 isOpponentOnline={isOpponentOnline}
                 gameMode={gameMode}
                 streamStatus={streamStatus}
               />
               <span className="font-semibold text-slate-100 truncate" style={{ fontSize: `${fs}px` }}>
-                {opponentName}
+                {topName}
               </span>
             </div>
             <CapturedRowDisplay
               capturedPieces={capturedPieces}
               materialAdvantage={materialAdvantage}
-              capturedColor={playerColor}
-              ownerColor={opponentColor}
+              capturedColor={bottomColor}
+              ownerColor={topColor}
             />
           </div>
           <span className="font-mono tabular-nums text-slate-400 shrink-0 font-bold" style={{ fontSize: `${Math.max(11, Math.round(fs * 0.9))}px` }}>
-            {aiElo}?
+            {topElo}?
           </span>
         </div>
 
@@ -1056,30 +1084,30 @@ export const RightArenaPanel: React.FC<ArenaHUDProps> = ({
           </button>
         </div>
 
-        {/* Player (You) Header Bar */}
+        {/* Bottom Side Player Header Bar */}
         <div className="flex items-center justify-between px-3.5 py-2.5 bg-[#262421]">
           <div className="flex flex-col min-w-0">
             <div className="flex items-center gap-2">
               <PresenceDot
-                isMe={true}
+                isMe={isBottomMe}
                 isMeOnline={isMeOnline}
                 isOpponentOnline={isOpponentOnline}
                 gameMode={gameMode}
                 streamStatus={streamStatus}
               />
               <span className="font-semibold text-slate-100 truncate" style={{ fontSize: `${fs}px` }}>
-                {profileName}
+                {bottomName}
               </span>
             </div>
             <CapturedRowDisplay
               capturedPieces={capturedPieces}
               materialAdvantage={materialAdvantage}
-              capturedColor={opponentColor}
-              ownerColor={playerColor}
+              capturedColor={topColor}
+              ownerColor={bottomColor}
             />
           </div>
           <span className="font-mono tabular-nums text-slate-400 shrink-0 font-bold" style={{ fontSize: `${Math.max(11, Math.round(fs * 0.9))}px` }}>
-            {myElo}?
+            {bottomElo}?
           </span>
         </div>
 
@@ -1110,12 +1138,12 @@ export const RightArenaPanel: React.FC<ArenaHUDProps> = ({
         </div>
       </div>
 
-      {/* Bottom Player Digital Clock Row */}
+      {/* Bottom Side Player Digital Clock Row */}
       <div className="flex items-start justify-between mt-0.5">
         <DigitalClockBox
-          clockMs={myClockMs}
+          clockMs={bottomClockMs}
           initialClockMs={initialClockMs}
-          isActiveTurn={isMyTurn}
+          isActiveTurn={isBottomTurn}
           variant="bottom"
         />
       </div>
@@ -1135,8 +1163,10 @@ export const VerticalTopSection: React.FC<ArenaHUDProps> = ({
   playerColor,
   profileName,
   opponentName,
+  myElo,
   aiElo,
   opponentClockMs,
+  myClockMs,
   initialClockMs,
   isMeOnline = true,
   isOpponentOnline = true,
@@ -1144,6 +1174,7 @@ export const VerticalTopSection: React.FC<ArenaHUDProps> = ({
   timeControlLabel = '10+0',
   ratedMatch = true,
   speedLabel = 'Rapid',
+  flipped,
   soundEnabled,
   musicEnabled,
   fontScale,
@@ -1160,8 +1191,13 @@ export const VerticalTopSection: React.FC<ArenaHUDProps> = ({
 }) => {
   const fs = fontSize || 16;
   const turn = chess.turn();
-  const opponentColor: Color = playerColor === 'w' ? 'b' : 'w';
-  const isOpponentTurn = turn === opponentColor;
+  const topColor: Color = flipped ? 'w' : 'b';
+  const bottomColor: Color = flipped ? 'b' : 'w';
+  const isTopMe = topColor === playerColor;
+  const topName = isTopMe ? profileName : opponentName;
+  const topElo = isTopMe ? myElo : aiElo;
+  const topClockMs = isTopMe ? myClockMs : opponentClockMs;
+  const isTopTurn = turn === topColor;
   const { capturedPieces, materialAdvantage } = useBoardMaterial(chess);
   const headToHead = useHeadToHead(profileName, opponentName, savedGames);
 
@@ -1258,29 +1294,29 @@ export const VerticalTopSection: React.FC<ArenaHUDProps> = ({
         </div>
       </div>
 
-      {/* Row 2: Opponent Info + Opponent Digital Clock right above the ChessBoard */}
+      {/* Row 2: Top-Side Player Info + Top-Side Digital Clock right above the ChessBoard */}
       <div className="flex items-center justify-between bg-[#262421] border border-slate-800/90 rounded-lg px-3 py-1.5 shadow-md">
         <div className="flex flex-col min-w-0 pr-2">
           <div className="flex items-center gap-2">
             <PresenceDot
-              isMe={false}
+              isMe={isTopMe}
               isMeOnline={isMeOnline}
               isOpponentOnline={isOpponentOnline}
               gameMode={gameMode}
               streamStatus={streamStatus}
             />
             <span className="font-semibold text-slate-100 truncate" style={{ fontSize: `${fs}px` }}>
-              {opponentName}
+              {topName}
             </span>
             <span className="font-mono tabular-nums text-slate-400 shrink-0 font-bold" style={{ fontSize: `${Math.max(10, Math.round(fs * 0.9))}px` }}>
-              ({aiElo}?)
+              ({topElo}?)
             </span>
           </div>
           <CapturedRowDisplay
             capturedPieces={capturedPieces}
             materialAdvantage={materialAdvantage}
-            capturedColor={playerColor}
-            ownerColor={opponentColor}
+            capturedColor={bottomColor}
+            ownerColor={topColor}
           />
         </div>
 
@@ -1296,9 +1332,9 @@ export const VerticalTopSection: React.FC<ArenaHUDProps> = ({
             </button>
           )}
           <DigitalClockBox
-            clockMs={opponentClockMs}
+            clockMs={topClockMs}
             initialClockMs={initialClockMs}
-            isActiveTurn={isOpponentTurn}
+            isActiveTurn={isTopTurn}
             variant="compact"
           />
         </div>
@@ -1310,7 +1346,7 @@ export const VerticalTopSection: React.FC<ArenaHUDProps> = ({
 /**
  * VERTICAL / PHONE SCREEN BOTTOM SECTION (Placed Below ChessBoard on Vertical Screens)
  * Uses the bottom vertical space for:
- * 1) Player (You) Bar (Status Dot, Username, Rating, Captured Pieces) + Player Digital Clock
+ * 1) Bottom-Side Player Bar (Status Dot, Username, Rating, Captured Pieces) + Digital Clock
  * 2) Green Turn / Match Status Banner
  * 3) Scrollable 2-Column Move History & Replay Navigation Bar (|<< < > >>|)
  * 4) Match Action Toolbar (X, Undo, 1/2, Flag) + Prominent CHAT Button that opens Chat & Notes
@@ -1327,11 +1363,14 @@ export const VerticalBottomSection: React.FC<
   profileName,
   opponentName,
   myElo,
+  aiElo,
+  opponentClockMs,
   myClockMs,
   initialClockMs,
   isMeOnline = true,
   isOpponentOnline = true,
   streamStatus,
+  flipped,
   shortcuts,
   moves,
   viewPly,
@@ -1353,8 +1392,14 @@ export const VerticalBottomSection: React.FC<
   const fs = fontSize || 16;
   const moveListScrollRef = useRef<HTMLDivElement | null>(null);
   const turn = chess.turn();
-  const opponentColor: Color = playerColor === 'w' ? 'b' : 'w';
   const isMyTurn = turn === playerColor;
+  const topColor: Color = flipped ? 'w' : 'b';
+  const bottomColor: Color = flipped ? 'b' : 'w';
+  const isBottomMe = bottomColor === playerColor;
+  const bottomName = isBottomMe ? profileName : opponentName;
+  const bottomElo = isBottomMe ? myElo : aiElo;
+  const bottomClockMs = isBottomMe ? myClockMs : opponentClockMs;
+  const isBottomTurn = turn === bottomColor;
   const { capturedPieces, materialAdvantage } = useBoardMaterial(chess);
 
   const activePly = viewPly === null ? moves.length : viewPly;
@@ -1395,36 +1440,36 @@ export const VerticalBottomSection: React.FC<
       data-tv-panel="bottom"
       className="w-full flex-1 flex flex-col min-h-0 gap-1.5 select-none"
     >
-      {/* Row 1: Player (You) Info + Player Digital Clock right below the ChessBoard */}
+      {/* Row 1: Bottom-Side Player Info + Digital Clock right below the ChessBoard */}
       <div className="flex items-center justify-between bg-[#262421] border border-slate-800/90 rounded-lg px-3 py-1.5 shadow-md shrink-0">
         <div className="flex flex-col min-w-0 pr-2">
           <div className="flex items-center gap-2">
             <PresenceDot
-              isMe={true}
+              isMe={isBottomMe}
               isMeOnline={isMeOnline}
               isOpponentOnline={isOpponentOnline}
               gameMode={gameMode}
               streamStatus={streamStatus}
             />
             <span className="font-semibold text-slate-100 truncate" style={{ fontSize: `${fs}px` }}>
-              {profileName}
+              {bottomName}
             </span>
             <span className="font-mono tabular-nums text-slate-400 shrink-0 font-bold" style={{ fontSize: `${Math.max(10, Math.round(fs * 0.9))}px` }}>
-              ({myElo}?)
+              ({bottomElo}?)
             </span>
           </div>
           <CapturedRowDisplay
             capturedPieces={capturedPieces}
             materialAdvantage={materialAdvantage}
-            capturedColor={opponentColor}
-            ownerColor={playerColor}
+            capturedColor={topColor}
+            ownerColor={bottomColor}
           />
         </div>
 
         <DigitalClockBox
-          clockMs={myClockMs}
+          clockMs={bottomClockMs}
           initialClockMs={initialClockMs}
-          isActiveTurn={isMyTurn}
+          isActiveTurn={isBottomTurn}
           variant="compact"
         />
       </div>
