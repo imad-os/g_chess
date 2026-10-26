@@ -45,6 +45,12 @@ export interface ArenaHUDProps {
   aiElo: number;
   opponentClockMs?: number;
   myClockMs?: number;
+  initialClockMs?: number;
+  isMeOnline?: boolean;
+  isOpponentOnline?: boolean;
+  streamStatus?: 'connecting' | 'connected' | 'reconnecting' | 'offline';
+  reconnectRetrySec?: number;
+  activeFocusZone?: 'left' | 'board' | 'right';
   timeControlLabel?: string;
   ratedMatch?: boolean;
   speedLabel?: string;
@@ -81,12 +87,145 @@ export interface ArenaHUDProps {
   chatInputRef?: React.RefObject<HTMLInputElement>;
 }
 
-const formatDigitalClock = (ms?: number) => {
-  if (ms === undefined || ms === null) return '10:00';
-  const totalSec = Math.max(0, Math.floor(ms / 1000));
+const formatClockParts = (ms?: number) => {
+  if (ms === undefined || ms === null) {
+    return { minsStr: '10', secsStr: '00', isLowTime: false };
+  }
+  const totalSec = Math.max(0, Math.ceil(ms / 1000));
   const mins = Math.floor(totalSec / 60);
   const secs = totalSec % 60;
-  return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+  const isLowTime = ms > 0 && ms <= 10000;
+  return {
+    minsStr: mins.toString().padStart(2, '0'),
+    secsStr: secs.toString().padStart(2, '0'),
+    isLowTime,
+  };
+};
+
+/**
+ * Online Presence Dot:
+ * - For "Me": green only when my internet & stream are online; amber pulsing when reconnecting; red when offline.
+ * - For "Opponent": green when opponent is online; grey hollow when offline/disconnected.
+ */
+const PresenceDot: React.FC<{
+  isMe: boolean;
+  isMeOnline?: boolean;
+  isOpponentOnline?: boolean;
+  gameMode: GameMode;
+  streamStatus?: 'connecting' | 'connected' | 'reconnecting' | 'offline';
+}> = ({ isMe, isMeOnline = true, isOpponentOnline = true, gameMode, streamStatus }) => {
+  if (isMe) {
+    const isReconnecting =
+      gameMode === 'lichess' &&
+      (streamStatus === 'reconnecting' || streamStatus === 'connecting');
+    const isConnected =
+      isMeOnline &&
+      (gameMode !== 'lichess' || !streamStatus || streamStatus === 'connected');
+
+    if (isConnected) {
+      return (
+        <span
+          title="You are Online"
+          className="w-3 h-3 rounded-full bg-[#629924] shadow-[0_0_8px_#629924] shrink-0"
+        />
+      );
+    }
+    if (isReconnecting && isMeOnline) {
+      return (
+        <span
+          title="Reconnecting to Lichess..."
+          className="w-3 h-3 rounded-full bg-amber-400 animate-pulse shadow-[0_0_8px_#fbbf24] shrink-0"
+        />
+      );
+    }
+    return (
+      <span
+        title="You are Offline (No Internet Connection)"
+        className="w-3 h-3 rounded-full bg-red-500 border border-red-300 shrink-0"
+      />
+    );
+  }
+
+  // Opponent presence dot
+  if (isOpponentOnline) {
+    return (
+      <span
+        title="Opponent is Online"
+        className="w-3 h-3 rounded-full bg-[#629924] shadow-[0_0_8px_#629924] shrink-0"
+      />
+    );
+  }
+  return (
+    <span
+      title="Opponent is Offline"
+      className="w-3 h-3 rounded-full bg-slate-700 border-2 border-slate-400 shrink-0"
+    />
+  );
+};
+
+/**
+ * Digital Clock with Progress Bar and Red Last-10-Seconds Alert
+ */
+const DigitalClockBox: React.FC<{
+  clockMs?: number;
+  initialClockMs?: number;
+  isActiveTurn: boolean;
+  variant: 'top' | 'bottom' | 'compact';
+}> = ({ clockMs = 600000, initialClockMs = 600000, isActiveTurn, variant }) => {
+  const { minsStr, secsStr, isLowTime } = formatClockParts(clockMs);
+  const baseInitial = Math.max(10000, initialClockMs || 600000);
+  const progressPct = Math.min(100, Math.max(0, (clockMs / baseInitial) * 100));
+
+  const barColor = isLowTime
+    ? 'bg-red-500 shadow-[0_0_8px_#ef4444]'
+    : progressPct <= 25
+    ? 'bg-amber-400'
+    : 'bg-[#629924]';
+
+  const shapeClass =
+    variant === 'top'
+      ? 'px-4 pt-2 pb-1.5 rounded-t-lg border border-b-0 min-w-[148px]'
+      : variant === 'bottom'
+      ? 'px-4 pt-2 pb-1.5 rounded-b-lg border border-t-0 min-w-[148px]'
+      : 'px-3.5 pt-1.5 pb-1 rounded-lg border min-w-[116px]';
+
+  const stateClass = isLowTime
+    ? isActiveTurn
+      ? 'bg-red-950/60 text-red-400 border-red-500 shadow-[0_0_14px_rgba(239,68,68,0.35)]'
+      : 'bg-[#1c1b19] text-red-400/90 border-red-800/80'
+    : isActiveTurn
+    ? variant === 'compact'
+      ? 'bg-[#161512] text-white border-[#629924] shadow-inner'
+      : 'bg-[#262421] text-white border-slate-700 shadow-md'
+    : 'bg-[#1c1b19] text-slate-400 border-slate-800/80';
+
+  const textSizeClass =
+    variant === 'compact' ? 'text-xl sm:text-2xl font-semibold' : 'text-3xl sm:text-4xl font-light';
+
+  return (
+    <div className={`flex flex-col transition-colors ${shapeClass} ${stateClass}`}>
+      <div className={`font-mono tabular-nums tracking-wider leading-none flex items-center justify-center ${textSizeClass}`}>
+        <span>{minsStr}</span>
+        <span className={isLowTime && isActiveTurn ? 'animate-pulse text-red-500 font-bold' : ''}>:</span>
+        <span
+          className={
+            isLowTime
+              ? 'text-red-500 font-extrabold animate-pulse drop-shadow-[0_0_6px_rgba(239,68,68,0.6)]'
+              : ''
+          }
+        >
+          {secsStr}
+        </span>
+      </div>
+      {/* Sleek Remaining Time Progress Bar */}
+      <div className="w-full h-1.5 bg-black/50 rounded-full overflow-hidden mt-1.5 border border-white/5">
+        <div
+          className={`h-full rounded-full transition-all duration-300 ${barColor}`}
+          style={{ width: `${progressPct}%` }}
+        />
+      </div>
+    </div>
+  );
 };
 
 /**
@@ -106,14 +245,21 @@ export const InlineResignButton: React.FC<InlineResignButtonProps> = ({
 }) => {
   const [confirming, setConfirming] = useState<boolean>(false);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
+  const armedAtRef = useRef<number>(0);
 
   const handleClick = (e: React.MouseEvent) => {
     e.stopPropagation();
+    const now = performance.now();
     if (confirming) {
+      // Require at least 350ms after arming so a single button press never skips confirmation
+      if (now - armedAtRef.current < 350) {
+        return;
+      }
       if (timerRef.current) clearTimeout(timerRef.current);
       setConfirming(false);
       onResign();
     } else {
+      armedAtRef.current = now;
       setConfirming(true);
       if (timerRef.current) clearTimeout(timerRef.current);
       timerRef.current = setTimeout(() => {
@@ -128,28 +274,27 @@ export const InlineResignButton: React.FC<InlineResignButtonProps> = ({
     };
   }, []);
 
-  if (confirming) {
-    return (
-      <button
-        type="button"
-        onClick={handleClick}
-        title="Click again to confirm resignation"
-        className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-red-600 hover:bg-red-500 text-white font-extrabold text-[11px] border border-red-400 animate-pulse shadow-lg shadow-red-950 transition-all cursor-pointer shrink-0"
-      >
-        <Flag size={13} className="fill-current" />
-        <span>Confirm?</span>
-      </button>
-    );
-  }
-
   return (
     <button
       type="button"
+      data-resign-btn="true"
       onClick={handleClick}
-      title={`Resign Match [${shortcut.toUpperCase()}]`}
-      className="p-1.5 rounded hover:bg-red-950/70 hover:text-red-400 text-slate-400 transition-colors cursor-pointer"
+      title={
+        confirming
+          ? 'Click again to confirm resignation'
+          : `Resign Match [${shortcut.toUpperCase()}]`
+      }
+      className={
+        confirming
+          ? 'flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-600 hover:bg-red-500 text-white font-extrabold text-xs border border-red-400 animate-pulse shadow-lg shadow-red-950 transition-all cursor-pointer shrink-0'
+          : 'p-2.5 rounded-lg hover:bg-red-950/70 hover:text-red-400 text-slate-300 transition-colors cursor-pointer'
+      }
     >
-      <Flag size={isCompact ? 16 : 17} />
+      <Flag
+        size={confirming ? 15 : isCompact ? 18 : 20}
+        className={confirming ? 'fill-current' : undefined}
+      />
+      {confirming && <span>Confirm?</span>}
     </button>
   );
 };
@@ -298,6 +443,11 @@ export const LeftArenaPanel: React.FC<ArenaHUDProps> = ({
   opponentName,
   myElo,
   aiElo,
+  isMeOnline = true,
+  isOpponentOnline = true,
+  streamStatus,
+  reconnectRetrySec,
+  activeFocusZone,
   fontSize,
   timeControlLabel = '10+0',
   ratedMatch = true,
@@ -335,8 +485,10 @@ export const LeftArenaPanel: React.FC<ArenaHUDProps> = ({
 
   const whiteName = playerColor === 'w' ? profileName : opponentName;
   const whiteElo = playerColor === 'w' ? myElo : aiElo;
+  const isWhiteMe = playerColor === 'w';
   const blackName = playerColor === 'b' ? profileName : opponentName;
   const blackElo = playerColor === 'b' ? myElo : aiElo;
+  const isBlackMe = playerColor === 'b';
 
   const renderModeIcon = () => {
     if (gameMode === 'ai') return <Bot size={24} className="text-slate-300 shrink-0" />;
@@ -360,7 +512,9 @@ export const LeftArenaPanel: React.FC<ArenaHUDProps> = ({
   return (
     <div
       data-tv-panel="left"
-      className="flex flex-col gap-3 w-full h-full max-h-[86vh] select-none"
+      className={`flex flex-col gap-3 w-full h-full max-h-[86vh] select-none rounded-xl transition-shadow ${
+        activeFocusZone === 'left' ? 'ring-2 ring-amber-400/90 shadow-[0_0_20px_rgba(251,191,36,0.2)]' : ''
+      }`}
     >
       {/* Top Match Details Card (Matching Screenshot Top-Left Box) */}
       <div className="bg-[#262421] border border-slate-800/90 rounded-lg p-3.5 shadow-lg shrink-0">
@@ -371,7 +525,13 @@ export const LeftArenaPanel: React.FC<ArenaHUDProps> = ({
               {headerLine}
             </div>
             <div className="text-[11px] text-slate-400">
-              {gameMode === 'lichess' ? 'Live Lichess Arena' : 'Active Match Session'}
+              {gameMode === 'lichess'
+                ? streamStatus === 'reconnecting'
+                  ? `Connection lost — Auto-reconnecting in ${reconnectRetrySec ?? 10}s...`
+                  : !isMeOnline
+                  ? 'Offline — Waiting for Wi-Fi to reconnect...'
+                  : 'Live Lichess Arena'
+                : 'Active Match Session'}
             </div>
           </div>
         </div>
@@ -379,7 +539,13 @@ export const LeftArenaPanel: React.FC<ArenaHUDProps> = ({
         <div className="space-y-1.5 pt-1.5 border-t border-slate-800/80">
           {/* Black Player Line */}
           <div className="flex items-center gap-2 text-slate-200 truncate" style={{ fontSize: `${fs}px` }}>
-            <span className="inline-block w-3 h-3 rounded-full bg-slate-400 border border-slate-300 shrink-0" />
+            <PresenceDot
+              isMe={isBlackMe}
+              isMeOnline={isMeOnline}
+              isOpponentOnline={isOpponentOnline}
+              gameMode={gameMode}
+              streamStatus={streamStatus}
+            />
             <span className="truncate font-semibold">{blackName}</span>
             <span className="text-[#629924] sm:text-sky-400 font-mono font-bold" style={{ fontSize: `${Math.max(10, Math.round(fs * 0.9))}px` }}>
               ({blackElo}?)
@@ -387,7 +553,13 @@ export const LeftArenaPanel: React.FC<ArenaHUDProps> = ({
           </div>
           {/* White Player Line */}
           <div className="flex items-center gap-2 text-slate-200 truncate" style={{ fontSize: `${fs}px` }}>
-            <span className="inline-block w-3 h-3 rounded-full border-2 border-slate-300 bg-transparent shrink-0" />
+            <PresenceDot
+              isMe={isWhiteMe}
+              isMeOnline={isMeOnline}
+              isOpponentOnline={isOpponentOnline}
+              gameMode={gameMode}
+              streamStatus={streamStatus}
+            />
             <span className="truncate font-semibold">{whiteName}</span>
             <span className="text-[#629924] sm:text-sky-400 font-mono font-bold" style={{ fontSize: `${Math.max(10, Math.round(fs * 0.9))}px` }}>
               ({whiteElo}?)
@@ -399,11 +571,11 @@ export const LeftArenaPanel: React.FC<ArenaHUDProps> = ({
       {/* Chat Room & Notes Card (Matching Screenshot Bottom-Left Box) */}
       <div className="flex flex-col flex-1 min-h-0 bg-[#161512] border border-slate-800/90 rounded-lg overflow-hidden shadow-lg">
         {/* Tabs Header */}
-        <div className="grid grid-cols-2 bg-[#262421] border-b border-slate-800 text-xs font-medium">
+        <div className="grid grid-cols-2 bg-[#262421] border-b border-slate-800 text-xs sm:text-sm font-medium">
           <button
             type="button"
             onClick={() => setActiveTab('chat')}
-            className={`py-2 px-3 text-center transition-colors cursor-pointer ${
+            className={`py-2.5 px-3 text-center transition-colors cursor-pointer ${
               activeTab === 'chat'
                 ? 'bg-[#161512] text-slate-100 border-t-2 border-amber-500 font-semibold'
                 : 'text-slate-400 hover:text-slate-200'
@@ -482,14 +654,14 @@ export const LeftArenaPanel: React.FC<ArenaHUDProps> = ({
             </form>
 
             {/* Quick-Chat Bar: HI | GL | HF | U2 */}
-            <div className="grid grid-cols-4 border-t border-slate-800 bg-[#262421] divide-x divide-slate-800 text-[11px] font-bold text-slate-400">
+            <div className="grid grid-cols-4 border-t border-slate-800 bg-[#262421] divide-x divide-slate-800 text-xs font-extrabold text-slate-300">
               {quickChats.map((qc) => (
                 <button
                   key={qc.label}
                   type="button"
                   onClick={() => onSendChat(qc.text)}
                   title={`Send "${qc.text}"`}
-                  className="py-1.5 hover:bg-slate-800 hover:text-white transition-colors cursor-pointer"
+                  className="py-2.5 hover:bg-slate-800 hover:text-white transition-colors cursor-pointer"
                 >
                   {qc.label}
                 </button>
@@ -517,6 +689,7 @@ export const LeftArenaPanel: React.FC<ArenaHUDProps> = ({
  */
 export const RightArenaPanel: React.FC<ArenaHUDProps> = ({
   chess,
+  gameMode,
   playerColor,
   profileName,
   opponentName,
@@ -524,6 +697,11 @@ export const RightArenaPanel: React.FC<ArenaHUDProps> = ({
   aiElo,
   opponentClockMs,
   myClockMs,
+  initialClockMs,
+  isMeOnline = true,
+  isOpponentOnline = true,
+  streamStatus,
+  activeFocusZone,
   soundEnabled,
   musicEnabled,
   fontScale,
@@ -594,28 +772,27 @@ export const RightArenaPanel: React.FC<ArenaHUDProps> = ({
   return (
     <div
       data-tv-panel="right"
-      className="flex flex-col justify-center w-full h-full max-h-[86vh] select-none"
+      className={`flex flex-col justify-center w-full h-full max-h-[86vh] select-none rounded-xl transition-shadow ${
+        activeFocusZone === 'right' ? 'ring-2 ring-amber-400/90 shadow-[0_0_20px_rgba(251,191,36,0.2)]' : ''
+      }`}
     >
       {/* Top Opponent Digital Clock Row */}
       <div className="flex items-end justify-between mb-0.5">
-        <div
-          className={`px-4 py-2 rounded-t-lg border border-b-0 font-mono tabular-nums text-3xl sm:text-4xl font-light tracking-wider transition-colors ${
-            isOpponentTurn
-              ? 'bg-[#262421] text-white border-slate-700 shadow-md'
-              : 'bg-[#1c1b19] text-slate-400 border-slate-800/80'
-          }`}
-        >
-          {formatDigitalClock(opponentClockMs)}
-        </div>
+        <DigitalClockBox
+          clockMs={opponentClockMs}
+          initialClockMs={initialClockMs}
+          isActiveTurn={isOpponentTurn}
+          variant="top"
+        />
 
         {onGiveMoreTime && (
           <button
             type="button"
             onClick={onGiveMoreTime}
             title="Give opponent +15 seconds"
-            className="mb-2 p-1.5 rounded bg-sky-900/50 hover:bg-sky-800/70 text-sky-300 border border-sky-700/50 transition-colors cursor-pointer"
+            className="mb-2 p-2 rounded-lg bg-sky-900/50 hover:bg-sky-800/70 text-sky-300 border border-sky-700/50 transition-colors cursor-pointer"
           >
-            <Plus size={16} />
+            <Plus size={18} />
           </button>
         )}
       </div>
@@ -626,10 +803,12 @@ export const RightArenaPanel: React.FC<ArenaHUDProps> = ({
         <div className="flex items-center justify-between px-3.5 py-2.5 bg-[#262421] border-b border-slate-800">
           <div className="flex flex-col min-w-0">
             <div className="flex items-center gap-2">
-              <span
-                className={`w-2.5 h-2.5 rounded-full shrink-0 ${
-                  isOpponentTurn ? 'bg-[#629924]' : 'bg-emerald-600/60'
-                }`}
+              <PresenceDot
+                isMe={false}
+                isMeOnline={isMeOnline}
+                isOpponentOnline={isOpponentOnline}
+                gameMode={gameMode}
+                streamStatus={streamStatus}
               />
               <span className="font-semibold text-slate-100 truncate" style={{ fontSize: `${fs}px` }}>
                 {opponentName}
@@ -648,55 +827,55 @@ export const RightArenaPanel: React.FC<ArenaHUDProps> = ({
         </div>
 
         {/* Replay & Board Utility Navigation Bar (|<< < > >>| + Flip/Audio/Settings) */}
-        <div className="flex items-center justify-between px-2 py-1.5 bg-[#1e1d1a] border-b border-slate-800 text-slate-400">
-          <div className="flex items-center gap-0.5">
+        <div className="flex items-center justify-between px-2.5 py-2 bg-[#1e1d1a] border-b border-slate-800 text-slate-300">
+          <div className="flex items-center gap-1">
             <button
               type="button"
               onClick={stepFirst}
               disabled={activePly === 0}
               title="First Move"
-              className="p-1.5 rounded hover:bg-slate-800 hover:text-white disabled:opacity-30 transition-colors cursor-pointer"
+              className="p-2 rounded-lg hover:bg-slate-800 hover:text-white disabled:opacity-30 transition-colors cursor-pointer"
             >
-              <ChevronsLeft size={16} />
+              <ChevronsLeft size={19} />
             </button>
             <button
               type="button"
               onClick={stepPrev}
               disabled={activePly === 0}
               title="Previous Move"
-              className="p-1.5 rounded hover:bg-slate-800 hover:text-white disabled:opacity-30 transition-colors cursor-pointer"
+              className="p-2 rounded-lg hover:bg-slate-800 hover:text-white disabled:opacity-30 transition-colors cursor-pointer"
             >
-              <ChevronLeft size={16} />
+              <ChevronLeft size={19} />
             </button>
             <button
               type="button"
               onClick={stepNext}
               disabled={activePly >= moves.length}
               title="Next Move"
-              className="p-1.5 rounded hover:bg-slate-800 hover:text-white disabled:opacity-30 transition-colors cursor-pointer"
+              className="p-2 rounded-lg hover:bg-slate-800 hover:text-white disabled:opacity-30 transition-colors cursor-pointer"
             >
-              <ChevronRight size={16} />
+              <ChevronRight size={19} />
             </button>
             <button
               type="button"
               onClick={stepLast}
               disabled={viewPly === null}
               title="Jump to Live Position"
-              className="p-1.5 rounded hover:bg-slate-800 hover:text-white disabled:opacity-30 transition-colors cursor-pointer"
+              className="p-2 rounded-lg hover:bg-slate-800 hover:text-white disabled:opacity-30 transition-colors cursor-pointer"
             >
-              <ChevronsRight size={16} />
+              <ChevronsRight size={19} />
             </button>
           </div>
 
-          <div className="flex items-center gap-0.5">
+          <div className="flex items-center gap-1">
             {onCycleFontScale && (
               <button
                 type="button"
                 onClick={onCycleFontScale}
-                title={`Font Size: ${fs}px (Click to cycle ${fs >= 22 ? 'to 12px' : '+2px'})`}
-                className="px-2 py-1 rounded hover:bg-slate-800 hover:text-white text-xs font-mono font-bold flex items-center gap-1 transition-colors cursor-pointer bg-slate-900 border border-slate-800"
+                title={`Font Size: ${fs}px (Click to cycle up to 50px)`}
+                className="px-2.5 py-1.5 rounded-lg hover:bg-slate-800 hover:text-white text-xs font-mono font-bold flex items-center gap-1 transition-colors cursor-pointer bg-slate-900 border border-slate-800"
               >
-                <Type size={13} className="text-amber-400" />
+                <Type size={15} className="text-amber-400" />
                 <span>{fs}</span>
               </button>
             )}
@@ -704,35 +883,35 @@ export const RightArenaPanel: React.FC<ArenaHUDProps> = ({
               type="button"
               onClick={onFlipBoard}
               title={`Flip Board [${shortcuts.flip.toUpperCase()}]`}
-              className="p-1.5 rounded hover:bg-slate-800 hover:text-white transition-colors cursor-pointer"
+              className="p-2 rounded-lg hover:bg-slate-800 hover:text-white transition-colors cursor-pointer"
             >
-              <RotateCcw size={14} />
+              <RotateCcw size={17} />
             </button>
             <button
               type="button"
               onClick={onToggleSound}
               title={soundEnabled ? 'Mute SFX' : 'Enable SFX'}
-              className="p-1.5 rounded hover:bg-slate-800 hover:text-white transition-colors cursor-pointer"
+              className="p-2 rounded-lg hover:bg-slate-800 hover:text-white transition-colors cursor-pointer"
             >
-              {soundEnabled ? <Volume2 size={14} /> : <VolumeX size={14} />}
+              {soundEnabled ? <Volume2 size={17} /> : <VolumeX size={17} />}
             </button>
             <button
               type="button"
               onClick={onToggleMusic}
               title={musicEnabled ? 'Stop Music' : 'Play Music'}
-              className={`p-1.5 rounded transition-colors cursor-pointer ${
+              className={`p-2 rounded-lg transition-colors cursor-pointer ${
                 musicEnabled ? 'text-sky-400 bg-sky-950/50' : 'hover:bg-slate-800 hover:text-white'
               }`}
             >
-              <Music size={14} />
+              <Music size={17} />
             </button>
             <button
               type="button"
               onClick={onOpenSettings}
               title="Game Settings"
-              className="p-1.5 rounded hover:bg-slate-800 hover:text-white transition-colors cursor-pointer"
+              className="p-2 rounded-lg hover:bg-slate-800 hover:text-white transition-colors cursor-pointer"
             >
-              <Sliders size={14} />
+              <Sliders size={17} />
             </button>
           </div>
         </div>
@@ -820,15 +999,15 @@ export const RightArenaPanel: React.FC<ArenaHUDProps> = ({
         )}
 
         {/* Match Action Toolbar (X Abort/Restart | Undo | 1/2 Draw | Flag Resign | + Match Menu) */}
-        <div className="flex items-center justify-around py-2 px-3 bg-[#1e1d1a] border-t border-b border-slate-800 text-slate-400">
+        <div className="flex items-center justify-around py-2.5 px-3 bg-[#1e1d1a] border-t border-b border-slate-800 text-slate-300">
           {onAbortOrRestart && (
             <button
               type="button"
               onClick={onAbortOrRestart}
               title={moves.length < 2 ? 'Abort / Restart Game' : 'Restart Game'}
-              className="p-1.5 rounded hover:bg-slate-800 hover:text-white transition-colors cursor-pointer"
+              className="p-2 rounded-lg hover:bg-slate-800 hover:text-white transition-colors cursor-pointer"
             >
-              <X size={18} />
+              <X size={20} />
             </button>
           )}
           {canUndo && onUndo && (
@@ -836,9 +1015,9 @@ export const RightArenaPanel: React.FC<ArenaHUDProps> = ({
               type="button"
               onClick={onUndo}
               title={`Takeback / Undo Move [${shortcuts.undo.toUpperCase()}]`}
-              className="p-1.5 rounded hover:bg-slate-800 hover:text-amber-400 transition-colors cursor-pointer"
+              className="p-2 rounded-lg hover:bg-slate-800 hover:text-amber-400 transition-colors cursor-pointer"
             >
-              <Undo2 size={17} />
+              <Undo2 size={19} />
             </button>
           )}
           {onOfferDraw && (
@@ -852,7 +1031,7 @@ export const RightArenaPanel: React.FC<ArenaHUDProps> = ({
                   ? 'Draw Offer Sent'
                   : 'Offer / Claim Draw (½)'
               }
-              className={`px-2 py-1 rounded font-serif font-bold text-base leading-none transition-colors cursor-pointer ${
+              className={`px-3 py-1.5 rounded-lg font-serif font-bold text-lg leading-none transition-colors cursor-pointer ${
                 incomingDrawOffer
                   ? 'bg-emerald-600 text-white animate-pulse'
                   : drawOfferSent
@@ -870,10 +1049,10 @@ export const RightArenaPanel: React.FC<ArenaHUDProps> = ({
           <button
             type="button"
             onClick={onPause}
-            title={`Match Menu (+ / ${shortcuts.pause.toUpperCase()})`}
-            className="p-1.5 rounded hover:bg-slate-800 hover:text-white transition-colors cursor-pointer"
+            title={`Match Menu (Play/Pause / ${shortcuts.pause.toUpperCase()})`}
+            className="p-2 rounded-lg hover:bg-slate-800 hover:text-white transition-colors cursor-pointer"
           >
-            <Pause size={17} />
+            <Pause size={19} />
           </button>
         </div>
 
@@ -881,10 +1060,12 @@ export const RightArenaPanel: React.FC<ArenaHUDProps> = ({
         <div className="flex items-center justify-between px-3.5 py-2.5 bg-[#262421]">
           <div className="flex flex-col min-w-0">
             <div className="flex items-center gap-2">
-              <span
-                className={`w-2.5 h-2.5 rounded-full shrink-0 ${
-                  isMyTurn ? 'bg-[#629924]' : 'bg-emerald-600/60'
-                }`}
+              <PresenceDot
+                isMe={true}
+                isMeOnline={isMeOnline}
+                isOpponentOnline={isOpponentOnline}
+                gameMode={gameMode}
+                streamStatus={streamStatus}
               />
               <span className="font-semibold text-slate-100 truncate" style={{ fontSize: `${fs}px` }}>
                 {profileName}
@@ -931,15 +1112,12 @@ export const RightArenaPanel: React.FC<ArenaHUDProps> = ({
 
       {/* Bottom Player Digital Clock Row */}
       <div className="flex items-start justify-between mt-0.5">
-        <div
-          className={`px-4 py-2 rounded-b-lg border border-t-0 font-mono tabular-nums text-3xl sm:text-4xl font-light tracking-wider transition-colors ${
-            isMyTurn
-              ? 'bg-[#262421] text-white border-slate-700 shadow-md'
-              : 'bg-[#1c1b19] text-slate-400 border-slate-800/80'
-          }`}
-        >
-          {formatDigitalClock(myClockMs)}
-        </div>
+        <DigitalClockBox
+          clockMs={myClockMs}
+          initialClockMs={initialClockMs}
+          isActiveTurn={isMyTurn}
+          variant="bottom"
+        />
       </div>
     </div>
   );
@@ -959,6 +1137,10 @@ export const VerticalTopSection: React.FC<ArenaHUDProps> = ({
   opponentName,
   aiElo,
   opponentClockMs,
+  initialClockMs,
+  isMeOnline = true,
+  isOpponentOnline = true,
+  streamStatus,
   timeControlLabel = '10+0',
   ratedMatch = true,
   speedLabel = 'Rapid',
@@ -1019,15 +1201,15 @@ export const VerticalTopSection: React.FC<ArenaHUDProps> = ({
           </span>
         </div>
 
-        <div className="flex items-center gap-0.5 text-slate-400 shrink-0">
+        <div className="flex items-center gap-1 text-slate-300 shrink-0">
           {onCycleFontScale && (
             <button
               type="button"
               onClick={onCycleFontScale}
-              title={`Font Size: ${fs}px (Click to cycle ${fs >= 22 ? 'to 12px' : '+2px'})`}
-              className="px-1.5 py-0.5 rounded hover:bg-slate-800 hover:text-white font-mono font-bold flex items-center gap-0.5 transition-colors cursor-pointer text-xs"
+              title={`Font Size: ${fs}px (Click to cycle up to 50px)`}
+              className="px-2 py-1 rounded-lg hover:bg-slate-800 hover:text-white font-mono font-bold flex items-center gap-0.5 transition-colors cursor-pointer text-xs"
             >
-              <Type size={13} className="text-amber-400" />
+              <Type size={14} className="text-amber-400" />
               <span>{fs}</span>
             </button>
           )}
@@ -1035,43 +1217,43 @@ export const VerticalTopSection: React.FC<ArenaHUDProps> = ({
             type="button"
             onClick={onFlipBoard}
             title={`Flip Board [${shortcuts.flip.toUpperCase()}]`}
-            className="p-1.5 rounded hover:bg-slate-800 hover:text-white transition-colors cursor-pointer"
+            className="p-2 rounded-lg hover:bg-slate-800 hover:text-white transition-colors cursor-pointer"
           >
-            <RotateCcw size={14} />
+            <RotateCcw size={16} />
           </button>
           <button
             type="button"
             onClick={onToggleSound}
             title={soundEnabled ? 'Mute SFX' : 'Enable SFX'}
-            className="p-1.5 rounded hover:bg-slate-800 hover:text-white transition-colors cursor-pointer"
+            className="p-2 rounded-lg hover:bg-slate-800 hover:text-white transition-colors cursor-pointer"
           >
-            {soundEnabled ? <Volume2 size={14} /> : <VolumeX size={14} />}
+            {soundEnabled ? <Volume2 size={16} /> : <VolumeX size={16} />}
           </button>
           <button
             type="button"
             onClick={onToggleMusic}
             title={musicEnabled ? 'Stop Music' : 'Play Music'}
-            className={`p-1.5 rounded transition-colors cursor-pointer ${
+            className={`p-2 rounded-lg transition-colors cursor-pointer ${
               musicEnabled ? 'text-sky-400 bg-sky-950/50' : 'hover:bg-slate-800 hover:text-white'
             }`}
           >
-            <Music size={14} />
+            <Music size={16} />
           </button>
           <button
             type="button"
             onClick={onOpenSettings}
             title="Settings"
-            className="p-1.5 rounded hover:bg-slate-800 hover:text-white transition-colors cursor-pointer"
+            className="p-2 rounded-lg hover:bg-slate-800 hover:text-white transition-colors cursor-pointer"
           >
-            <Sliders size={14} />
+            <Sliders size={16} />
           </button>
           <button
             type="button"
             onClick={onPause}
-            title="Pause"
-            className="p-1.5 rounded hover:bg-slate-800 hover:text-white transition-colors cursor-pointer"
+            title="Match Menu"
+            className="p-2 rounded-lg hover:bg-slate-800 hover:text-white transition-colors cursor-pointer"
           >
-            <Pause size={14} />
+            <Pause size={16} />
           </button>
         </div>
       </div>
@@ -1080,10 +1262,12 @@ export const VerticalTopSection: React.FC<ArenaHUDProps> = ({
       <div className="flex items-center justify-between bg-[#262421] border border-slate-800/90 rounded-lg px-3 py-1.5 shadow-md">
         <div className="flex flex-col min-w-0 pr-2">
           <div className="flex items-center gap-2">
-            <span
-              className={`w-2.5 h-2.5 rounded-full shrink-0 ${
-                isOpponentTurn ? 'bg-[#629924]' : 'bg-emerald-600/60'
-              }`}
+            <PresenceDot
+              isMe={false}
+              isMeOnline={isMeOnline}
+              isOpponentOnline={isOpponentOnline}
+              gameMode={gameMode}
+              streamStatus={streamStatus}
             />
             <span className="font-semibold text-slate-100 truncate" style={{ fontSize: `${fs}px` }}>
               {opponentName}
@@ -1106,20 +1290,17 @@ export const VerticalTopSection: React.FC<ArenaHUDProps> = ({
               type="button"
               onClick={onGiveMoreTime}
               title="Give opponent +15 seconds"
-              className="p-1.5 rounded bg-sky-900/50 hover:bg-sky-800/70 text-sky-300 border border-sky-700/50 transition-colors cursor-pointer"
+              className="p-2 rounded-lg bg-sky-900/50 hover:bg-sky-800/70 text-sky-300 border border-sky-700/50 transition-colors cursor-pointer"
             >
-              <Plus size={14} />
+              <Plus size={16} />
             </button>
           )}
-          <div
-            className={`px-3 py-1 rounded border font-mono tabular-nums text-xl sm:text-2xl font-semibold tracking-wider transition-colors ${
-              isOpponentTurn
-                ? 'bg-[#161512] text-white border-[#629924] shadow-inner'
-                : 'bg-[#1c1b19] text-slate-400 border-slate-800'
-            }`}
-          >
-            {formatDigitalClock(opponentClockMs)}
-          </div>
+          <DigitalClockBox
+            clockMs={opponentClockMs}
+            initialClockMs={initialClockMs}
+            isActiveTurn={isOpponentTurn}
+            variant="compact"
+          />
         </div>
       </div>
     </div>
@@ -1141,11 +1322,16 @@ export const VerticalBottomSection: React.FC<
   }
 > = ({
   chess,
+  gameMode,
   playerColor,
   profileName,
   opponentName,
   myElo,
   myClockMs,
+  initialClockMs,
+  isMeOnline = true,
+  isOpponentOnline = true,
+  streamStatus,
   shortcuts,
   moves,
   viewPly,
@@ -1213,10 +1399,12 @@ export const VerticalBottomSection: React.FC<
       <div className="flex items-center justify-between bg-[#262421] border border-slate-800/90 rounded-lg px-3 py-1.5 shadow-md shrink-0">
         <div className="flex flex-col min-w-0 pr-2">
           <div className="flex items-center gap-2">
-            <span
-              className={`w-2.5 h-2.5 rounded-full shrink-0 ${
-                isMyTurn ? 'bg-[#629924]' : 'bg-emerald-600/60'
-              }`}
+            <PresenceDot
+              isMe={true}
+              isMeOnline={isMeOnline}
+              isOpponentOnline={isOpponentOnline}
+              gameMode={gameMode}
+              streamStatus={streamStatus}
             />
             <span className="font-semibold text-slate-100 truncate" style={{ fontSize: `${fs}px` }}>
               {profileName}
@@ -1233,15 +1421,12 @@ export const VerticalBottomSection: React.FC<
           />
         </div>
 
-        <div
-          className={`px-3 py-1 rounded border font-mono tabular-nums text-xl sm:text-2xl font-semibold tracking-wider transition-colors shrink-0 ${
-            isMyTurn
-              ? 'bg-[#161512] text-white border-[#629924] shadow-inner'
-              : 'bg-[#1c1b19] text-slate-400 border-slate-800'
-          }`}
-        >
-          {formatDigitalClock(myClockMs)}
-        </div>
+        <DigitalClockBox
+          clockMs={myClockMs}
+          initialClockMs={initialClockMs}
+          isActiveTurn={isMyTurn}
+          variant="compact"
+        />
       </div>
 
       {/* Row 2: Expandable Bottom Box with Turn Banner + Move History + Action Controls & Chat Button */}

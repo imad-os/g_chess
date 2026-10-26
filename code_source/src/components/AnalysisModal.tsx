@@ -5,6 +5,7 @@ import { AnalysisSummary, MoveAnalysis, GameSettings, PlayerStats } from '../typ
 import { ChessBoard, BoardArrow } from './ChessBoard';
 import { EvaluationBar } from './EvaluationBar';
 import { soundManager } from '../services/sound';
+import { ensureSpatialFocus } from '../services/spatialInput';
 import {
   ChevronLeft,
   ChevronRight,
@@ -42,6 +43,14 @@ export const AnalysisModal: React.FC<AnalysisModalProps> = ({
   const [learnIdx, setLearnIdx] = useState<number>(0);
   const [showOpponentStats, setShowOpponentStats] = useState<boolean>(false);
   const [showBestMoveArrow, setShowBestMoveArrow] = useState<boolean>(true);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      const modal = document.querySelector<HTMLElement>('[data-tv-modal="true"]');
+      if (modal) ensureSpatialFocus(modal);
+    }, 30);
+    return () => clearTimeout(timer);
+  }, [viewMode]);
 
   // Compute chess instance at current ply
   const currentChess = React.useMemo(() => {

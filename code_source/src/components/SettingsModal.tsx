@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   GameSettings,
   FontScale,
@@ -29,10 +29,12 @@ import {
   Plus,
 } from 'lucide-react';
 import { soundManager } from '../services/sound';
+import { ensureSpatialFocus } from '../services/spatialInput';
 
 interface SettingsModalProps {
   settings: GameSettings;
   isIngame?: boolean;
+  initialTab?: 'display' | 'scale' | 'shortcuts' | 'ai';
   onSave: (newSettings: GameSettings) => void;
   onClose: () => void;
 }
@@ -40,16 +42,36 @@ interface SettingsModalProps {
 export const SettingsModal: React.FC<SettingsModalProps> = ({
   settings,
   isIngame = false,
+  initialTab = 'display',
   onSave,
   onClose,
 }) => {
-  const [activeTab, setActiveTab] = useState<'display' | 'scale' | 'shortcuts' | 'ai'>('display');
+  const [activeTab, setActiveTab] = useState<'display' | 'scale' | 'shortcuts' | 'ai'>(initialTab);
   const [current, setCurrent] = useState<GameSettings>({
     ...settings,
     sound_pack: settings.sound_pack || 'wooden',
     performance_mode: settings.performance_mode || 'auto',
+    lichess_opponent_type: settings.lichess_opponent_type || 'human',
+    lichess_rated: settings.lichess_rated !== false,
+    lichess_ai_level: settings.lichess_ai_level || 4,
+    shortcuts: {
+      flip: settings.shortcuts?.flip || 'f',
+      pause: settings.shortcuts?.pause || 'p',
+      resign: settings.shortcuts?.resign || 'r',
+      undo: settings.shortcuts?.undo || 'u',
+      focus_left: settings.shortcuts?.focus_left || 'q',
+      focus_right: settings.shortcuts?.focus_right || 'e',
+    },
   });
   const [listeningKey, setListeningKey] = useState<keyof KeyboardShortcuts | null>(null);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      const modal = document.querySelector<HTMLElement>('[data-tv-modal="true"]');
+      if (modal) ensureSpatialFocus(modal);
+    }, 30);
+    return () => clearTimeout(timer);
+  }, [activeTab]);
 
   const isLowCpu = current.performance_mode === 'low_cpu';
 
@@ -81,41 +103,99 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     soundManager.setMusicEnabled(nextVal);
   };
 
+  const listenStartTimeRef = React.useRef<number>(0);
+
   const handleKeyListen = (action: keyof KeyboardShortcuts) => {
     soundManager.playSound('select');
+    if (listeningKey === action) {
+      setListeningKey(null);
+      return;
+    }
+    listenStartTimeRef.current = performance.now();
     setListeningKey(action);
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
+  useEffect(() => {
     if (!listeningKey) return;
-    e.preventDefault();
-    e.stopPropagation();
 
-    const key = e.key.toLowerCase();
-    if (['shift', 'control', 'alt', 'meta', 'capslock', 'tab'].includes(key)) return;
+    const onCaptureKeyDown = (e: KeyboardEvent) => {
+      // Ignore the initial Enter/Space keydown that may have triggered the button click synchronously
+      if (performance.now() - listenStartTimeRef.current < 80) {
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
+      if (e.repeat) {
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
 
-    soundManager.playSound('click');
-    setCurrent({
-      ...current,
-      shortcuts: {
-        ...current.shortcuts,
-        [listeningKey]: key,
-      },
-    });
-    setListeningKey(null);
-  };
+      const rawKey = e.key === ' ' ? 'space' : e.key.toLowerCase();
+      if (['shift', 'control', 'alt', 'meta', 'capslock', 'tab'].includes(rawKey)) {
+        return;
+      }
+
+      e.preventDefault();
+      e.stopPropagation();
+      if (typeof e.stopImmediatePropagation === 'function') {
+        e.stopImmediatePropagation();
+      }
+
+      // Escape cancels listening without closing the Settings modal
+      if (rawKey === 'escape' || rawKey === 'browserback' || rawKey === 'goback') {
+        soundManager.playSound('select');
+        setListeningKey(null);
+        return;
+      }
+
+      soundManager.playSound('click');
+      setCurrent((prev) => {
+        const updated: GameSettings = {
+          ...prev,
+          shortcuts: {
+            ...prev.shortcuts,
+            [listeningKey]: rawKey,
+          },
+        };
+        onSave(updated);
+        return updated;
+      });
+      setListeningKey(null);
+    };
+
+    const onCaptureKeyUp = (e: KeyboardEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (typeof e.stopImmediatePropagation === 'function') {
+        e.stopImmediatePropagation();
+      }
+    };
+
+    window.addEventListener('keydown', onCaptureKeyDown, { capture: true });
+    window.addEventListener('keyup', onCaptureKeyUp, { capture: true });
+    return () => {
+      window.removeEventListener('keydown', onCaptureKeyDown, { capture: true });
+      window.removeEventListener('keyup', onCaptureKeyUp, { capture: true });
+    };
+  }, [listeningKey, onSave]);
 
   const resetShortcuts = () => {
     soundManager.playSound('select');
-    setCurrent({
+    const updated: GameSettings = {
       ...current,
       shortcuts: {
         flip: 'f',
         pause: 'p',
         resign: 'r',
         undo: 'u',
+        focus_left: 'q',
+        focus_right: 'e',
       },
-    });
+    };
+    setCurrent(updated);
+    onSave(updated);
+    setListeningKey(null);
   };
 
   const currentFontSize = getNumericFontSize(current);
@@ -136,21 +216,21 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   };
 
   const numericFontPresets = [
-    { size: 12, label: '12', desc: 'Compact' },
-    { size: 14, label: '14', desc: 'Standard' },
-    { size: 16, label: '16', desc: 'Default' },
-    { size: 18, label: '18', desc: 'Large' },
-    { size: 20, label: '20', desc: 'TV' },
-    { size: 22, label: '22', desc: 'Extra' },
+    { size: 14, label: '14', desc: 'Compact' },
+    { size: 18, label: '18', desc: 'Default TV' },
+    { size: 24, label: '24', desc: 'Large' },
+    { size: 32, label: '32', desc: 'X-Large' },
+    { size: 40, label: '40', desc: 'Jumbo' },
+    { size: 50, label: '50', desc: 'Max 50' },
   ];
 
   return (
     <div
       data-tv-modal="true"
+      data-listening-shortcut={listeningKey ? 'true' : undefined}
       className={`fixed inset-0 bg-black/90 ${
         isLowCpu ? '' : 'backdrop-blur-xs'
       } z-50 flex items-center justify-center p-2 sm:p-4 overflow-y-auto select-none`}
-      onKeyDown={handleKeyDown}
       tabIndex={0}
     >
       <div className="bg-slate-900 border-2 border-slate-700 rounded-3xl p-4 sm:p-6 max-w-xl w-full shadow-2xl my-auto max-h-[92vh] flex flex-col">
@@ -227,7 +307,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             }`}
           >
             <Cpu size={14} />
-            <span className="truncate">AI Engine</span>
+            <span className="truncate">AI & Lichess</span>
           </button>
         </div>
 
@@ -682,9 +762,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 <div className="grid grid-cols-2 gap-2 mb-4">
                   {[
                     { key: 'flip' as const, label: 'Flip Board' },
-                    { key: 'pause' as const, label: 'Pause / Menu' },
+                    { key: 'pause' as const, label: 'Match Menu (Play/Pause)' },
                     { key: 'undo' as const, label: 'Undo Move' },
                     { key: 'resign' as const, label: 'Resign Match' },
+                    { key: 'focus_left' as const, label: 'Focus Left Side' },
+                    { key: 'focus_right' as const, label: 'Focus Right Side' },
                   ].map((s) => (
                     <div
                       key={s.key}
@@ -711,16 +793,16 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     <Tv size={16} className="text-blue-400 shrink-0 mt-0.5" />
                     <div className="text-[11px] text-slate-300">
                       <strong className="text-white block font-semibold mb-0.5">
-                        Keyboard & TV Remote
+                        TV Remote & Keyboard
                       </strong>
                       <span>
-                        Arrows = Board & Side Panels
+                        Arrows = Move in Active Zone
                         <br />
-                        Enter / OK = Select / Confirm
+                        Play/Pause = Show/Hide Match Menu
                         <br />
-                        Tab = Switch Board / Controls
+                        CH Up / Down = Left ↔ Board ↔ Right
                         <br />
-                        Back / Esc = Cancel / Pause
+                        Return / Esc = MyPC System Menu
                       </span>
                     </div>
                   </div>
@@ -732,13 +814,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                         Gamepad Controller
                       </strong>
                       <span>
-                        D-Pad / Stick = Board & UI
+                        D-Pad / Stick = Move in Active Zone
                         <br />
-                        A = Confirm • B = Cancel / Back
+                        A = Confirm • B = Cancel / Deselect
                         <br />
-                        X = Board ↔ HUD • Y = Flip
+                        Start = Match Menu • Y = Flip
                         <br />
-                        LB / RB = Tabs & History
+                        Home = MyPC Menu • LB/RB = History
                       </span>
                     </div>
                   </div>
@@ -747,13 +829,133 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             </div>
           )}
 
-          {/* TAB 4: AI Engine */}
+          {/* TAB 4: AI Engine & Lichess Matchmaking Preferences */}
           {activeTab === 'ai' && (
             <div className="flex flex-col gap-3">
+              {/* Lichess Matchmaking Preferences */}
+              <div className="p-3.5 rounded-2xl bg-slate-950/70 border border-slate-800/80 space-y-3">
+                <div>
+                  <label className="text-xs uppercase font-bold tracking-wider text-white flex items-center gap-1.5">
+                    <span>♞ Lichess Matchmaking Mode</span>
+                  </label>
+                  <p className="text-[11px] text-slate-400 mt-0.5">
+                    Choose opponent type and rated mode for the Lichess Quick Pairing Grid.
+                  </p>
+                </div>
+
+                {/* Opponent Type */}
+                <div className="grid grid-cols-3 gap-2">
+                  {[
+                    { id: 'human' as const, label: 'Human Players', sub: 'Default (Rapid+)' },
+                    { id: 'lichess_ai' as const, label: 'Lichess Cloud AI', sub: 'Blitz & Rapid' },
+                    { id: 'local_ai' as const, label: 'Local Stockfish', sub: 'All Speeds' },
+                  ].map((opt) => {
+                    const active = (current.lichess_opponent_type || 'human') === opt.id;
+                    return (
+                      <button
+                        key={opt.id}
+                        type="button"
+                        onClick={() => {
+                          soundManager.playSound('select');
+                          setCurrent({ ...current, lichess_opponent_type: opt.id });
+                        }}
+                        className={`flex flex-col items-center justify-center p-2.5 rounded-xl border text-center transition-colors cursor-pointer ${
+                          active
+                            ? 'bg-emerald-600/25 border-emerald-400 text-white'
+                            : 'bg-slate-900 border-slate-800 text-slate-300 hover:border-slate-700'
+                        }`}
+                      >
+                        <span className="text-xs font-extrabold">{opt.label}</span>
+                        <span className="text-[10px] text-slate-400 mt-0.5">{opt.sub}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* Rated vs Casual when Human is selected */}
+                {(current.lichess_opponent_type || 'human') === 'human' && (
+                  <div className="flex items-center justify-between pt-2 border-t border-slate-800/80">
+                    <div>
+                      <span className="text-xs font-bold text-slate-200 block">
+                        Human Match Type
+                      </span>
+                      <span className="text-[10px] text-slate-400">
+                        {current.lichess_rated !== false
+                          ? 'Rated games affect your official Lichess rating'
+                          : 'Casual friendly games'}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1 bg-slate-900 p-1 rounded-xl border border-slate-800">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          soundManager.playSound('select');
+                          setCurrent({ ...current, lichess_rated: true });
+                        }}
+                        className={`px-3 py-1 rounded-lg text-xs font-extrabold transition-colors cursor-pointer ${
+                          current.lichess_rated !== false
+                            ? 'bg-amber-500 text-slate-950'
+                            : 'text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        Rated
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          soundManager.playSound('select');
+                          setCurrent({ ...current, lichess_rated: false });
+                        }}
+                        className={`px-3 py-1 rounded-lg text-xs font-extrabold transition-colors cursor-pointer ${
+                          current.lichess_rated === false
+                            ? 'bg-white text-slate-950'
+                            : 'text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        Casual
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Lichess Cloud AI Level when lichess_ai is selected */}
+                {current.lichess_opponent_type === 'lichess_ai' && (
+                  <div className="space-y-1.5 pt-2 border-t border-slate-800/80">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-slate-200">
+                        Lichess Cloud Stockfish Level
+                      </span>
+                      <span className="text-xs font-mono font-bold text-amber-400">
+                        Level {current.lichess_ai_level || 4}
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-8 gap-1">
+                      {[1, 2, 3, 4, 5, 6, 7, 8].map((lv) => (
+                        <button
+                          key={lv}
+                          type="button"
+                          onClick={() => {
+                            soundManager.playSound('select');
+                            setCurrent({ ...current, lichess_ai_level: lv });
+                          }}
+                          className={`py-1.5 rounded-lg font-extrabold text-xs border transition-colors cursor-pointer ${
+                            (current.lichess_ai_level || 4) === lv
+                              ? 'bg-amber-500 text-slate-950 border-amber-400'
+                              : 'bg-slate-900 text-slate-300 border-slate-800'
+                          }`}
+                        >
+                          {lv}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
               <div className="p-3 rounded-2xl bg-slate-950/70 border border-slate-800/80">
                 <div className="flex items-center justify-between mb-2">
                   <label className="text-xs uppercase font-bold tracking-wider text-slate-300">
-                    Stockfish AI Elo Rating
+                    Built-in Stockfish AI Elo Rating
                   </label>
                   <span className="text-sm font-mono font-bold text-cyan-400">{current.ai_elo}</span>
                 </div>

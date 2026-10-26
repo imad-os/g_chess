@@ -1,7 +1,8 @@
 // HistoryModal Component
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { SavedGameRecord, MoveRecord } from '../types/chess';
 import { lichessService } from '../services/lichess';
+import { ensureSpatialFocus } from '../services/spatialInput';
 import {
   History,
   FileText,
@@ -13,6 +14,7 @@ import {
   Calendar,
   Award,
   AlertCircle,
+  ArrowLeft,
 } from 'lucide-react';
 
 interface HistoryModalProps {
@@ -84,6 +86,14 @@ export const HistoryModal: React.FC<HistoryModalProps> = ({
   const [activeTab, setActiveTab] = useState<'saved' | 'import'>('saved');
   const [pgnInput, setPgnInput] = useState<string>('');
   const [importError, setImportError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      const modal = document.querySelector<HTMLElement>('[data-tv-modal="true"]');
+      if (modal) ensureSpatialFocus(modal);
+    }, 30);
+    return () => clearTimeout(timer);
+  }, [activeTab]);
 
   const handleImportText = (textToParse: string, customMeta?: Partial<SamplePreset>, analyzeImmediately = true) => {
     setImportError(null);
@@ -368,6 +378,21 @@ export const HistoryModal: React.FC<HistoryModalProps> = ({
               </div>
             </div>
           )}
+        </div>
+
+        {/* Footer Close / Back Bar */}
+        <div className="px-5 py-3 border-t border-slate-800 bg-slate-950/60 flex items-center justify-between shrink-0">
+          <span className="text-[11px] text-slate-400 hidden sm:inline">
+            Tip: Press <strong className="text-slate-200">Back / Esc / B</strong> anytime to return
+          </span>
+          <button
+            type="button"
+            onClick={onClose}
+            className="flex items-center justify-center gap-2 px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs sm:text-sm transition cursor-pointer ml-auto"
+          >
+            <ArrowLeft size={15} />
+            Back to Main Menu
+          </button>
         </div>
       </div>
     </div>

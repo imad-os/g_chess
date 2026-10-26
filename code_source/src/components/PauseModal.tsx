@@ -1,5 +1,5 @@
 // PauseModal Component - Plus (+) In-Game Match Menu with Move History, Draw Offer/Accept & Resign Confirmation
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Play,
   RotateCcw,
@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { MoveRecord } from '../types/chess';
 import { ensureSpatialFocus } from '../services/spatialInput';
+import { soundManager } from '../services/sound';
 
 interface PauseModalProps {
   moves: MoveRecord[];
@@ -54,8 +55,12 @@ export const PauseModal: React.FC<PauseModalProps> = ({
   onQuitToMenu,
 }) => {
   const [confirmingResign, setConfirmingResign] = useState<boolean>(initialConfirmResign);
+  const armedAtRef = useRef<number>(initialConfirmResign ? performance.now() : 0);
 
   useEffect(() => {
+    if (initialConfirmResign) {
+      armedAtRef.current = performance.now();
+    }
     setConfirmingResign(initialConfirmResign);
   }, [initialConfirmResign]);
 
@@ -212,7 +217,7 @@ export const PauseModal: React.FC<PauseModalProps> = ({
             <div className="flex flex-col gap-2.5">
               <button
                 type="button"
-                data-tv-autofocus={!incomingDrawOffer ? 'true' : undefined}
+                data-tv-autofocus={!incomingDrawOffer && !initialConfirmResign ? 'true' : undefined}
                 onClick={onResume}
                 className="flex items-center justify-center gap-2.5 w-full py-3 px-4 rounded-xl bg-blue-600 hover:bg-blue-500 font-bold text-white shadow-lg transition-colors cursor-pointer"
               >
@@ -246,10 +251,17 @@ export const PauseModal: React.FC<PauseModalProps> = ({
 
                 <button
                   type="button"
+                  data-tv-autofocus={initialConfirmResign ? 'true' : undefined}
                   onClick={() => {
+                    const now = performance.now();
                     if (confirmingResign) {
+                      if (now - armedAtRef.current < 350) {
+                        return;
+                      }
                       onConfirmResign();
                     } else {
+                      armedAtRef.current = now;
+                      soundManager.playSound('select');
                       setConfirmingResign(true);
                     }
                   }}

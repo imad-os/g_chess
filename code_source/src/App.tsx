@@ -9,6 +9,8 @@ import {
   SavedGameRecord,
   MoveRecord,
   ChatMessage,
+  OngoingLichessGame,
+  ActiveMatchSnapshot,
   getNumericFontSize,
   getFontScaleCategory,
 } from './types/chess';
@@ -30,6 +32,7 @@ import { SettingsModal } from './components/SettingsModal';
 import { MultiplayerModal } from './components/MultiplayerModal';
 import { HistoryModal } from './components/HistoryModal';
 import { LichessModal } from './components/LichessModal';
+import { MiniBoardPreview } from './components/MiniBoardPreview';
 import { soundManager } from './services/sound';
 import { stockfishService } from './services/stockfish';
 import { myPCService } from './services/mypc';
@@ -38,6 +41,8 @@ import {
   UnifiedAction,
   InputSource,
   NavDirection,
+  isElementVisible,
+  isTextInputElement,
   mapMyPCAction,
   mapKeyboardOrTVEvent,
   getFocusableElements,
@@ -49,16 +54,19 @@ import {
   stepRangeInput,
   triggerSpatialConfirm,
 } from './services/spatialInput';
-import { Bot, Users, Wifi, Sliders, ChevronRight, History } from 'lucide-react';
+import { Bot, Users, Wifi, Sliders, ChevronRight, History, Play } from 'lucide-react';
 
 export const App: React.FC = () => {
   // App state
   const [appState, setAppState] = useState<AppState>('menu');
   const [settingsReturnState, setSettingsReturnState] = useState<AppState>('menu');
+  const [settingsInitialTab, setSettingsInitialTab] = useState<
+    'display' | 'scale' | 'shortcuts' | 'ai'
+  >('display');
   const [analysisReturnState, setAnalysisReturnState] = useState<AppState>('menu');
   const [gameMode, setGameMode] = useState<GameMode>('ai');
 
-  // Game settings with font scaling, sound pack & performance mode
+  // Game settings with font scaling (up to 50px), sound pack, performance mode & Lichess defaults
   const [settings, setSettings] = useState<GameSettings>({
     show_legal_moves: true,
     theme: 'dark',
@@ -69,6 +77,8 @@ export const App: React.FC = () => {
       pause: 'p',
       resign: 'r',
       undo: 'u',
+      focus_left: 'q',
+      focus_right: 'e',
     },
     ai_elo: 1000,
     ai_depth: 10,
@@ -77,6 +87,9 @@ export const App: React.FC = () => {
     music_enabled: false,
     sound_pack: 'wooden',
     performance_mode: 'auto',
+    lichess_opponent_type: 'human',
+    lichess_rated: true,
+    lichess_ai_level: 4,
   });
   const [autoLowCpuDetected, setAutoLowCpuDetected] = useState<boolean>(() => {
     if (typeof navigator !== 'undefined' && navigator.hardwareConcurrency && navigator.hardwareConcurrency <= 4) {
@@ -160,9 +173,62 @@ export const App: React.FC = () => {
     wtime: 600000,
     btime: 600000,
   });
+  const [initialClockMs, setInitialClockMs] = useState<number>(600000);
+  const [matchIncrementMs, setMatchIncrementMs] = useState<number>(0);
   const [timeControlLabel, setTimeControlLabel] = useState<string>('10+0');
   const [speedLabel, setSpeedLabel] = useState<string>('Rapid');
   const [ratedMatch, setRatedMatch] = useState<boolean>(true);
+
+  // Real-time Connectivity & Presence state (My internet status + Opponent online status + Lichess auto-reconnect)
+  const [isMeOnline, setIsMeOnline] = useState<boolean>(() =>
+    typeof navigator !== 'undefined' ? navigator.onLine !== false : true
+  );
+  const [isOpponentOnline, setIsOpponentOnline] = useState<boolean>(true);
+  const [lichessStreamStatus, setLichessStreamStatus] = useState<
+    'connecting' | 'connected' | 'reconnecting' | 'offline'
+  >('connected');
+  const [reconnectRetrySec, setReconnectRetrySec] = useState<number>(10);
+
+  // Ongoing games state (Resume Lichess cloud game started on phone/TV or unfinished local/AI match)
+  const [ongoingLichessGames, setOngoingLichessGames] = useState<OngoingLichessGame[]>([]);
+  const [savedLocalMatch, setSavedLocalMatch] = useState<ActiveMatchSnapshot | null>(() =>
+    myPCService.load<ActiveMatchSnapshot | null>('active_local_match', null)
+  );
+
+  // Track browser Wi-Fi / internet online & offline events
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const handleOnline = () => setIsMeOnline(true);
+    const handleOffline = () => setIsMeOnline(false);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
+
+  // Poll opponent online status on Lichess every 15s while playing a Lichess match
+  useEffect(() => {
+    if (appState !== 'playing' || gameMode !== 'lichess' || !remotePlayerName) return;
+    if (remotePlayerName.toLowerCase().includes('stockfish') || remotePlayerName.toLowerCase().includes('ai')) {
+      setIsOpponentOnline(true);
+      return;
+    }
+    let cancelled = false;
+    const checkOppStatus = async () => {
+      const online = await lichessService.fetchUserOnlineStatus(remotePlayerName);
+      if (!cancelled) {
+        setIsOpponentOnline(online);
+      }
+    };
+    checkOppStatus();
+    const interval = setInterval(checkOppStatus, 15000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [appState, gameMode, remotePlayerName]);
 
   // Game over state
   const [gameOverInfo, setGameOverInfo] = useState<{
@@ -184,13 +250,16 @@ export const App: React.FC = () => {
 
   // TV remote / Controller / Keyboard navigation state
   const [menuIndex, setMenuIndex] = useState<number>(0);
-  const menuItemsCount = 6;
-  const [playFocusZone, setPlayFocusZone] = useState<'board' | 'hud'>('board');
+  const hasContinueGameOption = ongoingLichessGames.length > 0 || savedLocalMatch !== null;
+  const menuItemsCount = hasContinueGameOption ? 7 : 6;
+  const [playFocusZone, setPlayFocusZone] = useState<'left' | 'board' | 'right'>('board');
   const lastDispatchedRef = useRef<{
     action: UnifiedAction;
     source: InputSource;
     time: number;
   } | null>(null);
+  const lastModalTransitionRef = useRef<number>(0);
+  const lastLowTimeBeepSecRef = useRef<number | null>(null);
 
   // Initialize MyPC SDK and load saved ratings, config, Lichess API token, and match history
   useEffect(() => {
@@ -218,6 +287,14 @@ export const App: React.FC = () => {
           setMatchNotes(loadedNotes);
         }
 
+        const loadedActiveMatch = myPCService.load<ActiveMatchSnapshot | null>(
+          'active_local_match',
+          null
+        );
+        if (loadedActiveMatch && loadedActiveMatch.moves?.length > 0) {
+          setSavedLocalMatch(loadedActiveMatch);
+        }
+
         const savedConfig = myPCService.load<Partial<GameSettings>>('config', {});
         if (savedConfig) {
           setSettings((prev) => ({
@@ -228,6 +305,8 @@ export const App: React.FC = () => {
             shortcuts: {
               ...prev.shortcuts,
               ...(savedConfig.shortcuts || {}),
+              focus_left: savedConfig.shortcuts?.focus_left || prev.shortcuts.focus_left || 'q',
+              focus_right: savedConfig.shortcuts?.focus_right || prev.shortcuts.focus_right || 'e',
             },
           }));
         }
@@ -253,17 +332,19 @@ export const App: React.FC = () => {
               }
             })
             .catch(() => {});
+
+          lichessService
+            .fetchOngoingGames(syncedLichess.token)
+            .then((playing) => setOngoingLichessGames(playing))
+            .catch(() => {});
         }
       },
       onStart: () => {
         soundManager.resumeContext();
       },
       onPause: () => {
+        // When MyPC system pause menu is shown, suspend audio without opening our internal match menu
         soundManager.suspendContext();
-        setAppState((curr) => {
-          if (curr === 'playing') return 'paused';
-          return curr;
-        });
       },
       onResume: () => {
         soundManager.resumeContext();
@@ -277,6 +358,16 @@ export const App: React.FC = () => {
     });
   }, []);
 
+  // Refresh ongoing Lichess cloud games whenever returning to the Main Menu
+  useEffect(() => {
+    if (appState === 'menu' && lichessService.getToken()) {
+      lichessService
+        .fetchOngoingGames()
+        .then((playing) => setOngoingLichessGames(playing))
+        .catch(() => {});
+    }
+  }, [appState]);
+
   // Update soundManager flags and sound pack when settings change
   useEffect(() => {
     soundManager.setSoundEnabled(settings.sound_enabled);
@@ -284,7 +375,7 @@ export const App: React.FC = () => {
     soundManager.setSoundPack(settings.sound_pack || 'wooden');
   }, [settings.sound_enabled, settings.music_enabled, settings.sound_pack]);
 
-  // Compute current numeric font size (10-24px, default 16px)
+  // Compute current numeric font size (10-50px, default 16px)
   const numericFontSize = useMemo(() => getNumericFontSize(settings), [settings]);
 
   // Apply global root typography scaling so all rem-based Tailwind text & spacing scale cleanly
@@ -384,15 +475,20 @@ export const App: React.FC = () => {
         myPCService.save('saved_games', updated);
         return updated;
       });
+
+      // Clear active unfinished match snapshot once game concludes
+      setSavedLocalMatch(null);
+      myPCService.save('active_local_match', null);
     },
     [profileName, lichessUsername]
   );
 
-  // Open settings with preserved return state
+  // Open settings with preserved return state & optional initial tab
   const openSettings = useCallback(
-    (fromState?: AppState) => {
+    (fromState?: AppState, initialTab: 'display' | 'scale' | 'shortcuts' | 'ai' = 'display') => {
       soundManager.playSound('click');
       setSettingsReturnState(fromState || appState);
+      setSettingsInitialTab(initialTab);
       setAppState('settings');
     },
     [appState]
@@ -400,14 +496,37 @@ export const App: React.FC = () => {
 
   // Start a new game session
   const startNewGame = useCallback(
-    (mode: GameMode, color: Color = 'w') => {
+    (
+      mode: GameMode,
+      color: Color = 'w',
+      customMinutes: number = 10,
+      customIncrementSec: number = 0
+    ) => {
       soundManager.stopSearchPulse();
       soundManager.playSound('game_start');
       lichessService.stopGameStream();
       setActiveLichessGameId(null);
-      setMatchClocks({ wtime: 600000, btime: 600000 });
-      setTimeControlLabel('10+0');
-      setSpeedLabel('Rapid');
+
+      const startMs = Math.max(30000, Math.round(customMinutes * 60 * 1000));
+      const incMs = Math.max(0, Math.round(customIncrementSec * 1000));
+      const estDurationSec = customMinutes * 60 + customIncrementSec * 40;
+      const computedSpeed =
+        estDurationSec < 180
+          ? 'Bullet'
+          : estDurationSec < 480
+          ? 'Blitz'
+          : estDurationSec < 1500
+          ? 'Rapid'
+          : 'Classical';
+
+      setMatchClocks({ wtime: startMs, btime: startMs });
+      setInitialClockMs(startMs);
+      setMatchIncrementMs(incMs);
+      setIsOpponentOnline(true);
+      setLichessStreamStatus('connected');
+      lastLowTimeBeepSecRef.current = null;
+      setTimeControlLabel(`${customMinutes}+${customIncrementSec}`);
+      setSpeedLabel(computedSpeed);
       setRatedMatch(mode === 'ai');
       setInitialFen('startpos');
       setViewPly(null);
@@ -438,7 +557,7 @@ export const App: React.FC = () => {
           sender: 'System',
           text:
             mode === 'ai'
-              ? `Match started vs Stockfish AI (Elo ${settings.ai_elo}).`
+              ? `Match started (${customMinutes}+${customIncrementSec} ${computedSpeed}) vs Stockfish AI (Elo ${settings.ai_elo}).`
               : mode === 'online'
               ? `Connected to Wi-Fi peer match.`
               : `Couch Play match started.`,
@@ -584,6 +703,14 @@ export const App: React.FC = () => {
           gameHistoryRef.current = nextHistory;
           setGameHistory(nextHistory);
 
+          // Apply clock increment for non-Lichess timed games (e.g., 5+3, 3+2, 2+1)
+          if (gameMode !== 'lichess' && matchIncrementMs > 0 && nextHistory.length >= 2) {
+            setMatchClocks((prevClocks) => ({
+              wtime: move.color === 'w' ? prevClocks.wtime + matchIncrementMs : prevClocks.wtime,
+              btime: move.color === 'b' ? prevClocks.btime + matchIncrementMs : prevClocks.btime,
+            }));
+          }
+
           // Send via online peer if in local Wi-Fi multiplayer
           if (gameMode === 'online' && onlineSession && !isRemoteSync) {
             const peer = isHost ? onlineSession.peers?.[0] : onlineSession;
@@ -636,6 +763,7 @@ export const App: React.FC = () => {
     [
       gameMode,
       activeLichessGameId,
+      matchIncrementMs,
       onlineSession,
       isHost,
       remotePlayerName,
@@ -654,6 +782,9 @@ export const App: React.FC = () => {
       currentMatchSavedRef.current = false;
       setActiveLichessGameId(gameId);
       setGameMode('lichess');
+      setLichessStreamStatus('connecting');
+      setIsOpponentOnline(true);
+      lastLowTimeBeepSecRef.current = null;
       setChess(new Chess());
       setInitialFen('startpos');
       setViewPly(null);
@@ -695,6 +826,9 @@ export const App: React.FC = () => {
           if (state.myRating) setMyLichessRating(state.myRating);
           setRemotePlayerName(state.opponentName);
           if (state.opponentRating) setOpponentElo(state.opponentRating);
+          if (state.opponentGone !== undefined) {
+            setIsOpponentOnline(!state.opponentGone);
+          }
           setMatchClocks({ wtime: state.wtime, btime: state.btime });
           setRatedMatch(state.rated);
           if (state.speed) {
@@ -704,6 +838,7 @@ export const App: React.FC = () => {
             const mins = Math.max(1, Math.round(state.clockInitialSec / 60));
             const inc = state.clockIncrementSec ?? Math.round((state.winc || 0) / 1000);
             setTimeControlLabel(`${mins}+${inc}`);
+            setInitialClockMs(Math.max(10000, state.clockInitialSec * 1000));
           }
           if (state.initialFen) {
             setInitialFen(state.initialFen);
@@ -808,22 +943,171 @@ export const App: React.FC = () => {
         },
         (sender, text) => {
           appendChatMessage(sender, text);
+        },
+        (status, retryInSec) => {
+          setLichessStreamStatus(status);
+          if (retryInSec !== undefined) {
+            setReconnectRetrySec(retryInSec);
+          }
         }
       );
     },
     [archiveCompletedGame, appendChatMessage]
   );
 
-  // Live clock countdown ticker (1 second interval while playing across all modes)
+  // Persist active unfinished match snapshot so the player can close & reopen the app and continue
+  useEffect(() => {
+    if (appState !== 'playing' || chess.isGameOver()) return;
+    if (gameHistory.length === 0 && gameMode !== 'lichess') return;
+
+    const snapshot: ActiveMatchSnapshot = {
+      gameMode,
+      fen: chess.fen(),
+      initialFen,
+      playerColor,
+      flipped,
+      moves: gameHistory,
+      wtime: matchClocks.wtime,
+      btime: matchClocks.btime,
+      initialClockMs,
+      timeControlLabel,
+      speedLabel,
+      ratedMatch,
+      opponentName:
+        gameMode === 'ai'
+          ? 'Stockfish AI'
+          : gameMode === 'lichess' || gameMode === 'online'
+          ? remotePlayerName
+          : 'Player 2',
+      opponentElo: gameMode === 'lichess' ? opponentElo : settings.ai_elo,
+      lichessGameId: activeLichessGameId || undefined,
+      updatedAt: Date.now(),
+    };
+    setSavedLocalMatch(snapshot);
+    myPCService.save('active_local_match', snapshot);
+  }, [
+    appState,
+    chess,
+    gameHistory,
+    gameMode,
+    initialFen,
+    playerColor,
+    flipped,
+    matchClocks.wtime,
+    matchClocks.btime,
+    initialClockMs,
+    timeControlLabel,
+    speedLabel,
+    ratedMatch,
+    remotePlayerName,
+    opponentElo,
+    settings.ai_elo,
+    activeLichessGameId,
+  ]);
+
+  // Resume an ongoing cloud Lichess game or saved local/AI match
+  const handleContinueOngoingGame = useCallback(() => {
+    soundManager.playSound('game_start');
+    if (ongoingLichessGames.length > 0) {
+      const g = ongoingLichessGames[0];
+      handleStartLiveLichessGame(
+        g.gameId,
+        lichessUsername || lichessService.getUsername() || 'Me'
+      );
+      return;
+    }
+    if (savedLocalMatch) {
+      if (savedLocalMatch.gameMode === 'lichess' && savedLocalMatch.lichessGameId) {
+        handleStartLiveLichessGame(
+          savedLocalMatch.lichessGameId,
+          lichessUsername || lichessService.getUsername() || 'Me'
+        );
+        return;
+      }
+      currentMatchSavedRef.current = false;
+      const restoredChess = new Chess(savedLocalMatch.fen);
+      setChess(restoredChess);
+      setInitialFen(savedLocalMatch.initialFen || 'startpos');
+      setGameMode(savedLocalMatch.gameMode);
+      setPlayerColor(savedLocalMatch.playerColor);
+      setFlipped(savedLocalMatch.flipped);
+      setGameHistory(savedLocalMatch.moves);
+      gameHistoryRef.current = savedLocalMatch.moves;
+      setMatchClocks({ wtime: savedLocalMatch.wtime, btime: savedLocalMatch.btime });
+      setInitialClockMs(savedLocalMatch.initialClockMs || 600000);
+      setTimeControlLabel(savedLocalMatch.timeControlLabel || '10+0');
+      setSpeedLabel(savedLocalMatch.speedLabel || 'Rapid');
+      setRatedMatch(savedLocalMatch.ratedMatch);
+      setRemotePlayerName(savedLocalMatch.opponentName || 'Opponent');
+      setOpponentElo(savedLocalMatch.opponentElo || settings.ai_elo);
+      setViewPly(null);
+      setSelectedSquare(null);
+      setValidMoves([]);
+      const lastMv =
+        savedLocalMatch.moves.length > 0
+          ? savedLocalMatch.moves[savedLocalMatch.moves.length - 1]
+          : null;
+      setLastMove(
+        lastMv ? { from: lastMv.from as Square, to: lastMv.to as Square } : null
+      );
+      setPlayFocusZone('board');
+      clearAllSpatialFocus();
+      setAppState('playing');
+
+      // If it is AI's turn in a resumed AI match, trigger Stockfish move
+      if (
+        savedLocalMatch.gameMode === 'ai' &&
+        !restoredChess.isGameOver() &&
+        restoredChess.turn() !== savedLocalMatch.playerColor
+      ) {
+        setTimeout(() => {
+          stockfishService.requestMove(
+            {
+              fen: restoredChess.fen(),
+              elo: settings.ai_elo,
+              depth: settings.ai_depth,
+              timeMs: settings.ai_time,
+            },
+            (aiFrom, aiTo, aiPromo) => {
+              executeMove(aiFrom as Square, aiTo as Square, aiPromo);
+            }
+          );
+        }, 250);
+      }
+    }
+  }, [
+    ongoingLichessGames,
+    savedLocalMatch,
+    lichessUsername,
+    settings.ai_elo,
+    settings.ai_depth,
+    settings.ai_time,
+    handleStartLiveLichessGame,
+    executeMove,
+  ]);
+
+  // Live clock countdown ticker + Last 10 Seconds Audio Alert
   useEffect(() => {
     if (appState !== 'playing') return;
-    // Start ticking once at least 1 move is played or in Lichess mode
     const timer = setInterval(() => {
       const turn = chess.turn();
-      setMatchClocks((prev) => ({
-        wtime: turn === 'w' ? Math.max(0, prev.wtime - 1000) : prev.wtime,
-        btime: turn === 'b' ? Math.max(0, prev.btime - 1000) : prev.btime,
-      }));
+      setMatchClocks((prev) => {
+        const nextW = turn === 'w' ? Math.max(0, prev.wtime - 1000) : prev.wtime;
+        const nextB = turn === 'b' ? Math.max(0, prev.btime - 1000) : prev.btime;
+        const activeRemainingMs = turn === 'w' ? nextW : nextB;
+        const activeRemainingSec = Math.ceil(activeRemainingMs / 1000);
+
+        if (activeRemainingMs > 0 && activeRemainingMs <= 10000) {
+          if (lastLowTimeBeepSecRef.current !== activeRemainingSec) {
+            lastLowTimeBeepSecRef.current = activeRemainingSec;
+            soundManager.playSound('low_time');
+          }
+        } else {
+          lastLowTimeBeepSecRef.current = null;
+        }
+
+        return { wtime: nextW, btime: nextB };
+      });
     }, 1000);
     return () => clearInterval(timer);
   }, [appState, chess]);
@@ -1205,6 +1489,8 @@ export const App: React.FC = () => {
       if (gameHistoryRef.current.length < 2) {
         lichessService.abortBoardGame(activeLichessGameId);
         lichessService.stopGameStream();
+        setSavedLocalMatch(null);
+        myPCService.save('active_local_match', null);
         setAppState('lichess_hub');
       } else {
         appendChatMessage(
@@ -1243,7 +1529,6 @@ export const App: React.FC = () => {
 
       if (gameMode === 'lichess' && activeLichessGameId) {
         lichessService.sendBoardChat(activeLichessGameId, clean);
-        // Lichess echoes chatLine on stream, or we optimistically append if needed
         appendChatMessage(myActiveLabel, clean);
         return;
       }
@@ -1305,6 +1590,26 @@ export const App: React.FC = () => {
     []
   );
 
+  // Helper to switch active focus zone between Left Panel, Center Board, and Right Panel
+  const switchPlayFocusZone = useCallback((targetZone: 'left' | 'board' | 'right') => {
+    soundManager.playSound('select');
+    setPlayFocusZone(targetZone);
+    if (targetZone === 'board') {
+      clearAllSpatialFocus();
+      return;
+    }
+    setTimeout(() => {
+      const panelSelector =
+        targetZone === 'left'
+          ? '[data-tv-panel="left"], [data-tv-panel="top"]'
+          : '[data-tv-panel="right"], [data-tv-panel="bottom"]';
+      const panelEl = document.querySelector<HTMLElement>(panelSelector);
+      if (panelEl) {
+        ensureSpatialFocus(panelEl);
+      }
+    }, 20);
+  }, []);
+
   // Unified Action Router for Keyboard, Smart TV Remote, and Gamepad Controller
   const handleUnifiedAction = useCallback(
     (action: UnifiedAction) => {
@@ -1315,19 +1620,29 @@ export const App: React.FC = () => {
       const isModalOrSubScreen =
         pendingPromotion !== null ||
         mobileChatOpen ||
-        appState !== 'menu' && appState !== 'playing';
+        (appState !== 'menu' && appState !== 'playing');
 
       if (isModalOrSubScreen) {
         const modals = document.querySelectorAll<HTMLElement>('[data-tv-modal="true"]');
         const activeModal = modals.length > 0 ? modals[modals.length - 1] : document;
 
-        if (action === 'cancel' || action === 'pause') {
-          const activeTag = (document.activeElement as HTMLElement)?.tagName;
-          if (activeTag === 'INPUT' || activeTag === 'TEXTAREA') {
-            (document.activeElement as HTMLElement).blur();
+        // Play/Pause toggles Match Menu open/closed when in 'paused' state
+        if (action === 'pause' && appState === 'paused') {
+          lastModalTransitionRef.current = performance.now();
+          soundManager.playSound('click');
+          setInitialConfirmResign(false);
+          setAppState('playing');
+          return;
+        }
+
+        if (action === 'cancel' || action === 'mypc_menu' || action === 'pause') {
+          const activeEl = document.activeElement as HTMLElement | null;
+          if (isTextInputElement(activeEl) && activeEl) {
+            activeEl.blur();
             soundManager.playSound('select');
             return;
           }
+          lastModalTransitionRef.current = performance.now();
           soundManager.playSound('click');
           if (pendingPromotion) {
             setPendingPromotion(null);
@@ -1357,18 +1672,24 @@ export const App: React.FC = () => {
               ? '[data-tv-step-prev="true"]:not([disabled])'
               : '[data-tv-step-next="true"]:not([disabled])';
           const stepBtn = activeModal.querySelector<HTMLElement>(stepSelector);
-          if (stepBtn) {
+          if (stepBtn && isElementVisible(stepBtn)) {
             stepBtn.click();
             return;
           }
 
-          // Otherwise cycle modal navigation tabs ([data-tv-tab="true"])
+          // Otherwise cycle visible modal navigation tabs ([data-tv-tab="true"])
           const tabs = Array.from(
             activeModal.querySelectorAll<HTMLElement>('[data-tv-tab="true"]:not([disabled])')
-          );
+          ).filter(isElementVisible);
           if (tabs.length > 1) {
             const focused = getCurrentFocusedElement(activeModal);
-            let idx = tabs.findIndex((t) => t === focused || t.classList.contains('bg-blue-600') || t.classList.contains('border-white') || t.classList.contains('border-amber-400'));
+            let idx = tabs.findIndex(
+              (t) =>
+                t === focused ||
+                t.classList.contains('bg-blue-600') ||
+                t.classList.contains('border-white') ||
+                t.classList.contains('border-amber-400')
+            );
             if (idx === -1) idx = 0;
             const nextIdx =
               action === 'next_tab'
@@ -1418,6 +1739,11 @@ export const App: React.FC = () => {
 
       // 2. Main Menu State
       if (appState === 'menu') {
+        if (action === 'mypc_menu') {
+          // Only Return / Home / Esc triggers the MyPC System Menu
+          myPCService.triggerSystemPause();
+          return;
+        }
         if (action === 'up' || action === 'left') {
           soundManager.playSound('select');
           setMenuIndex((prev) => (prev > 0 ? prev - 1 : menuItemsCount - 1));
@@ -1430,12 +1756,22 @@ export const App: React.FC = () => {
         }
         if (action === 'confirm') {
           soundManager.playSound('click');
-          if (menuIndex === 0) startNewGame('ai');
-          else if (menuIndex === 1) setAppState('lichess_hub');
-          else if (menuIndex === 2) startNewGame('local');
-          else if (menuIndex === 3) setAppState('multiplayer_menu');
-          else if (menuIndex === 4) setAppState('history');
-          else if (menuIndex === 5) openSettings('menu');
+          const offset = hasContinueGameOption ? 1 : 0;
+          if (hasContinueGameOption && menuIndex === 0) {
+            handleContinueOngoingGame();
+          } else if (menuIndex === 0 + offset) {
+            startNewGame('ai');
+          } else if (menuIndex === 1 + offset) {
+            setAppState('lichess_hub');
+          } else if (menuIndex === 2 + offset) {
+            startNewGame('local');
+          } else if (menuIndex === 3 + offset) {
+            setAppState('multiplayer_menu');
+          } else if (menuIndex === 4 + offset) {
+            setAppState('history');
+          } else if (menuIndex === 5 + offset) {
+            openSettings('menu');
+          }
           return;
         }
         if (action === 'pause') {
@@ -1445,14 +1781,62 @@ export const App: React.FC = () => {
         return;
       }
 
-      // 3. Playing Screen State (Board-Only Directional Focus; Plus [+] Opens Match Menu)
+      // 3. Playing Screen State (3-Zone Focus: Left Panel ↔ Board ↔ Right Panel)
       if (appState === 'playing') {
-        if (action === 'pause') {
+        // TV Remote Play/Pause (or + / P / Start) shows/hides the Match Action Menu
+        if (action === 'pause' || action === 'zone_switch') {
           soundManager.playSound('click');
           setInitialConfirmResign(false);
           setAppState('paused');
           return;
         }
+
+        // ONLY TV Remote "Return", Gamepad "Home", or Keyboard "Esc" triggers MyPC System Menu
+        // (or backs out from a side panel to the board first)
+        if (action === 'mypc_menu') {
+          if (playFocusZone !== 'board') {
+            switchPlayFocusZone('board');
+            return;
+          }
+          if (selectedSquare !== null) {
+            setSelectedSquare(null);
+            setValidMoves([]);
+            soundManager.playSound('select');
+            return;
+          }
+          const handledByMyPC = myPCService.triggerSystemPause();
+          if (!handledByMyPC) {
+            soundManager.playSound('click');
+            setInitialConfirmResign(false);
+            setAppState('paused');
+          }
+          return;
+        }
+
+        // Focus Left Side / Focus Right Side / Channel Up & Down Zone Cycling
+        if (action === 'focus_left') {
+          switchPlayFocusZone(playFocusZone === 'left' ? 'board' : 'left');
+          return;
+        }
+        if (action === 'focus_right') {
+          switchPlayFocusZone(playFocusZone === 'right' ? 'board' : 'right');
+          return;
+        }
+        if (action === 'cycle_zone_prev') {
+          const order: ('left' | 'board' | 'right')[] = ['left', 'board', 'right'];
+          const curIdx = order.indexOf(playFocusZone);
+          const prevZone = order[(curIdx - 1 + order.length) % order.length];
+          switchPlayFocusZone(prevZone);
+          return;
+        }
+        if (action === 'cycle_zone_next') {
+          const order: ('left' | 'board' | 'right')[] = ['left', 'board', 'right'];
+          const curIdx = order.indexOf(playFocusZone);
+          const nextZone = order[(curIdx + 1) % order.length];
+          switchPlayFocusZone(nextZone);
+          return;
+        }
+
         if (action === 'flip') {
           soundManager.playSound('select');
           setFlipped((prev) => !prev);
@@ -1463,11 +1847,14 @@ export const App: React.FC = () => {
           return;
         }
         if (action === 'resign') {
-          const resignBtn = document.querySelector<HTMLButtonElement>(
-            'button[title*="Resign Match"], button[title*="confirm resignation"]'
+          const resignBtns = Array.from(
+            document.querySelectorAll<HTMLButtonElement>(
+              'button[data-resign-btn="true"], button[title*="Resign Match"], button[title*="confirm resignation"]'
+            )
           );
-          if (resignBtn) {
-            resignBtn.click();
+          const visibleResignBtn = resignBtns.find((btn) => isElementVisible(btn));
+          if (visibleResignBtn) {
+            visibleResignBtn.click();
           } else {
             handleRequestResignConfirm();
           }
@@ -1499,19 +1886,44 @@ export const App: React.FC = () => {
           });
           return;
         }
-        if (action === 'zone_switch') {
-          soundManager.playSound('click');
-          setInitialConfirmResign(false);
-          setAppState('paused');
+
+        // If focus is currently in the Left Panel or Right Panel, navigate spatially inside that panel!
+        if (playFocusZone === 'left' || playFocusZone === 'right') {
+          const panelSelector =
+            playFocusZone === 'left'
+              ? '[data-tv-panel="left"], [data-tv-panel="top"]'
+              : '[data-tv-panel="right"], [data-tv-panel="bottom"]';
+          const panelEl = document.querySelector<HTMLElement>(panelSelector);
+
+          if (action === 'cancel') {
+            switchPlayFocusZone('board');
+            return;
+          }
+
+          if (panelEl) {
+            if (action === 'confirm') {
+              ensureSpatialFocus(panelEl);
+              if (triggerSpatialConfirm(panelEl)) {
+                soundManager.playSound('click');
+              }
+              return;
+            }
+            if (isDirection) {
+              const cur = ensureSpatialFocus(panelEl);
+              if (!cur) return;
+              const candidates = getFocusableElements(panelEl);
+              const next = findNextSpatialElement(candidates, cur, action as NavDirection);
+              if (next) {
+                setSpatialFocus(next);
+                soundManager.playSound('select');
+              }
+              return;
+            }
+          }
           return;
         }
 
-        // Playing Screen -> Strict ChessBoard 8x8 Square Cursor Zone
-        if (playFocusZone !== 'board') {
-          clearAllSpatialFocus();
-          setPlayFocusZone('board');
-        }
-
+        // Playing Screen -> Center ChessBoard 8x8 Square Cursor Zone
         if (action === 'cancel') {
           if (selectedSquare !== null) {
             setSelectedSquare(null);
@@ -1524,9 +1936,6 @@ export const App: React.FC = () => {
             soundManager.playSound('select');
             return;
           }
-          soundManager.playSound('click');
-          setInitialConfirmResign(false);
-          setAppState('paused');
           return;
         }
 
@@ -1571,6 +1980,8 @@ export const App: React.FC = () => {
       settingsReturnState,
       analysisReturnState,
       menuIndex,
+      menuItemsCount,
+      hasContinueGameOption,
       playFocusZone,
       cursorSquare,
       selectedSquare,
@@ -1580,10 +1991,12 @@ export const App: React.FC = () => {
       isVerticalScreen,
       gameHistory.length,
       startNewGame,
+      handleContinueOngoingGame,
       openSettings,
       handleUndo,
       handleRequestResignConfirm,
       handleSquareClick,
+      switchPlayFocusZone,
     ]
   );
 
@@ -1591,11 +2004,43 @@ export const App: React.FC = () => {
   const dispatchUnifiedAction = useCallback(
     (action: UnifiedAction, source: InputSource) => {
       const now = performance.now();
-      const last = lastDispatchedRef.current;
-      // Prevent duplicate firing when host environment bridges native key/gamepad + MyPC.onInput simultaneously
-      if (last && last.action === action && last.source !== source && now - last.time < 75) {
+      const isDirection =
+        action === 'up' || action === 'down' || action === 'left' || action === 'right';
+
+      // Guard against trailing button pulses immediately after a modal opens or closes
+      if (
+        !isDirection &&
+        (action === 'confirm' ||
+          action === 'cancel' ||
+          action === 'mypc_menu' ||
+          action === 'pause' ||
+          action === 'zone_switch' ||
+          action === 'resign') &&
+        now - lastModalTransitionRef.current < 260
+      ) {
         return;
       }
+
+      const last = lastDispatchedRef.current;
+      if (last) {
+        const isCancelOrPause = (a: UnifiedAction) =>
+          a === 'cancel' || a === 'mypc_menu' || a === 'pause' || a === 'zone_switch';
+        const sameSemanticAction =
+          last.action === action || (isCancelOrPause(last.action) && isCancelOrPause(action));
+
+        if (!isDirection) {
+          // Block duplicate non-directional presses within 280ms regardless of source
+          if (sameSemanticAction && now - last.time < 280) {
+            return;
+          }
+        } else {
+          // Block cross-source directional duplicates within 95ms
+          if (last.action === action && last.source !== source && now - last.time < 95) {
+            return;
+          }
+        }
+      }
+
       lastDispatchedRef.current = { action, source, time: now };
       handleUnifiedAction(action);
     },
@@ -1604,27 +2049,27 @@ export const App: React.FC = () => {
 
   // Keep MyPC SDK onInput callback always synchronized with latest state (fixes stale closure)
   useEffect(() => {
-    myPCService.setInputHandler((rawAction, pressed, _repeat, dev) => {
+    myPCService.setInputHandler((rawAction, pressed, repeat, dev) => {
       if (!pressed) return;
+      // Yield completely while SettingsModal is capturing a custom shortcut key
+      if (document.querySelector('[data-listening-shortcut="true"]')) {
+        return;
+      }
+
       const activeEl = document.activeElement as HTMLElement | null;
-      const tag = activeEl?.tagName;
-      const isTextInput =
-        (tag === 'INPUT' &&
-          (activeEl as HTMLInputElement).type !== 'range' &&
-          (activeEl as HTMLInputElement).type !== 'checkbox' &&
-          (activeEl as HTMLInputElement).type !== 'button') ||
-        tag === 'TEXTAREA';
+      const isTextInput = isTextInputElement(activeEl);
 
       if (isTextInput && activeEl) {
         // When typing on a keyboard in standalone mode, ignore MyPC key-mapped actions
         if (dev === 'keys') return;
         const mapped = mapMyPCAction(rawAction);
-        if (mapped === 'cancel') {
+        if (mapped === 'cancel' || mapped === 'mypc_menu') {
           activeEl.blur();
           soundManager.playSound('select');
           return;
         }
         if (mapped === 'up' || mapped === 'down') {
+          if (repeat) return;
           activeEl.blur();
           dispatchUnifiedAction(mapped, 'mypc');
           return;
@@ -1633,11 +2078,21 @@ export const App: React.FC = () => {
       }
 
       const mapped = mapMyPCAction(rawAction);
-      if (mapped) {
-        dispatchUnifiedAction(mapped, 'mypc');
-      }
+      if (!mapped) return;
+
+      const isDirection =
+        mapped === 'up' || mapped === 'down' || mapped === 'left' || mapped === 'right';
+      // Never auto-repeat non-directional actions (Confirm, Cancel, Pause, Resign, etc.)
+      if (repeat && !isDirection) return;
+
+      dispatchUnifiedAction(mapped, 'mypc');
     });
   }, [dispatchUnifiedAction]);
+
+  // Record modal state transitions to prevent button press bleed-through when opening/closing menus
+  useEffect(() => {
+    lastModalTransitionRef.current = performance.now();
+  }, [appState, pendingPromotion, mobileChatOpen]);
 
   // Automatically highlight default focusable element when a modal opens or changes state
   useEffect(() => {
@@ -1663,23 +2118,9 @@ export const App: React.FC = () => {
 
   // Global Keyboard & Smart TV Remote listener + document.body shield for text inputs
   useEffect(() => {
-    const isElementTextInput = (el: HTMLElement | null): boolean => {
-      if (!el) return false;
-      const tag = el.tagName;
-      return (
-        (tag === 'INPUT' &&
-          (el as HTMLInputElement).type !== 'range' &&
-          (el as HTMLInputElement).type !== 'checkbox' &&
-          (el as HTMLInputElement).type !== 'button') ||
-        tag === 'TEXTAREA'
-      );
-    };
-
-    // Intercept bubbling events on document.body BEFORE they reach document (where mypc-sdk.js
-    // registers standaloneKey and contextmenu e.preventDefault() in standalone / GitHub Pages mode)
     const onBodyKeyDown = (e: KeyboardEvent) => {
       const targetEl = (e.target as HTMLElement) || (document.activeElement as HTMLElement);
-      if (!isElementTextInput(targetEl)) return;
+      if (!isTextInputElement(targetEl)) return;
 
       if (
         e.key === 'Escape' ||
@@ -1702,37 +2143,33 @@ export const App: React.FC = () => {
         return;
       }
 
-      // Stop propagation to document so mypc-sdk.js standaloneKey never calls e.preventDefault()
-      // on 'p' (80), 'x' (88), 'z' (90), Backspace (8), Space (32), Enter (13), or ArrowLeft/Right
       e.stopPropagation();
     };
 
     const onBodyKeyUp = (e: KeyboardEvent) => {
       const targetEl = (e.target as HTMLElement) || (document.activeElement as HTMLElement);
-      if (isElementTextInput(targetEl)) {
+      if (isTextInputElement(targetEl)) {
         e.stopPropagation();
       }
     };
 
     const onBodyContextMenu = (e: MouseEvent) => {
       const targetEl = e.target as HTMLElement | null;
-      if (isElementTextInput(targetEl)) {
-        // Allow native browser Right-Click / iOS Long-Press -> Paste menu inside text inputs
+      if (isTextInputElement(targetEl)) {
         e.stopPropagation();
       }
     };
 
     const onBodyDblClick = (e: MouseEvent) => {
       const targetEl = e.target as HTMLElement | null;
-      if (isElementTextInput(targetEl)) {
-        // Allow iOS double-tap text selection / Paste callout inside text inputs
+      if (isTextInputElement(targetEl)) {
         e.stopPropagation();
       }
     };
 
     const onBodyFocusIn = (e: FocusEvent) => {
       const targetEl = e.target as HTMLElement | null;
-      if (isElementTextInput(targetEl)) {
+      if (isTextInputElement(targetEl)) {
         const rootStyle = document.documentElement.style as any;
         rootStyle.webkitUserSelect = 'text';
         rootStyle.userSelect = 'text';
@@ -1742,47 +2179,78 @@ export const App: React.FC = () => {
 
     const onKey = (e: KeyboardEvent) => {
       const activeEl = document.activeElement as HTMLElement | null;
-      if (isElementTextInput(activeEl) && activeEl) {
+      const targetEl = e.target as HTMLElement | null;
+      if (isTextInputElement(activeEl) || isTextInputElement(targetEl)) {
         return;
       }
 
       // If SettingsModal is actively listening to rebind a shortcut key, let it capture the key
-      if (
-        appState === 'settings' &&
-        document.querySelector('[data-tv-modal="true"] button.animate-pulse')
-      ) {
+      if (document.querySelector('[data-listening-shortcut="true"]')) {
         return;
       }
 
-      // Map Arrow keys, Enter/Space, Escape/Backspace, Tab, and Smart TV Remote keys
+      // Check custom match hotkeys first when playing (including Focus Left Side & Focus Right Side)
+      if (appState === 'playing' && !pendingPromotion && !mobileChatOpen) {
+        const k = (e.key === ' ' ? 'space' : e.key).toLowerCase();
+        const focusLeftKey = (settings.shortcuts.focus_left || 'q').toLowerCase();
+        const focusRightKey = (settings.shortcuts.focus_right || 'e').toLowerCase();
+        const flipKey = (settings.shortcuts.flip || 'f').toLowerCase();
+        const pauseKey = (settings.shortcuts.pause || 'p').toLowerCase();
+        const resignKey = (settings.shortcuts.resign || 'r').toLowerCase();
+        const undoKey = (settings.shortcuts.undo || 'u').toLowerCase();
+
+        if (
+          k === 'm' ||
+          k === flipKey ||
+          k === pauseKey ||
+          k === resignKey ||
+          k === undoKey ||
+          k === focusLeftKey ||
+          k === focusRightKey
+        ) {
+          e.preventDefault();
+          e.stopPropagation();
+          if (e.repeat) return;
+          if (k === 'm') dispatchUnifiedAction('chat', 'keyboard');
+          else if (k === flipKey) dispatchUnifiedAction('flip', 'keyboard');
+          else if (k === pauseKey) dispatchUnifiedAction('pause', 'keyboard');
+          else if (k === resignKey) dispatchUnifiedAction('resign', 'keyboard');
+          else if (k === undoKey) dispatchUnifiedAction('undo', 'keyboard');
+          else if (k === focusLeftKey) dispatchUnifiedAction('focus_left', 'keyboard');
+          else if (k === focusRightKey) dispatchUnifiedAction('focus_right', 'keyboard');
+          return;
+        }
+      }
+
+      // Map Arrow keys, Enter/Space, Escape/Return, Channel Up/Down, Play/Pause, and Smart TV Remote keys
       const mapped = mapKeyboardOrTVEvent(e);
       if (mapped) {
         e.preventDefault();
+        e.stopPropagation();
+        const isDirection =
+          mapped === 'up' || mapped === 'down' || mapped === 'left' || mapped === 'right';
+        if (e.repeat && !isDirection) {
+          return;
+        }
         dispatchUnifiedAction(mapped, 'keyboard');
         return;
       }
+    };
 
-      // Single-letter match hotkeys when playing
-      if (appState === 'playing' && !pendingPromotion && !mobileChatOpen) {
-        const k = e.key.toLowerCase();
-        if (k === 'm') {
-          e.preventDefault();
-          dispatchUnifiedAction('chat', 'keyboard');
-          return;
-        }
-        if (k === settings.shortcuts.flip) {
-          e.preventDefault();
-          dispatchUnifiedAction('flip', 'keyboard');
-        } else if (k === settings.shortcuts.pause) {
-          e.preventDefault();
-          dispatchUnifiedAction('pause', 'keyboard');
-        } else if (k === settings.shortcuts.resign) {
-          e.preventDefault();
-          dispatchUnifiedAction('resign', 'keyboard');
-        } else if (k === settings.shortcuts.undo) {
-          e.preventDefault();
-          dispatchUnifiedAction('undo', 'keyboard');
-        }
+    // Prevent native <button> Spacebar/Enter keyup synthesis when outside text inputs
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (document.querySelector('[data-listening-shortcut="true"]')) {
+        return;
+      }
+      const activeEl = document.activeElement as HTMLElement | null;
+      const targetEl = e.target as HTMLElement | null;
+      if (isTextInputElement(activeEl) || isTextInputElement(targetEl)) {
+        return;
+      }
+      const mapped = mapKeyboardOrTVEvent(e);
+      if (mapped) {
+        e.preventDefault();
+        e.stopPropagation();
       }
     };
 
@@ -1791,14 +2259,16 @@ export const App: React.FC = () => {
     document.body.addEventListener('contextmenu', onBodyContextMenu);
     document.body.addEventListener('dblclick', onBodyDblClick);
     document.body.addEventListener('focusin', onBodyFocusIn);
-    window.addEventListener('keydown', onKey);
+    window.addEventListener('keydown', onKey, { capture: true });
+    window.addEventListener('keyup', onKeyUp, { capture: true });
     return () => {
       document.body.removeEventListener('keydown', onBodyKeyDown);
       document.body.removeEventListener('keyup', onBodyKeyUp);
       document.body.removeEventListener('contextmenu', onBodyContextMenu);
       document.body.removeEventListener('dblclick', onBodyDblClick);
       document.body.removeEventListener('focusin', onBodyFocusIn);
-      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('keydown', onKey, { capture: true });
+      window.removeEventListener('keyup', onKeyUp, { capture: true });
     };
   }, [appState, settings.shortcuts, pendingPromotion, mobileChatOpen, dispatchUnifiedAction]);
 
@@ -1835,7 +2305,6 @@ export const App: React.FC = () => {
       if (hasConnectedPad) {
         rafId = requestAnimationFrame(pollGamepads);
       } else {
-        // Sleep for 900ms when no controller is connected so Main Menu & idle screens use 0% CPU
         idleTimeoutId = window.setTimeout(pollGamepads, 900);
       }
     };
@@ -1889,12 +2358,13 @@ export const App: React.FC = () => {
 
           if (justPressed(0)) dispatchRef.current('confirm', 'gamepad'); // A / Cross
           if (justPressed(1)) dispatchRef.current('cancel', 'gamepad'); // B / Circle
-          if (justPressed(2)) dispatchRef.current('zone_switch', 'gamepad'); // X / Square
-          if (justPressed(3)) dispatchRef.current('flip', 'gamepad'); // Y / Triangle
+          if (justPressed(2)) dispatchRef.current('cycle_zone_next', 'gamepad'); // X / Square -> Cycle Focus Zone
+          if (justPressed(3)) dispatchRef.current('flip', 'gamepad'); // Y / Triangle -> Flip Board
           if (justPressed(4)) dispatchRef.current('prev_tab', 'gamepad'); // LB / L1
           if (justPressed(5)) dispatchRef.current('next_tab', 'gamepad'); // RB / R1
           if (justPressed(8)) dispatchRef.current('chat', 'gamepad'); // Select / Back / Share
-          if (justPressed(9)) dispatchRef.current('pause', 'gamepad'); // Start / Options
+          if (justPressed(9)) dispatchRef.current('pause', 'gamepad'); // Start / Options -> Match Menu
+          if (justPressed(16)) dispatchRef.current('mypc_menu', 'gamepad'); // Home / Guide -> MyPC System Menu
 
           prevButtons[idx] = curr;
         }
@@ -1923,7 +2393,7 @@ export const App: React.FC = () => {
 
   const handleCycleFontScale = useCallback(() => {
     soundManager.playSound('select');
-    const cycleLevels = [12, 14, 16, 18, 20, 22];
+    const cycleLevels = [12, 14, 16, 18, 22, 28, 34, 42, 50];
     setSettings((prev) => {
       const current = getNumericFontSize(prev);
       const nextSize = cycleLevels.find((sz) => sz > current) || cycleLevels[0];
@@ -1952,6 +2422,7 @@ export const App: React.FC = () => {
         soundManager.stopSearchPulse();
         const guestName = peer.name || 'Guest Player';
         setRemotePlayerName(guestName);
+        setIsOpponentOnline(true);
         setConnectingOnline(false);
         startNewGame('online', 'w');
 
@@ -2000,6 +2471,7 @@ export const App: React.FC = () => {
         });
 
         peer.onClose(() => {
+          setIsOpponentOnline(false);
           setOnlineSession(null);
         });
 
@@ -2024,6 +2496,7 @@ export const App: React.FC = () => {
       setOnlineSession(host);
       const hostName = host.name || 'Host Player';
       setRemotePlayerName(hostName);
+      setIsOpponentOnline(true);
       setConnectingOnline(false);
       startNewGame('online', 'b');
 
@@ -2075,6 +2548,7 @@ export const App: React.FC = () => {
       });
 
       host.onClose(() => {
+        setIsOpponentOnline(false);
         setOnlineSession(null);
       });
     } catch {
@@ -2085,8 +2559,10 @@ export const App: React.FC = () => {
     }
   };
 
-  // Dynamic root typography scale
+  // Dynamic root typography scale (supports up to 50px)
   const scaleClass = useMemo(() => {
+    if (numericFontSize >= 32) return 'text-xl';
+    if (numericFontSize >= 24) return 'text-lg';
     if (numericFontSize >= 20) return 'text-base';
     if (numericFontSize >= 17) return 'text-sm';
     if (numericFontSize <= 12) return 'text-[11px]';
@@ -2123,6 +2599,12 @@ export const App: React.FC = () => {
     aiElo: gameMode === 'lichess' ? opponentElo : settings.ai_elo,
     opponentClockMs,
     myClockMs,
+    initialClockMs,
+    isMeOnline,
+    isOpponentOnline,
+    streamStatus: lichessStreamStatus,
+    reconnectRetrySec,
+    activeFocusZone: playFocusZone,
     timeControlLabel,
     ratedMatch,
     speedLabel,
@@ -2168,214 +2650,360 @@ export const App: React.FC = () => {
     chatInputRef,
   };
 
+  const menuOffset = hasContinueGameOption ? 1 : 0;
+
   return (
     <div
       className={`relative w-screen h-screen flex flex-col items-center justify-between p-1.5 sm:p-3 bg-[#161512] overflow-hidden select-none ${scaleClass}`}
     >
-      {/* Main Menu State */}
+      {/* Main Menu State — On TV/Widescreen, Ongoing Games are displayed on the Left Side as Small Boards */}
       {appState === 'menu' && (
-        <div className="my-auto flex flex-col items-center justify-center max-w-md w-full text-center">
-          {/* Logo / Header (Optimized for zero idle CPU/GPU repaint lag) */}
-          <div className="flex items-center justify-center gap-3 mb-1">
-            <img
-              src="assets/pieces/nl.svg"
-              alt="Knight"
-              className="w-12 h-12 sm:w-15 sm:h-15"
-            />
-            <h1 className="text-4xl sm:text-5xl font-black tracking-tight text-white">
-              Chess
-            </h1>
-          </div>
-          <p className="text-xs sm:text-sm text-slate-400 font-medium mb-5 sm:mb-6">
-            Grandmaster AI • Lichess Online • Wi-Fi Multiplayer
-          </p>
-
-          {/* Menu Options (Optimized with transition-colors for instant 0-lag TV remote navigation) */}
-          <div className="flex flex-col gap-2.5 w-full">
-            {/* 0: Play vs AI */}
-            <button
-              onClick={() => startNewGame('ai')}
-              onMouseEnter={() => setMenuIndex(0)}
-              className={`flex items-center justify-between p-3.5 rounded-2xl border transition-colors cursor-pointer ${
-                menuIndex === 0
-                  ? 'bg-blue-600 border-blue-400 text-white shadow-lg ring-2 ring-blue-400/50'
-                  : 'bg-slate-900 border-slate-800 text-slate-200 hover:bg-slate-800'
-              }`}
-            >
-              <div className="flex items-center gap-3.5">
-                <div className="p-2 rounded-xl bg-blue-500/20 text-blue-400 border border-blue-400/30">
-                  <Bot size={20} />
+        <div
+          className={`my-auto flex flex-col md:flex-row items-center md:items-stretch justify-center gap-4 sm:gap-6 w-full px-2 ${
+            hasContinueGameOption ? 'max-w-4xl' : 'max-w-md'
+          }`}
+        >
+          {/* LEFT SIDE ON TV / WIDESCREEN: Ongoing Games as Small Boards (Saves vertical space) */}
+          {hasContinueGameOption && (
+            <div className="w-full md:w-[360px] shrink-0 bg-slate-900/95 border border-emerald-500/40 rounded-2xl p-3.5 flex flex-col justify-between gap-2.5 text-left">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <span className="w-2.5 h-2.5 rounded-full bg-[#629924] animate-pulse" />
+                  <span className="text-xs sm:text-sm font-black uppercase tracking-wider text-emerald-300">
+                    Ongoing Games ({ongoingLichessGames.length + (savedLocalMatch ? 1 : 0)})
+                  </span>
                 </div>
-                <div className="text-left">
-                  <div className="font-bold text-sm sm:text-base">Play vs AI</div>
-                  <div className="text-[11px] text-slate-300">
-                    Stockfish Engine (Elo {settings.ai_elo})
-                  </div>
-                </div>
+                <span className="text-[10px] font-bold text-slate-400">Click Board to Resume</span>
               </div>
-              <ChevronRight size={18} className="text-slate-300" />
-            </button>
 
-            {/* 1: Lichess (High-Contrast White Button as requested) */}
-            <button
-              onClick={() => {
-                soundManager.playSound('click');
-                setAppState('lichess_hub');
-              }}
-              onMouseEnter={() => setMenuIndex(1)}
-              className={`flex items-center justify-between p-3.5 rounded-2xl border transition-colors cursor-pointer ${
-                menuIndex === 1
-                  ? 'bg-white border-amber-400 text-slate-950 shadow-lg ring-4 ring-amber-400/60'
-                  : 'bg-white/95 border-white text-slate-950 hover:bg-white'
-              }`}
-            >
-              <div className="flex items-center gap-3.5">
-                <div className="p-2 rounded-xl bg-slate-950 text-white flex items-center justify-center font-black text-base w-9 h-9">
-                  ♞
-                </div>
-                <div className="text-left">
-                  <div className="font-black text-sm sm:text-base text-slate-950 flex items-center gap-2">
-                    Lichess
-                    <span className="px-1.5 py-0.5 rounded bg-slate-900 text-white text-[9px] font-extrabold uppercase">
-                      {lichessUsername ? lichessUsername : 'Online API'}
-                    </span>
-                  </div>
-                  <div className="text-[11px] text-slate-700 font-medium">
-                    Rated Matchmaking Grid • Puzzles • Old Games & Stats
-                  </div>
-                </div>
+              <div className="space-y-2 max-h-[60vh] overflow-y-auto pr-0.5">
+                {ongoingLichessGames.map((g, idx) => (
+                  <button
+                    key={g.gameId}
+                    type="button"
+                    onClick={() => {
+                      soundManager.playSound('game_start');
+                      handleStartLiveLichessGame(
+                        g.gameId,
+                        lichessUsername || lichessService.getUsername() || 'Me'
+                      );
+                    }}
+                    onMouseEnter={() => {
+                      if (idx === 0) setMenuIndex(0);
+                    }}
+                    className={`w-full flex items-center gap-3 p-2.5 rounded-2xl border transition-colors text-left cursor-pointer ${
+                      idx === 0 && menuIndex === 0
+                        ? 'bg-emerald-900/80 border-emerald-300 ring-2 ring-emerald-400/60 shadow-lg'
+                        : 'bg-slate-950/90 hover:bg-slate-950 border-emerald-500/50 hover:border-emerald-400'
+                    }`}
+                  >
+                    <MiniBoardPreview
+                      fen={g.fen}
+                      myColor={g.myColor}
+                      lastMoveUci={g.lastMove}
+                      sizeClass="w-20 h-20 sm:w-24 sm:h-24"
+                    />
+                    <div className="min-w-0 flex-1 flex flex-col justify-between">
+                      <div>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="px-1.5 py-0.5 rounded bg-emerald-400 text-slate-950 text-[9px] font-black uppercase">
+                            Lichess Live
+                          </span>
+                          <span className="text-[10px] font-bold text-emerald-300 uppercase">
+                            {g.speed}
+                          </span>
+                        </div>
+                        <div className="font-extrabold text-sm text-white truncate mt-1">
+                          vs {g.opponentName}
+                          {g.opponentRating ? ` (${g.opponentRating})` : ''}
+                        </div>
+                        <div className="text-[11px] text-slate-300 mt-0.5">
+                          Playing as {g.myColor === 'w' ? 'White' : 'Black'}
+                          {g.secondsLeft !== undefined
+                            ? ` • ${Math.floor(g.secondsLeft / 60)}:${String(
+                                g.secondsLeft % 60
+                              ).padStart(2, '0')}`
+                            : ''}
+                        </div>
+                      </div>
+                      <div className="mt-2 flex items-center justify-between gap-2">
+                        <span
+                          className={`text-[10px] font-bold ${
+                            g.isMyTurn ? 'text-emerald-400' : 'text-slate-400'
+                          }`}
+                        >
+                          {g.isMyTurn ? '● Your turn' : 'Waiting...'}
+                        </span>
+                        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-400 text-slate-950 font-black text-[11px]">
+                          <Play size={11} className="fill-current" />
+                          Resume
+                        </span>
+                      </div>
+                    </div>
+                  </button>
+                ))}
+
+                {savedLocalMatch && ongoingLichessGames.length === 0 && (
+                  <button
+                    type="button"
+                    onClick={handleContinueOngoingGame}
+                    onMouseEnter={() => setMenuIndex(0)}
+                    className={`w-full flex items-center gap-3 p-2.5 rounded-2xl border transition-colors text-left cursor-pointer ${
+                      menuIndex === 0
+                        ? 'bg-emerald-900/80 border-emerald-300 ring-2 ring-emerald-400/60 shadow-lg'
+                        : 'bg-slate-950/90 hover:bg-slate-950 border-emerald-500/50 hover:border-emerald-400'
+                    }`}
+                  >
+                    <MiniBoardPreview
+                      fen={savedLocalMatch.fen}
+                      myColor={savedLocalMatch.playerColor}
+                      lastMoveUci={
+                        savedLocalMatch.moves.length > 0
+                          ? `${savedLocalMatch.moves[savedLocalMatch.moves.length - 1].from}${
+                              savedLocalMatch.moves[savedLocalMatch.moves.length - 1].to
+                            }`
+                          : undefined
+                      }
+                      sizeClass="w-20 h-20 sm:w-24 sm:h-24"
+                    />
+                    <div className="min-w-0 flex-1 flex flex-col justify-between">
+                      <div>
+                        <span className="px-1.5 py-0.5 rounded bg-sky-400 text-slate-950 text-[9px] font-black uppercase">
+                          Active Match
+                        </span>
+                        <div className="font-extrabold text-sm text-white truncate mt-1">
+                          {savedLocalMatch.gameMode === 'ai'
+                            ? `vs Stockfish AI (${savedLocalMatch.opponentElo})`
+                            : `vs ${savedLocalMatch.opponentName}`}
+                        </div>
+                        <div className="text-[11px] text-slate-300 mt-0.5">
+                          {savedLocalMatch.timeControlLabel || '10+0'} • {savedLocalMatch.moves.length}{' '}
+                          moves
+                        </div>
+                      </div>
+                      <div className="mt-2 flex items-center justify-between gap-2">
+                        <span className="text-[10px] font-bold text-sky-400">Saved State</span>
+                        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-400 text-slate-950 font-black text-[11px]">
+                          <Play size={11} className="fill-current" />
+                          Continue
+                        </span>
+                      </div>
+                    </div>
+                  </button>
+                )}
               </div>
-              <ChevronRight size={18} className="text-slate-800" />
-            </button>
+            </div>
+          )}
 
-            {/* 2: Couch Play */}
-            <button
-              onClick={() => startNewGame('local')}
-              onMouseEnter={() => setMenuIndex(2)}
-              className={`flex items-center justify-between p-3.5 rounded-2xl border transition-colors cursor-pointer ${
-                menuIndex === 2
-                  ? 'bg-blue-600 border-blue-400 text-white shadow-lg ring-2 ring-blue-400/50'
-                  : 'bg-slate-900 border-slate-800 text-slate-200 hover:bg-slate-800'
-              }`}
-            >
-              <div className="flex items-center gap-3.5">
-                <div className="p-2 rounded-xl bg-indigo-500/20 text-indigo-400 border border-indigo-400/30">
-                  <Users size={20} />
-                </div>
-                <div className="text-left">
-                  <div className="font-bold text-sm sm:text-base">Couch Play</div>
-                  <div className="text-[11px] text-slate-300">
-                    Local pass-and-play for 2 players
+          {/* RIGHT SIDE (OR CENTER WHEN NO ONGOING GAMES): Main Menu Navigation */}
+          <div className="flex flex-col items-center justify-center max-w-md w-full text-center">
+            {/* Logo / Header */}
+            <div className="flex items-center justify-center gap-3 mb-1">
+              <img
+                src="assets/pieces/nl.svg"
+                alt="Knight"
+                className="w-11 h-11 sm:w-13 sm:h-13"
+              />
+              <h1 className="text-3xl sm:text-4xl font-black tracking-tight text-white">
+                Chess
+              </h1>
+            </div>
+            <p className="text-xs text-slate-400 font-medium mb-3">
+              Grandmaster AI • Lichess Online • Wi-Fi Multiplayer
+            </p>
+
+            {/* Menu Options */}
+            <div className="flex flex-col gap-2 w-full">
+              {/* Play vs AI */}
+              <button
+                onClick={() => startNewGame('ai')}
+                onMouseEnter={() => setMenuIndex(0 + menuOffset)}
+                className={`flex items-center justify-between p-3 rounded-2xl border transition-colors cursor-pointer ${
+                  menuIndex === 0 + menuOffset
+                    ? 'bg-blue-600 border-blue-400 text-white shadow-lg ring-2 ring-blue-400/50'
+                    : 'bg-slate-900 border-slate-800 text-slate-200 hover:bg-slate-800'
+                }`}
+              >
+                <div className="flex items-center gap-3.5">
+                  <div className="p-2 rounded-xl bg-blue-500/20 text-blue-400 border border-blue-400/30">
+                    <Bot size={20} />
+                  </div>
+                  <div className="text-left">
+                    <div className="font-bold text-sm sm:text-base">Play vs AI</div>
+                    <div className="text-[11px] text-slate-300">
+                      Stockfish Engine (Elo {settings.ai_elo})
+                    </div>
                   </div>
                 </div>
-              </div>
-              <ChevronRight size={18} className="text-slate-300" />
-            </button>
+                <ChevronRight size={18} className="text-slate-300" />
+              </button>
 
-            {/* 3: Online Multiplayer (Local Wi-Fi) */}
-            <button
-              onClick={() => {
-                soundManager.playSound('click');
-                setAppState('multiplayer_menu');
-              }}
-              onMouseEnter={() => setMenuIndex(3)}
-              className={`flex items-center justify-between p-3.5 rounded-2xl border transition-colors cursor-pointer ${
-                menuIndex === 3
-                  ? 'bg-blue-600 border-blue-400 text-white shadow-lg ring-2 ring-blue-400/50'
-                  : 'bg-slate-900 border-slate-800 text-slate-200 hover:bg-slate-800'
-              }`}
-            >
-              <div className="flex items-center gap-3.5">
-                <div className="p-2 rounded-xl bg-cyan-500/20 text-cyan-400 border border-cyan-400/30">
-                  <Wifi size={20} />
-                </div>
-                <div className="text-left">
-                  <div className="font-bold text-sm sm:text-base">Online Multiplayer</div>
-                  <div className="text-[11px] text-slate-300">
-                    MyPC local Wi-Fi peer matching
+              {/* Lichess (High-Contrast White Button) */}
+              <button
+                onClick={() => {
+                  soundManager.playSound('click');
+                  setAppState('lichess_hub');
+                }}
+                onMouseEnter={() => setMenuIndex(1 + menuOffset)}
+                className={`flex items-center justify-between p-3 rounded-2xl border transition-colors cursor-pointer ${
+                  menuIndex === 1 + menuOffset
+                    ? 'bg-white border-amber-400 text-slate-950 shadow-lg ring-4 ring-amber-400/60'
+                    : 'bg-white/95 border-white text-slate-950 hover:bg-white'
+                }`}
+              >
+                <div className="flex items-center gap-3.5">
+                  <div className="p-2 rounded-xl bg-slate-950 text-white flex items-center justify-center font-black text-base w-9 h-9">
+                    ♞
                   </div>
-                </div>
-              </div>
-              <ChevronRight size={18} className="text-slate-300" />
-            </button>
-
-            {/* 4: Game History & Analysis Lab */}
-            <button
-              onClick={() => {
-                soundManager.playSound('click');
-                setAppState('history');
-              }}
-              onMouseEnter={() => setMenuIndex(4)}
-              className={`flex items-center justify-between p-3.5 rounded-2xl border transition-colors cursor-pointer ${
-                menuIndex === 4
-                  ? 'bg-blue-600 border-blue-400 text-white shadow-lg ring-2 ring-blue-400/50'
-                  : 'bg-slate-900 border-slate-800 text-slate-200 hover:bg-slate-800'
-              }`}
-            >
-              <div className="flex items-center gap-3.5">
-                <div className="p-2 rounded-xl bg-amber-500/20 text-amber-400 border border-amber-400/30">
-                  <History size={20} />
-                </div>
-                <div className="text-left">
-                  <div className="font-bold text-sm sm:text-base flex items-center gap-2">
-                    Game History & Analysis
-                    {savedGames.length > 0 && (
-                      <span className="px-1.5 py-0.2 rounded-full bg-amber-500/20 text-amber-300 text-[10px] font-mono">
-                        {savedGames.length}
+                  <div className="text-left">
+                    <div className="font-black text-sm sm:text-base text-slate-950 flex items-center gap-2">
+                      Lichess
+                      <span className="px-1.5 py-0.5 rounded bg-slate-900 text-white text-[9px] font-extrabold uppercase">
+                        {lichessUsername ? lichessUsername : 'Online API'}
                       </span>
-                    )}
-                  </div>
-                  <div className="text-[11px] text-slate-300">
-                    Saved games, PGN text import & instant test samples
+                    </div>
+                    <div className="text-[11px] text-slate-700 font-medium">
+                      Rated Matchmaking Grid • Ongoing Games • Puzzles • Stats
+                    </div>
                   </div>
                 </div>
-              </div>
-              <ChevronRight size={18} className="text-slate-300" />
-            </button>
+                <ChevronRight size={18} className="text-slate-800" />
+              </button>
 
-            {/* 5: Settings */}
-            <button
-              onClick={() => openSettings('menu')}
-              onMouseEnter={() => setMenuIndex(5)}
-              className={`flex items-center justify-between p-3.5 rounded-2xl border transition-colors cursor-pointer ${
-                menuIndex === 5
-                  ? 'bg-blue-600 border-blue-400 text-white shadow-lg ring-2 ring-blue-400/50'
-                  : 'bg-slate-900 border-slate-800 text-slate-200 hover:bg-slate-800'
-              }`}
-            >
-              <div className="flex items-center gap-3.5">
-                <div className="p-2 rounded-xl bg-slate-700/40 text-slate-300 border border-slate-600/40">
-                  <Sliders size={20} />
-                </div>
-                <div className="text-left">
-                  <div className="font-bold text-sm sm:text-base">Settings</div>
-                  <div className="text-[11px] text-slate-300">
-                    Display, text size, audio packs, performance & AI
+              {/* Couch Play */}
+              <button
+                onClick={() => startNewGame('local')}
+                onMouseEnter={() => setMenuIndex(2 + menuOffset)}
+                className={`flex items-center justify-between p-3 rounded-2xl border transition-colors cursor-pointer ${
+                  menuIndex === 2 + menuOffset
+                    ? 'bg-blue-600 border-blue-400 text-white shadow-lg ring-2 ring-blue-400/50'
+                    : 'bg-slate-900 border-slate-800 text-slate-200 hover:bg-slate-800'
+                }`}
+              >
+                <div className="flex items-center gap-3.5">
+                  <div className="p-2 rounded-xl bg-indigo-500/20 text-indigo-400 border border-indigo-400/30">
+                    <Users size={20} />
+                  </div>
+                  <div className="text-left">
+                    <div className="font-bold text-sm sm:text-base">Couch Play</div>
+                    <div className="text-[11px] text-slate-300">
+                      Local pass-and-play for 2 players
+                    </div>
                   </div>
                 </div>
-              </div>
-              <ChevronRight size={18} className="text-slate-300" />
-            </button>
-          </div>
+                <ChevronRight size={18} className="text-slate-300" />
+              </button>
 
-          {/* Profile & Quick Text Size footer info */}
-          <div className="mt-5 flex flex-wrap items-center justify-center gap-3 text-xs font-medium text-slate-400">
-            <span>
-              Profile: <strong className="text-slate-200">{profileName}</strong>
-            </span>
-            <span>•</span>
-            <span>
-              Rating: <strong className="text-blue-400 font-mono">Elo {myElo}</strong>
-            </span>
-            <span>•</span>
-            <button
-              type="button"
-              onClick={handleCycleFontScale}
-              className="px-2 py-0.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-[11px] font-bold transition-colors cursor-pointer"
-              title="Click to cycle Text Size"
-            >
-              Text: {numericFontSize}px
-            </button>
+              {/* Online Multiplayer (Local Wi-Fi) */}
+              <button
+                onClick={() => {
+                  soundManager.playSound('click');
+                  setAppState('multiplayer_menu');
+                }}
+                onMouseEnter={() => setMenuIndex(3 + menuOffset)}
+                className={`flex items-center justify-between p-3 rounded-2xl border transition-colors cursor-pointer ${
+                  menuIndex === 3 + menuOffset
+                    ? 'bg-blue-600 border-blue-400 text-white shadow-lg ring-2 ring-blue-400/50'
+                    : 'bg-slate-900 border-slate-800 text-slate-200 hover:bg-slate-800'
+                }`}
+              >
+                <div className="flex items-center gap-3.5">
+                  <div className="p-2 rounded-xl bg-cyan-500/20 text-cyan-400 border border-cyan-400/30">
+                    <Wifi size={20} />
+                  </div>
+                  <div className="text-left">
+                    <div className="font-bold text-sm sm:text-base">Online Multiplayer</div>
+                    <div className="text-[11px] text-slate-300">
+                      MyPC local Wi-Fi peer matching
+                    </div>
+                  </div>
+                </div>
+                <ChevronRight size={18} className="text-slate-300" />
+              </button>
+
+              {/* Game History & Analysis Lab */}
+              <button
+                onClick={() => {
+                  soundManager.playSound('click');
+                  setAppState('history');
+                }}
+                onMouseEnter={() => setMenuIndex(4 + menuOffset)}
+                className={`flex items-center justify-between p-3 rounded-2xl border transition-colors cursor-pointer ${
+                  menuIndex === 4 + menuOffset
+                    ? 'bg-blue-600 border-blue-400 text-white shadow-lg ring-2 ring-blue-400/50'
+                    : 'bg-slate-900 border-slate-800 text-slate-200 hover:bg-slate-800'
+                }`}
+              >
+                <div className="flex items-center gap-3.5">
+                  <div className="p-2 rounded-xl bg-amber-500/20 text-amber-400 border border-amber-400/30">
+                    <History size={20} />
+                  </div>
+                  <div className="text-left">
+                    <div className="font-bold text-sm sm:text-base flex items-center gap-2">
+                      Game History & Analysis
+                      {savedGames.length > 0 && (
+                        <span className="px-1.5 py-0.2 rounded-full bg-amber-500/20 text-amber-300 text-[10px] font-mono">
+                          {savedGames.length}
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-[11px] text-slate-300">
+                      Saved games, PGN text import & instant test samples
+                    </div>
+                  </div>
+                </div>
+                <ChevronRight size={18} className="text-slate-300" />
+              </button>
+
+              {/* Settings */}
+              <button
+                onClick={() => openSettings('menu')}
+                onMouseEnter={() => setMenuIndex(5 + menuOffset)}
+                className={`flex items-center justify-between p-3 rounded-2xl border transition-colors cursor-pointer ${
+                  menuIndex === 5 + menuOffset
+                    ? 'bg-blue-600 border-blue-400 text-white shadow-lg ring-2 ring-blue-400/50'
+                    : 'bg-slate-900 border-slate-800 text-slate-200 hover:bg-slate-800'
+                }`}
+              >
+                <div className="flex items-center gap-3.5">
+                  <div className="p-2 rounded-xl bg-slate-700/40 text-slate-300 border border-slate-600/40">
+                    <Sliders size={20} />
+                  </div>
+                  <div className="text-left">
+                    <div className="font-bold text-sm sm:text-base">Settings</div>
+                    <div className="text-[11px] text-slate-300">
+                      Display, text size (up to 50px), Lichess mode & AI
+                    </div>
+                  </div>
+                </div>
+                <ChevronRight size={18} className="text-slate-300" />
+              </button>
+            </div>
+
+            {/* Profile & Quick Text Size footer info */}
+            <div className="mt-3.5 flex flex-wrap items-center justify-center gap-3 text-xs font-medium text-slate-400">
+              <span className="flex items-center gap-1.5">
+                <span
+                  className={`w-2.5 h-2.5 rounded-full ${
+                    isMeOnline ? 'bg-[#629924] shadow-[0_0_6px_#629924]' : 'bg-red-500'
+                  }`}
+                />
+                Profile: <strong className="text-slate-200">{profileName}</strong>
+              </span>
+              <span>•</span>
+              <span>
+                Rating: <strong className="text-blue-400 font-mono">Elo {myElo}</strong>
+              </span>
+              <span>•</span>
+              <button
+                type="button"
+                onClick={handleCycleFontScale}
+                className="px-2 py-0.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-[11px] font-bold transition-colors cursor-pointer"
+                title="Click to cycle Text Size (up to 50px)"
+              >
+                Text: {numericFontSize}px
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -2423,9 +3051,9 @@ export const App: React.FC = () => {
             />
           </div>
         ) : (
-          <div className="w-full h-full max-w-[1720px] mx-auto grid grid-cols-[290px_auto_310px] xl:grid-cols-[330px_auto_350px] items-center justify-center gap-3 xl:gap-5 px-3 overflow-hidden">
-            {/* LEFT COLUMN: Match Details Card + Live Chat Room & Notes */}
-            <div className="flex flex-col h-full max-h-[90vh] py-1">
+          <div className="w-full h-full max-w-[1920px] mx-auto grid grid-cols-[minmax(280px,1fr)_auto_minmax(320px,380px)] xl:grid-cols-[minmax(340px,1fr)_auto_minmax(350px,410px)] items-center justify-center gap-3 xl:gap-5 px-3 overflow-hidden">
+            {/* LEFT COLUMN: Expanded to fill remaining widescreen width for Match Details + Chat Room & Notes */}
+            <div className="flex flex-col w-full h-full max-h-[90vh] py-1">
               <LeftArenaPanel {...sharedArenaProps} />
             </div>
 
@@ -2453,7 +3081,7 @@ export const App: React.FC = () => {
               </div>
             </div>
 
-            {/* RIGHT COLUMN: Digital Clocks, Opponent/Player Info, 2-Column Move History & Action Controls */}
+            {/* RIGHT COLUMN: Digital Clocks with Progress Bar, Opponent/Player Info, 2-Column Move History & Action Controls */}
             <div className="flex flex-col justify-center w-full h-full max-h-[90vh] py-1">
               <RightArenaPanel {...sharedArenaProps} />
             </div>
@@ -2469,7 +3097,7 @@ export const App: React.FC = () => {
         />
       )}
 
-      {/* Paused / Plus (+) Match Menu Modal */}
+      {/* Paused / Play-Pause Match Menu Modal */}
       {appState === 'paused' && (
         <PauseModal
           moves={gameHistory}
@@ -2522,7 +3150,7 @@ export const App: React.FC = () => {
         />
       )}
 
-      {/* Analysis Modal (Includes the dominant EvaluationBar on the left of the analysis board!) */}
+      {/* Analysis Modal */}
       {(appState === 'analysis_stats' ||
         appState === 'analysis_view' ||
         appState === 'analysis_learn') && (
@@ -2576,9 +3204,13 @@ export const App: React.FC = () => {
       {appState === 'lichess_hub' && (
         <LichessModal
           settings={settings}
+          savedLocalMatch={savedLocalMatch}
+          onResumeSavedLocalMatch={handleContinueOngoingGame}
+          onStartTimedLocalAIMatch={(mins, inc) => startNewGame('ai', 'w', mins, inc)}
           onStartLiveLichessGame={handleStartLiveLichessGame}
           onAnalyzeLichessGame={(moves, color) => startAnalysisForMoves(moves, 'lichess_hub', color)}
           onUsernameChange={(uname) => setLichessUsername(uname)}
+          onOpenSettings={() => openSettings('lichess_hub', 'ai')}
           onClose={() => {
             soundManager.playSound('click');
             setAppState('menu');
@@ -2591,6 +3223,7 @@ export const App: React.FC = () => {
         <SettingsModal
           settings={settings}
           isIngame={settingsReturnState === 'playing' || settingsReturnState === 'paused'}
+          initialTab={settingsInitialTab}
           onSave={handleSaveSettings}
           onClose={() => {
             soundManager.playSound('click');

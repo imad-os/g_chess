@@ -3,15 +3,20 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Chess, Square, PieceSymbol } from 'chess.js';
 import {
   GameSettings,
+  LichessOpponentType,
   LichessUserStats,
   LichessGameRecord,
   LichessPuzzle,
+  OngoingLichessGame,
+  ActiveMatchSnapshot,
   MoveRecord,
 } from '../types/chess';
 import { lichessService, sanitizeLichessToken } from '../services/lichess';
 import { myPCService } from '../services/mypc';
 import { soundManager } from '../services/sound';
 import { ChessBoard } from './ChessBoard';
+import { MiniBoardPreview } from './MiniBoardPreview';
+import { ensureSpatialFocus } from '../services/spatialInput';
 import {
   Globe,
   Key,
@@ -28,15 +33,20 @@ import {
   X,
   RefreshCw,
   Sliders,
-  ShieldCheck,
   Trash2,
+  ArrowLeft,
+  Play,
 } from 'lucide-react';
 
 interface LichessModalProps {
   settings: GameSettings;
+  savedLocalMatch?: ActiveMatchSnapshot | null;
+  onResumeSavedLocalMatch?: () => void;
+  onStartTimedLocalAIMatch?: (minutes: number, increment: number) => void;
   onStartLiveLichessGame: (gameId: string, myUsername: string) => void;
   onAnalyzeLichessGame: (moves: MoveRecord[], myColor: 'w' | 'b') => void;
   onUsernameChange?: (username: string) => void;
+  onOpenSettings?: () => void;
   onClose: () => void;
 }
 
@@ -60,17 +70,26 @@ const LICHESS_GRID_PRESETS: TimePreset[] = [
   { label: '15+10', sub: 'Rapid', minutes: 15, increment: 10 },
   { label: '30+0', sub: 'Classical', minutes: 30, increment: 0 },
   { label: '30+20', sub: 'Classical', minutes: 30, increment: 20 },
-  { label: 'Custom', sub: 'Any / AI', minutes: 10, increment: 0, isCustom: true },
+  { label: 'Custom', sub: 'Any / 5+5', minutes: 10, increment: 0, isCustom: true },
 ];
 
 export const LichessModal: React.FC<LichessModalProps> = ({
   settings,
+  savedLocalMatch,
+  onResumeSavedLocalMatch,
+  onStartTimedLocalAIMatch,
   onStartLiveLichessGame,
   onAnalyzeLichessGame,
   onUsernameChange,
+  onOpenSettings,
   onClose,
 }) => {
   const [activeTab, setActiveTab] = useState<'play' | 'puzzles' | 'games' | 'stats'>('play');
+
+  // Read Lichess matchmaking preferences from Settings (defaults: Human + Rated)
+  const selectedOpponentType: LichessOpponentType = settings.lichess_opponent_type || 'human';
+  const isRated: boolean = settings.lichess_rated !== false;
+  const configuredAiLevel: number = settings.lichess_ai_level || 4;
 
   // Token & Account state
   const tokenInputRef = useRef<HTMLInputElement | null>(null);
@@ -81,24 +100,37 @@ export const LichessModal: React.FC<LichessModalProps> = ({
   const [loadingAccount, setLoadingAccount] = useState<boolean>(false);
   const [authError, setAuthError] = useState<string | null>(null);
 
+  // Ongoing games state (Continue already started game from phone/TV/web)
+  const [ongoingGames, setOngoingGames] = useState<OngoingLichessGame[]>([]);
+  const [loadingOngoing, setLoadingOngoing] = useState<boolean>(false);
+
   // Matchmaking state
-  const [isRated, setIsRated] = useState<boolean>(true);
   const [seeking, setSeeking] = useState<boolean>(false);
   const [seekStatus, setSeekStatus] = useState<string>('');
   const [seekError, setSeekError] = useState<string | null>(null);
-  const [lastAttemptedPreset, setLastAttemptedPreset] = useState<TimePreset | null>(null);
 
   // Custom modal / drawer inside Play tab
   const [showCustomBuilder, setShowCustomBuilder] = useState<boolean>(false);
   const [customMinutes, setCustomMinutes] = useState<number>(10);
   const [customIncrement, setCustomIncrement] = useState<number>(0);
-  const [customOpponent, setCustomOpponent] = useState<'human' | 'ai'>('human');
-  const [customAiLevel, setCustomAiLevel] = useState<number>(4);
+  const [customOpponent, setCustomOpponent] = useState<'human' | 'ai'>(
+    selectedOpponentType === 'lichess_ai' ? 'ai' : 'human'
+  );
+  const [customAiLevel, setCustomAiLevel] = useState<number>(configuredAiLevel);
 
-  // Old Games state
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      const modal = document.querySelector<HTMLElement>('[data-tv-modal="true"]');
+      if (modal) ensureSpatialFocus(modal);
+    }, 25);
+    return () => clearTimeout(timer);
+  }, [activeTab, showTokenDrawer, showCustomBuilder]);
+
+  // Old Games state (lazy-loaded only when opening Games or Stats tab to prevent PGN parsing lag!)
   const [gamesList, setGamesList] = useState<LichessGameRecord[]>([]);
   const [loadingGames, setLoadingGames] = useState<boolean>(false);
   const [gamesError, setGamesError] = useState<string | null>(null);
+  const loadedGamesForUserRef = useRef<string>('');
 
   // Puzzles state
   const [puzzle, setPuzzle] = useState<LichessPuzzle | null>(null);
@@ -114,7 +146,24 @@ export const LichessModal: React.FC<LichessModalProps> = ({
     myPCService.load('lichess_puzzle_stats', { streak: 0, bestStreak: 0, solved: 0 })
   );
 
-  // Connect with Personal API Token or load public user
+  const refreshOngoingGames = useCallback(async (tok?: string) => {
+    const activeToken = sanitizeLichessToken(tok !== undefined ? tok : lichessService.getToken());
+    if (!activeToken) {
+      setOngoingGames([]);
+      return;
+    }
+    setLoadingOngoing(true);
+    try {
+      const playing = await lichessService.fetchOngoingGames(activeToken);
+      setOngoingGames(playing);
+    } catch {
+      setOngoingGames([]);
+    } finally {
+      setLoadingOngoing(false);
+    }
+  }, []);
+
+  // Fast initial account & ongoing games load (skips heavy PGN parsing until Games/Stats tab is opened)
   const loadAccountAndGames = useCallback(async (tok?: string) => {
     const activeToken = sanitizeLichessToken(tok !== undefined ? tok : lichessService.getToken());
     if (!activeToken) return;
@@ -122,25 +171,56 @@ export const LichessModal: React.FC<LichessModalProps> = ({
     setLoadingAccount(true);
     setAuthError(null);
     try {
-      const acc = await lichessService.fetchAccount(activeToken);
+      const [acc, playing] = await Promise.all([
+        lichessService.fetchAccount(activeToken),
+        lichessService.fetchOngoingGames(activeToken),
+      ]);
       setAccount(acc);
       setLookupUsername(acc.username);
       onUsernameChange?.(acc.username);
       setShowTokenDrawer(false);
-
-      // Also prefetch recent games for streaks & history
-      setLoadingGames(true);
-      const recent = await lichessService.fetchUserGames(acc.username, 20);
-      setGamesList(recent);
+      setOngoingGames(playing);
     } catch (err: any) {
       setAccount(null);
       setShowTokenDrawer(true);
       setAuthError(err?.message || 'Could not authenticate with Lichess.');
     } finally {
       setLoadingAccount(false);
-      setLoadingGames(false);
     }
   }, [onUsernameChange]);
+
+  // Lazy-load recent PGN games only when user opens 'games' or 'stats' tab
+  useEffect(() => {
+    if (activeTab !== 'games' && activeTab !== 'stats') return;
+    const targetUser = (account?.username || lookupUsername || '').trim();
+    if (!targetUser || loadedGamesForUserRef.current === targetUser.toLowerCase()) return;
+
+    let cancelled = false;
+    setLoadingGames(true);
+    setGamesError(null);
+    lichessService
+      .fetchUserGames(targetUser, 15)
+      .then((recent) => {
+        if (!cancelled) {
+          loadedGamesForUserRef.current = targetUser.toLowerCase();
+          setGamesList(recent);
+        }
+      })
+      .catch((err: any) => {
+        if (!cancelled) {
+          setGamesError(err?.message || 'Could not load Lichess games.');
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setLoadingGames(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTab, account?.username, lookupUsername]);
 
   useEffect(() => {
     // Restore iOS Safari native text selection and touch callout ("Paste" bubble) while Lichess modal is open
@@ -221,48 +301,22 @@ export const LichessModal: React.FC<LichessModalProps> = ({
     }
   }, [activeTab, puzzle, loadingPuzzle, loadNewPuzzle]);
 
-  // Handle clicking a tile on the 12-tile matchmaking grid
-  const handleSelectTimePreset = async (preset: TimePreset) => {
-    soundManager.playSound('click');
-    setSeekError(null);
-
-    if (preset.isCustom) {
-      setShowCustomBuilder(true);
-      return;
-    }
-
-    if (!lichessService.getToken()) {
-      setShowTokenDrawer(true);
-      setSeekError('Please enter your Lichess Personal API Token above to play online matches.');
-      return;
-    }
-
-    setLastAttemptedPreset(preset);
-    setSeeking(true);
-    try {
-      const gameId = await lichessService.seekHumanMatch(
-        preset.minutes,
-        preset.increment,
-        isRated,
-        (status) => setSeekStatus(status)
-      );
-      setSeeking(false);
-      onStartLiveLichessGame(gameId, account?.username || 'Me');
-    } catch (err: any) {
-      setSeeking(false);
-      const msg =
-        err?.message ||
-        'Could not pair this time control via Board API. Try 10+0 Rapid or Lichess AI.';
-      setSeekError(msg);
-      if (msg.includes('401') || msg.toLowerCase().includes('token')) {
-        setAccount(null);
-        setShowTokenDrawer(true);
-        setAuthError(msg);
+  // Check if a time preset is valid for the currently selected opponent type in Settings
+  const isPresetValidForSelectedType = useCallback(
+    (preset: TimePreset, type: LichessOpponentType = selectedOpponentType): boolean => {
+      if (preset.isCustom) return true;
+      if (type === 'local_ai') return true;
+      if (type === 'lichess_ai') {
+        // Lichess Cloud AI Board stream supports Blitz, Rapid & Classical (>= 3 min)
+        return preset.minutes >= 3;
       }
-    }
-  };
+      // Human matchmaking (/api/board/seek) supports Rapid & Classical (>= 480s estimated duration)
+      return lichessService.isBoardHumanSeekSupported(preset.minutes, preset.increment);
+    },
+    [selectedOpponentType]
+  );
 
-  // Start a game vs Lichess Cloud AI (supports any time control including 1+0, 3+0, etc.)
+  // Start a game vs Lichess Cloud AI (supports Blitz & Rapid time controls including 3+0, 3+2, 5+0, 5+3, 10+0, etc.)
   const handleStartLichessAI = async (minutes: number, increment: number, level: number) => {
     soundManager.playSound('click');
     setSeekError(null);
@@ -280,6 +334,61 @@ export const LichessModal: React.FC<LichessModalProps> = ({
     } catch (err: any) {
       setSeeking(false);
       const msg = err?.message || 'Failed to create Lichess AI match.';
+      setSeekError(msg);
+      if (msg.includes('401') || msg.toLowerCase().includes('token')) {
+        setAccount(null);
+        setShowTokenDrawer(true);
+        setAuthError(msg);
+      }
+    }
+  };
+
+  // Handle clicking a tile on the 12-tile matchmaking grid
+  const handleSelectTimePreset = async (preset: TimePreset) => {
+    soundManager.playSound('click');
+    setSeekError(null);
+
+    if (preset.isCustom) {
+      setShowCustomBuilder(true);
+      return;
+    }
+
+    if (!isPresetValidForSelectedType(preset, selectedOpponentType)) {
+      return;
+    }
+
+    // 1. Built-in Stockfish AI mode
+    if (selectedOpponentType === 'local_ai' && onStartTimedLocalAIMatch) {
+      onStartTimedLocalAIMatch(preset.minutes, preset.increment);
+      return;
+    }
+
+    if (!lichessService.getToken()) {
+      setShowTokenDrawer(true);
+      setSeekError('Please enter your Lichess Personal API Token above to play online matches.');
+      return;
+    }
+
+    // 2. Lichess Cloud AI mode
+    if (selectedOpponentType === 'lichess_ai') {
+      await handleStartLichessAI(preset.minutes, preset.increment, configuredAiLevel);
+      return;
+    }
+
+    // 3. Human Matchmaking (/api/board/seek, Rated by default)
+    setSeeking(true);
+    try {
+      const gameId = await lichessService.seekHumanMatch(
+        preset.minutes,
+        preset.increment,
+        isRated,
+        (status) => setSeekStatus(status)
+      );
+      setSeeking(false);
+      onStartLiveLichessGame(gameId, account?.username || 'Me');
+    } catch (err: any) {
+      setSeeking(false);
+      const msg = err?.message || 'Could not pair this time control via Board API.';
       setSeekError(msg);
       if (msg.includes('401') || msg.toLowerCase().includes('token')) {
         setAccount(null);
@@ -439,29 +548,31 @@ export const LichessModal: React.FC<LichessModalProps> = ({
   return (
     <div
       data-tv-modal="true"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-md p-2 sm:p-3 overflow-hidden"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 p-1.5 sm:p-2.5 overflow-hidden select-none"
     >
       <div
-        className={`bg-slate-900 border border-slate-700/80 rounded-2xl w-full max-h-[96vh] flex flex-col shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200 ${
-          activeTab === 'puzzles' ? 'max-w-6xl' : 'max-w-4xl'
+        className={`bg-slate-900 border border-slate-700/90 rounded-2xl w-full max-h-[96vh] flex flex-col shadow-xl overflow-hidden ${
+          activeTab === 'puzzles' || ongoingGames.length > 0 || savedLocalMatch
+            ? 'max-w-6xl'
+            : 'max-w-4xl'
         }`}
       >
         {/* Top Header (Hidden on wide screens md+ during Puzzles since it moves to the Left Side Space!) */}
         <div
-          className={`flex flex-wrap items-center justify-between gap-2 px-5 py-3 border-b border-slate-800 bg-slate-950/80 shrink-0 ${
+          className={`flex flex-wrap items-center justify-between gap-2 px-4 py-2.5 border-b border-slate-800 bg-slate-950 shrink-0 ${
             activeTab === 'puzzles' ? 'md:hidden' : ''
           }`}
         >
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-white text-slate-950 flex items-center justify-center font-black text-lg shadow">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-xl bg-white text-slate-950 flex items-center justify-center font-black text-base">
               ♞
             </div>
             <div>
-              <div className="flex items-center gap-2">
-                <h2 className="text-base sm:text-lg font-black text-white tracking-tight">Lichess Online</h2>
+              <div className="flex items-center gap-2 flex-wrap">
+                <h2 className="text-sm sm:text-base font-black text-white tracking-tight">Lichess Online</h2>
                 {account ? (
                   <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-[11px] font-bold">
-                    <CheckCircle2 size={12} />
+                    <CheckCircle2 size={11} />
                     {account.username}
                   </span>
                 ) : (
@@ -469,31 +580,51 @@ export const LichessModal: React.FC<LichessModalProps> = ({
                     Not Connected
                   </span>
                 )}
+                <span className="px-2 py-0.5 rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-300 text-[10px] font-extrabold uppercase">
+                  {selectedOpponentType === 'human'
+                    ? `Human • ${isRated ? 'Rated' : 'Casual'}`
+                    : selectedOpponentType === 'lichess_ai'
+                    ? `Cloud AI Lv.${configuredAiLevel}`
+                    : `Local AI (${settings.ai_elo})`}
+                </span>
               </div>
-              <p className="text-[11px] text-slate-400 hidden sm:block">
-                Matchmaking • Rated Games • Tactical Puzzles • Old Games & Stats (MyPC Proxy Ready)
-              </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5">
+            {onOpenSettings && (
+              <button
+                type="button"
+                onClick={() => {
+                  soundManager.playSound('click');
+                  onOpenSettings();
+                }}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-bold bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition-colors cursor-pointer"
+                title="Lichess Matchmaking Settings"
+              >
+                <Sliders size={13} />
+                <span className="hidden sm:inline">Mode Settings</span>
+              </button>
+            )}
             <button
+              type="button"
               onClick={() => setShowTokenDrawer((v) => !v)}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold border transition cursor-pointer ${
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-bold border transition-colors cursor-pointer ${
                 showTokenDrawer
                   ? 'bg-white text-slate-950 border-white'
                   : 'bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700'
               }`}
             >
-              <Key size={14} />
-              {lichessService.getToken() ? 'API Token' : 'Set API Token'}
+              <Key size={13} />
+              {lichessService.getToken() ? 'Token' : 'Set Token'}
             </button>
             <button
+              type="button"
               onClick={() => {
                 lichessService.cancelSeek();
                 onClose();
               }}
-              className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white transition cursor-pointer"
+              className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white transition-colors cursor-pointer"
             >
               <X size={18} />
             </button>
@@ -638,119 +769,214 @@ export const LichessModal: React.FC<LichessModalProps> = ({
         </div>
 
         {/* Main Content Area */}
-        <div className="p-3 sm:p-5 overflow-y-auto flex-1">
-          {/* TAB 1: LICHESS 12-TILE MATCHMAKING GRID */}
+        <div className="p-2.5 sm:p-4 overflow-y-auto flex-1">
+          {/* TAB 1: LICHESS MATCHMAKING — Widescreen TV puts Ongoing Games (Small Boards) on Left Side & 12-Tile Grid on Right Side */}
           {activeTab === 'play' && (
-            <div className="space-y-4">
-              {/* Top Mode Controls: Rated vs Casual */}
-              <div className="flex flex-wrap items-center justify-between gap-3 bg-slate-950/70 border border-slate-800 px-4 py-2.5 rounded-xl">
-                <div className="flex items-center gap-2">
-                  <ShieldCheck className={isRated ? 'text-amber-400' : 'text-slate-400'} size={18} />
-                  <div>
-                    <div className="text-xs sm:text-sm font-bold text-white">
-                      {isRated ? 'Rated Matchmaking' : 'Casual Matchmaking'}
+            <div className="grid grid-cols-1 md:grid-cols-12 gap-3.5 items-start">
+              {/* LEFT SIDE ON TV / WIDESCREEN: Ongoing Games as Small Boards */}
+              {(ongoingGames.length > 0 || savedLocalMatch || lichessService.getToken()) && (
+                <div className="md:col-span-5 bg-slate-950/90 border border-slate-800 rounded-2xl p-3 space-y-2.5">
+                  <div className="flex items-center justify-between gap-2 border-b border-slate-800/80 pb-2">
+                    <div className="flex items-center gap-2">
+                      <span className="w-2.5 h-2.5 rounded-full bg-emerald-400" />
+                      <span className="text-xs sm:text-sm font-extrabold text-white">
+                        Ongoing Games ({ongoingGames.length + (savedLocalMatch ? 1 : 0)})
+                      </span>
                     </div>
-                    <div className="text-[11px] text-slate-400">
-                      {isRated
-                        ? 'Games affect your official Lichess rating'
-                        : 'Friendly unrated games without rating changes'}
-                    </div>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-1.5 bg-slate-900 p-1 rounded-xl border border-slate-800">
-                  <button
-                    onClick={() => setIsRated(true)}
-                    className={`px-3.5 py-1.5 rounded-lg text-xs font-extrabold transition cursor-pointer ${
-                      isRated ? 'bg-amber-500 text-slate-950 shadow' : 'text-slate-400 hover:text-white'
-                    }`}
-                  >
-                    Rated
-                  </button>
-                  <button
-                    onClick={() => setIsRated(false)}
-                    className={`px-3.5 py-1.5 rounded-lg text-xs font-extrabold transition cursor-pointer ${
-                      !isRated ? 'bg-white text-slate-950 shadow' : 'text-slate-400 hover:text-white'
-                    }`}
-                  >
-                    Casual
-                  </button>
-                </div>
-              </div>
-
-              {/* Seeking Overlay or Error Banner */}
-              {seeking && (
-                <div className="flex flex-col items-center justify-center p-6 rounded-2xl bg-slate-950/90 border border-white/20 text-center space-y-3">
-                  <Loader2 className="animate-spin text-white" size={34} />
-                  <div className="text-sm sm:text-base font-bold text-white">{seekStatus}</div>
-                  <p className="text-xs text-slate-400">
-                    Waiting for Lichess pairing server... Your board will launch automatically.
-                  </p>
-                  <button
-                    onClick={() => {
-                      soundManager.stopSearchPulse();
-                      soundManager.playSound('click');
-                      lichessService.cancelSeek();
-                      setSeeking(false);
-                    }}
-                    className="px-4 py-2 rounded-xl bg-red-600 hover:bg-red-500 text-white font-bold text-xs transition cursor-pointer"
-                  >
-                    Cancel Seek
-                  </button>
-                </div>
-              )}
-
-              {seekError && !seeking && (
-                <div className="p-4 rounded-xl bg-amber-950/50 border border-amber-700/60 space-y-2.5">
-                  <div className="flex items-start gap-2 text-amber-200 text-xs sm:text-sm font-medium">
-                    <AlertCircle size={18} className="shrink-0 text-amber-400 mt-0.5" />
-                    <div>
-                      <div className="font-bold text-white mb-0.5">Lichess Pairing Notice</div>
-                      {seekError}
-                    </div>
-                  </div>
-                  {lastAttemptedPreset && (
-                    <div className="flex flex-wrap items-center gap-2 pt-1">
+                    {lichessService.getToken() && (
                       <button
-                        onClick={() =>
-                          handleSelectTimePreset({ label: '10+0', sub: 'Rapid', minutes: 10, increment: 0 })
-                        }
-                        className="px-3.5 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-extrabold text-xs transition cursor-pointer"
+                        type="button"
+                        onClick={() => {
+                          soundManager.playSound('select');
+                          refreshOngoingGames();
+                        }}
+                        disabled={loadingOngoing}
+                        className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-200 text-[11px] font-bold transition-colors cursor-pointer shrink-0"
                       >
-                        Seek 10+0 Rapid ({isRated ? 'Rated' : 'Casual'})
+                        <RefreshCw size={12} className={loadingOngoing ? 'animate-spin' : ''} />
+                        <span>Refresh</span>
                       </button>
-                      <button
-                        onClick={() =>
-                          handleStartLichessAI(lastAttemptedPreset.minutes, lastAttemptedPreset.increment, 4)
-                        }
-                        className="px-3.5 py-1.5 rounded-lg bg-white hover:bg-slate-200 text-slate-950 font-extrabold text-xs transition cursor-pointer"
-                      >
-                        Play {lastAttemptedPreset.label} vs Lichess AI Now
-                      </button>
+                    )}
+                  </div>
+
+                  {ongoingGames.length === 0 && !savedLocalMatch ? (
+                    <div className="text-xs text-slate-400 py-6 text-center">
+                      {loadingOngoing
+                        ? 'Checking your Lichess account for active games...'
+                        : 'No ongoing games right now. Start a match on the right or on your phone to continue here with a live mini-board!'}
+                    </div>
+                  ) : (
+                    <div className="flex flex-col gap-2.5 max-h-[62vh] overflow-y-auto pr-0.5">
+                      {ongoingGames.map((g) => (
+                        <button
+                          key={g.gameId}
+                          type="button"
+                          onClick={() => {
+                            soundManager.playSound('click');
+                            onStartLiveLichessGame(
+                              g.gameId,
+                              account?.username || lookupUsername || 'Me'
+                            );
+                          }}
+                          className="w-full flex items-center gap-3 p-2.5 rounded-xl bg-slate-900/90 hover:bg-slate-800 border border-emerald-500/40 hover:border-emerald-400 text-left transition-colors cursor-pointer"
+                        >
+                          {/* Small Chessboard Preview */}
+                          <MiniBoardPreview
+                            fen={g.fen}
+                            myColor={g.myColor}
+                            lastMoveUci={g.lastMove}
+                            sizeClass="w-20 h-20 sm:w-24 sm:h-24"
+                          />
+
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-1.5 text-xs sm:text-sm font-extrabold text-white truncate">
+                              <span className="truncate">vs {g.opponentName}</span>
+                              {g.opponentRating && (
+                                <span className="text-emerald-400 font-mono text-xs shrink-0">
+                                  ({g.opponentRating})
+                                </span>
+                              )}
+                            </div>
+                            <div className="text-[11px] text-slate-300 mt-1 flex flex-wrap items-center gap-1.5">
+                              <span className="px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 uppercase font-bold text-[10px]">
+                                {g.speed}
+                              </span>
+                              <span className="text-slate-400">
+                                {g.myColor === 'w' ? 'White' : 'Black'}
+                              </span>
+                            </div>
+                            <div className="mt-2 flex items-center justify-between gap-2">
+                              <span
+                                className={`text-[11px] font-bold ${
+                                  g.isMyTurn ? 'text-emerald-400' : 'text-slate-400'
+                                }`}
+                              >
+                                {g.isMyTurn ? '● Your Turn' : 'Waiting...'}
+                              </span>
+                              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-500 text-slate-950 font-black text-[11px]">
+                                <Play size={11} className="fill-current" />
+                                Continue
+                              </span>
+                            </div>
+                          </div>
+                        </button>
+                      ))}
+
+                      {savedLocalMatch && onResumeSavedLocalMatch && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            soundManager.playSound('click');
+                            onResumeSavedLocalMatch();
+                          }}
+                          className="w-full flex items-center gap-3 p-2.5 rounded-xl bg-slate-900/90 hover:bg-slate-800 border border-sky-500/40 hover:border-sky-400 text-left transition-colors cursor-pointer"
+                        >
+                          {/* Small Chessboard Preview */}
+                          <MiniBoardPreview
+                            fen={savedLocalMatch.fen}
+                            myColor={savedLocalMatch.playerColor}
+                            lastMoveUci={
+                              savedLocalMatch.moves.length > 0
+                                ? `${savedLocalMatch.moves[savedLocalMatch.moves.length - 1].from}${savedLocalMatch.moves[savedLocalMatch.moves.length - 1].to}`
+                                : undefined
+                            }
+                            sizeClass="w-20 h-20 sm:w-24 sm:h-24"
+                          />
+
+                          <div className="flex-1 min-w-0">
+                            <div className="text-xs sm:text-sm font-extrabold text-white truncate">
+                              {savedLocalMatch.gameMode === 'ai'
+                                ? `vs Stockfish AI (${savedLocalMatch.opponentElo})`
+                                : `vs ${savedLocalMatch.opponentName}`}
+                            </div>
+                            <div className="text-[11px] text-slate-300 mt-1">
+                              {savedLocalMatch.timeControlLabel || '10+0'} • {savedLocalMatch.moves.length} moves
+                            </div>
+                            <div className="mt-2 flex items-center justify-between gap-2">
+                              <span className="text-[11px] font-bold text-sky-400">
+                                Saved Match
+                              </span>
+                              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-sky-400 text-slate-950 font-black text-[11px]">
+                                <Play size={11} className="fill-current" />
+                                Continue
+                              </span>
+                            </div>
+                          </div>
+                        </button>
+                      )}
                     </div>
                   )}
                 </div>
               )}
 
-              {/* The 12-Tile Lichess Grid (3 columns x 4 rows) */}
-              {!seeking && !showCustomBuilder && (
-                <div className="grid grid-cols-3 gap-2.5 sm:gap-3">
-                  {LICHESS_GRID_PRESETS.map((preset) => (
+              {/* RIGHT SIDE ON TV / WIDESCREEN: 12-Tile Pairing Grid */}
+              <div
+                className={
+                  ongoingGames.length > 0 || savedLocalMatch || lichessService.getToken()
+                    ? 'md:col-span-7 space-y-3'
+                    : 'md:col-span-12 space-y-3'
+                }
+              >
+                {/* Seeking Overlay */}
+                {seeking && (
+                  <div className="flex flex-col items-center justify-center p-6 rounded-2xl bg-slate-950 border border-white/20 text-center space-y-3">
+                    <Loader2 className="animate-spin text-white" size={34} />
+                    <div className="text-sm sm:text-base font-bold text-white">{seekStatus}</div>
+                    <p className="text-xs text-slate-400">
+                      Waiting for Lichess pairing server... Your board will launch automatically.
+                    </p>
                     <button
-                      key={preset.label}
-                      onClick={() => handleSelectTimePreset(preset)}
-                      className="group relative flex flex-col items-center justify-center py-4 sm:py-5 px-3 rounded-2xl bg-slate-950/80 hover:bg-white border border-slate-800 hover:border-white text-white hover:text-slate-950 transition-all duration-150 shadow-md hover:shadow-xl hover:scale-[1.02] cursor-pointer"
+                      onClick={() => {
+                        soundManager.stopSearchPulse();
+                        soundManager.playSound('click');
+                        lichessService.cancelSeek();
+                        setSeeking(false);
+                      }}
+                      className="px-4 py-2 rounded-xl bg-red-600 hover:bg-red-500 text-white font-bold text-xs transition-colors cursor-pointer"
                     >
-                      <span className="text-xl sm:text-2xl font-black tracking-tight">
-                        {preset.label}
-                      </span>
-                      <span className="text-xs font-semibold text-slate-400 group-hover:text-slate-700 mt-0.5">
-                        {preset.sub}
-                      </span>
+                      Cancel Seek
                     </button>
-                  ))}
-                </div>
-              )}
+                  </div>
+                )}
+
+                {seekError && !seeking && (
+                  <div className="p-3 rounded-xl bg-red-950/50 border border-red-700/60 flex items-center justify-between gap-2 text-xs text-red-200">
+                    <div className="flex items-center gap-2">
+                      <AlertCircle size={16} className="shrink-0 text-red-400" />
+                      <span>{seekError}</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setSeekError(null)}
+                      className="p-1 rounded hover:bg-red-900/50 text-red-300 cursor-pointer"
+                    >
+                      <X size={14} />
+                    </button>
+                  </div>
+                )}
+
+                {/* Time Control Grid — Hides invalid time controls for the currently selected opponent type */}
+                {!seeking && !showCustomBuilder && (
+                  <div className="grid grid-cols-3 gap-2.5 sm:gap-3">
+                    {LICHESS_GRID_PRESETS.filter((preset) =>
+                      isPresetValidForSelectedType(preset, selectedOpponentType)
+                    ).map((preset) => (
+                      <button
+                        key={preset.label}
+                        type="button"
+                        onClick={() => handleSelectTimePreset(preset)}
+                        className="group relative flex flex-col items-center justify-center py-4 sm:py-5 px-3 rounded-2xl border bg-slate-950 hover:bg-white border-slate-800 hover:border-white text-white hover:text-slate-950 transition-colors cursor-pointer"
+                      >
+                        <span className="text-xl sm:text-2xl font-black tracking-tight">
+                          {preset.label}
+                        </span>
+                        <span className="text-[11px] font-semibold mt-0.5 text-slate-400 group-hover:text-slate-700">
+                          {preset.sub}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                )}
 
               {/* Custom Time Control & Lichess AI Builder */}
               {showCustomBuilder && !seeking && (
@@ -877,6 +1103,7 @@ export const LichessModal: React.FC<LichessModalProps> = ({
                   </div>
                 </div>
               )}
+              </div>
             </div>
           )}
 
@@ -1438,6 +1665,24 @@ export const LichessModal: React.FC<LichessModalProps> = ({
               )}
             </div>
           )}
+        </div>
+
+        {/* Footer Close / Back Bar */}
+        <div className="px-4 sm:px-5 py-2.5 border-t border-slate-800 bg-slate-950/70 flex items-center justify-between shrink-0">
+          <span className="text-[11px] text-slate-400 hidden sm:inline">
+            Tip: Press <strong className="text-slate-200">Back / Esc / B</strong> anytime to return
+          </span>
+          <button
+            type="button"
+            onClick={() => {
+              lichessService.cancelSeek();
+              onClose();
+            }}
+            className="flex items-center justify-center gap-2 px-4 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs transition cursor-pointer ml-auto"
+          >
+            <ArrowLeft size={14} />
+            Back to Main Menu
+          </button>
         </div>
       </div>
     </div>

@@ -19,7 +19,7 @@ export type AppState =
 export type FontScale = 'small' | 'standard' | 'large' | 'xlarge' | number;
 
 export const MIN_FONT_SIZE = 10;
-export const MAX_FONT_SIZE = 24;
+export const MAX_FONT_SIZE = 50;
 export const DEFAULT_FONT_SIZE = 16;
 
 export const getNumericFontSize = (settings?: Partial<GameSettings>): number => {
@@ -34,7 +34,7 @@ export const getNumericFontSize = (settings?: Partial<GameSettings>): number => 
     small: 12,
     standard: 15,
     large: 18,
-    xlarge: 22,
+    xlarge: 24,
   };
   return map[String(settings.font_scale)] || DEFAULT_FONT_SIZE;
 };
@@ -55,7 +55,11 @@ export interface KeyboardShortcuts {
   pause: string;
   resign: string;
   undo: string;
+  focus_left: string;
+  focus_right: string;
 }
+
+export type LichessOpponentType = 'human' | 'lichess_ai' | 'local_ai';
 
 export interface GameSettings {
   show_legal_moves: boolean;
@@ -71,6 +75,9 @@ export interface GameSettings {
   music_enabled: boolean;
   sound_pack?: SoundPack;
   performance_mode?: PerformanceMode;
+  lichess_opponent_type?: LichessOpponentType;
+  lichess_rated?: boolean;
+  lichess_ai_level?: number;
 }
 
 export interface MoveRecord {
@@ -78,6 +85,46 @@ export interface MoveRecord {
   to: string;
   san: string;
   promotion?: string;
+}
+
+export interface OngoingLichessGame {
+  gameId: string;
+  fullId?: string;
+  color: 'white' | 'black';
+  myColor: Color;
+  fen: string;
+  lastMove?: string;
+  opponentName: string;
+  opponentRating?: number;
+  opponent: {
+    id?: string;
+    username: string;
+    rating?: number;
+    ai?: number;
+  };
+  isMyTurn: boolean;
+  secondsLeft?: number;
+  speed: string;
+  rated: boolean;
+}
+
+export interface ActiveMatchSnapshot {
+  gameMode: GameMode;
+  fen: string;
+  initialFen: string;
+  moves: MoveRecord[];
+  playerColor: Color;
+  flipped: boolean;
+  wtime: number;
+  btime: number;
+  initialClockMs: number;
+  timeControlLabel?: string;
+  speedLabel?: string;
+  ratedMatch: boolean;
+  opponentName: string;
+  opponentElo: number;
+  lichessGameId?: string | null;
+  updatedAt: number;
 }
 
 export interface SavedGameRecord {

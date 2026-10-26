@@ -19,6 +19,7 @@ export type SoundEffect =
   | 'select'
   | 'click'
   | 'illegal'
+  | 'low_time'
   | 'end';
 
 class SoundService {
@@ -402,6 +403,13 @@ class SoundService {
       return [k1 + k2, k1 + k2];
     });
 
+    this.packBuffers.wooden.low_time = createBuffer(0.18, (t, _i, noise) => {
+      // Crisp tournament clock tick + high urgent wood-bell ping
+      const tick = woodKnock(t, noise, 540, 420, 0.55);
+      const ping = acousticNote(t, 880.0, 22, 0.36, 1.25) + acousticNote(t - 0.045, 1174.66, 26, 0.28, 1.3);
+      return [tick + ping * 0.96, tick + ping * 1.04];
+    });
+
     // =========================================================================
     // PACK 2: 'broadcast' (Modern Tournament Broadcast & Glass Studio UI)
     // =========================================================================
@@ -525,6 +533,14 @@ class SoundService {
       const b1 = broadcastSnap(t, noise, 110, 0.62);
       const b2 = broadcastSnap(t - 0.08, noise, 92, 0.62);
       return [b1 + b2, b1 + b2];
+    });
+
+    this.packBuffers.broadcast.low_time = createBuffer(0.16, (t, _i, noise) => {
+      const snap = broadcastSnap(t, noise, 620, 0.45);
+      const alertPing =
+        acousticNote(t, 987.77, 24, 0.38, 1.4) +
+        acousticNote(t - 0.04, 1318.51, 28, 0.3, 1.45);
+      return [snap + alertPing * 0.96, snap + alertPing * 1.04];
     });
   }
 

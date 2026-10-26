@@ -1,7 +1,13 @@
 // Lichess API Service with MyPC SDK Local Proxy Support & NDJSON Streaming (v2.8.0)
 import { Chess } from 'chess.js';
 import { myPCService } from './mypc';
-import { LichessUserStats, LichessGameRecord, LichessPuzzle, MoveRecord } from '../types/chess';
+import {
+  LichessUserStats,
+  LichessGameRecord,
+  LichessPuzzle,
+  MoveRecord,
+  OngoingLichessGame,
+} from '../types/chess';
 
 const LICHESS_BASE = 'https://lichess.org';
 
@@ -66,6 +72,7 @@ export interface ActiveLichessGameState {
   clockIncrementSec?: number;
   wdraw?: boolean;
   bdraw?: boolean;
+  opponentGone?: boolean;
 }
 
 /**
@@ -115,6 +122,10 @@ class LichessService {
   private username: string = '';
   private seekAbortController: AbortController | null = null;
   private gameStreamAbortController: AbortController | null = null;
+  private streamManuallyStopped: boolean = false;
+  private reconnectTimeoutId: number | null = null;
+  private reconnectCountdownId: number | null = null;
+  private onlineReconnectListener: (() => void) | null = null;
   private puzzleIndex: number = 0;
 
   constructor() {
@@ -289,6 +300,85 @@ class LichessService {
       this.setUsername(data.username);
     }
     return data;
+  }
+
+  /**
+   * Fetch real-time online / playing status for a Lichess username (/api/users/status?ids=...)
+   */
+  public async fetchUserOnlineStatus(username: string): Promise<boolean> {
+    const clean = (username || '').trim();
+    if (!clean || clean.toLowerCase().includes('stockfish') || clean.toLowerCase().includes('lichess ai')) {
+      return true;
+    }
+    try {
+      const res = await myPCService.proxyFetch(
+        `${LICHESS_BASE}/api/users/status?ids=${encodeURIComponent(clean)}`,
+        {
+          method: 'GET',
+          headers: this.getHeaders('application/json', undefined, false),
+        }
+      );
+      if (!res.ok) return false;
+      const arr = await res.json();
+      if (Array.isArray(arr) && arr.length > 0) {
+        return !!arr[0].online || !!arr[0].playing;
+      }
+    } catch {
+      // Ignore network hiccup
+    }
+    return false;
+  }
+
+  /**
+   * Fetch all ongoing games for the authenticated Lichess user (/api/account/playing)
+   * Allows continuing any game started on phone, PC, or TV.
+   */
+  public async fetchOngoingGames(explicitToken?: string): Promise<OngoingLichessGame[]> {
+    if (explicitToken !== undefined && explicitToken.trim()) {
+      this.setToken(explicitToken);
+    }
+    const tok = this.getToken();
+    if (!tok) return [];
+    try {
+      const res = await myPCService.proxyFetch(`${LICHESS_BASE}/api/account/playing`, {
+        method: 'GET',
+        headers: this.getHeaders('application/json'),
+      });
+      if (res.status === 401) {
+        this.clearInvalidToken();
+        return [];
+      }
+      if (!res.ok) return [];
+      const data = await res.json();
+      const nowPlaying = Array.isArray(data?.nowPlaying) ? data.nowPlaying : [];
+      return nowPlaying.map((g: any) => {
+        const oppName =
+          g.opponent?.username ||
+          (g.opponent?.ai ? `Stockfish Lv.${g.opponent.ai}` : 'Opponent');
+        return {
+          gameId: g.gameId || g.fullId?.slice(0, 8) || '',
+          fullId: g.fullId,
+          color: g.color === 'black' ? 'black' : 'white',
+          myColor: g.color === 'black' ? 'b' : 'w',
+          fen: g.fen || 'startpos',
+          lastMove: g.lastMove,
+          opponentName: oppName,
+          opponentRating: g.opponent?.rating,
+          opponent: {
+            id: g.opponent?.id,
+            username: oppName,
+            rating: g.opponent?.rating,
+            ai: g.opponent?.ai,
+          },
+          isMyTurn: !!g.isMyTurn,
+          secondsLeft: g.secondsLeft,
+          speed: g.speed || g.perf || 'rapid',
+          rated: !!g.rated,
+        };
+      });
+    } catch {
+      return [];
+    }
   }
 
   /**
@@ -481,6 +571,57 @@ class LichessService {
   }
 
   /**
+   * Lichess Board API (/api/board/seek) only allows Rapid & Classical time controls
+   * for public human matchmaking: estimated duration = minutes * 60 + increment * 40 >= 480s.
+   * For example, 5+3 = 300 + 120 = 420s (< 480s, Blitz), which Lichess rejects with "Invalid time control",
+   * whereas 5+5 = 300 + 200 = 500s (>= 480s, Rapid) and 10+0 = 600s are allowed.
+   */
+  public isBoardHumanSeekSupported(minutes: number, increment: number): boolean {
+    const estimatedSeconds = Math.round(minutes * 60 + increment * 40);
+    return estimatedSeconds >= 480;
+  }
+
+  /**
+   * Lichess Challenge API (/api/challenge/ai) requires clock.limit (in seconds)
+   * to be one of Lichess's discrete supported values.
+   */
+  private normalizeChallengeClockLimitSec(minutes: number): number {
+    const allowedLimits = [
+      60, 90, 120, 180, 240, 300, 360, 420, 480, 540, 600, 660, 720, 780, 840,
+      900, 960, 1020, 1080, 1140, 1200, 1500, 1800, 2100, 2400, 2700, 3600,
+      5400, 7200, 9000, 10800,
+    ];
+    const targetSec = Math.max(60, Math.round(minutes * 60));
+    let closest = allowedLimits[0];
+    let minDiff = Math.abs(targetSec - closest);
+    for (const val of allowedLimits) {
+      const diff = Math.abs(targetSec - val);
+      if (diff < minDiff) {
+        minDiff = diff;
+        closest = val;
+      }
+    }
+    return closest;
+  }
+
+  private formatLichessTimeControlError(
+    rawError: string,
+    minutes: number,
+    increment: number,
+    isHumanSeek: boolean
+  ): string {
+    const lower = rawError.toLowerCase();
+    if (lower.includes('invalid time control') || lower.includes('clock')) {
+      const estSec = Math.round(minutes * 60 + increment * 40);
+      if (isHumanSeek && estSec < 480) {
+        return `Lichess's external Board API restricts public human seeks (/api/board/seek) to Rapid & Classical (estimated duration ≥ 480s). Because ${minutes}+${increment} is ${estSec}s (Blitz/Bullet), Lichess rejects human seeks for ${minutes}+${increment}. You can play ${minutes}+${increment} right now vs Lichess Cloud AI, Built-in Stockfish AI, or seek 5+5 / 10+0 Rapid vs a human!`;
+      }
+      return `Lichess Board API rejected the ${minutes}+${increment} time control (${rawError}). Try playing ${minutes}+${increment} vs AI or seeking 5+5 / 10+0 Rapid.`;
+    }
+    return rawError;
+  }
+
+  /**
    * Start a Lichess Game vs Lichess AI (Stockfish Level 1-8) with clock
    */
   public async createAIChallenge(
@@ -494,10 +635,13 @@ class LichessService {
       throw new Error('Please set your Lichess Personal API Token first.');
     }
 
+    const limitSec = this.normalizeChallengeClockLimitSec(clockMinutes);
+    const incSec = Math.max(0, Math.min(180, Math.round(clockIncrement)));
+
     const body = new URLSearchParams();
     body.set('level', String(Math.max(1, Math.min(8, level))));
-    body.set('clock.limit', String(Math.max(60, Math.round(clockMinutes * 60))));
-    body.set('clock.increment', String(Math.max(0, clockIncrement)));
+    body.set('clock.limit', String(limitSec));
+    body.set('clock.increment', String(incSec));
     body.set('color', color);
 
     const res = await myPCService.proxyFetch(`${LICHESS_BASE}/api/challenge/ai`, {
@@ -514,8 +658,25 @@ class LichessService {
     }
 
     if (!res.ok) {
-      const errText = await res.text();
-      throw new Error(`Lichess AI challenge failed: ${errText || res.status}`);
+      let errDetail = '';
+      try {
+        const errJson = await res.json();
+        if (Array.isArray(errJson?.global)) {
+          errDetail = errJson.global.join(', ');
+        } else {
+          errDetail = errJson?.error || JSON.stringify(errJson);
+        }
+      } catch {
+        errDetail = await res.text();
+      }
+      throw new Error(
+        this.formatLichessTimeControlError(
+          errDetail || `HTTP ${res.status}`,
+          clockMinutes,
+          clockIncrement,
+          false
+        )
+      );
     }
 
     const data = await res.json();
@@ -538,6 +699,12 @@ class LichessService {
     const tok = this.getToken();
     if (!tok) {
       throw new Error('Please set your Lichess Personal API Token first.');
+    }
+
+    if (!this.isBoardHumanSeekSupported(minutes, increment)) {
+      throw new Error(
+        this.formatLichessTimeControlError('Invalid time control', minutes, increment, true)
+      );
     }
 
     this.cancelSeek();
@@ -604,8 +771,8 @@ class LichessService {
     // 2. Post to /api/board/seek
     const body = new URLSearchParams();
     body.set('rated', rated ? 'true' : 'false');
-    body.set('time', String(minutes));
-    body.set('increment', String(increment));
+    body.set('time', String(Math.round(minutes)));
+    body.set('increment', String(Math.round(increment)));
     body.set('color', 'random');
 
     const seekPromise = (async () => {
@@ -628,14 +795,22 @@ class LichessService {
         let errDetail = '';
         try {
           const errJson = await seekRes.json();
-          errDetail = errJson.error || JSON.stringify(errJson);
+          if (Array.isArray(errJson?.global)) {
+            errDetail = errJson.global.join(', ');
+          } else {
+            errDetail = errJson?.error || JSON.stringify(errJson);
+          }
         } catch {
           errDetail = await seekRes.text();
         }
         controller.abort();
         throw new Error(
-          errDetail ||
-            `Lichess Board API requires Rapid/Classical time controls (10+0 or slower) for human seeks.`
+          this.formatLichessTimeControlError(
+            errDetail || 'Invalid time control',
+            minutes,
+            increment,
+            true
+          )
         );
       }
     })();
@@ -662,17 +837,21 @@ class LichessService {
 
   /**
    * Stream an active Lichess Board game (/api/board/game/stream/{gameId})
+   * Includes automatic 10-second reconnect loop and instant reconnection on Wi-Fi recovery.
    */
   public async streamBoardGame(
     gameId: string,
     myUserId: string,
     onUpdate: (state: ActiveLichessGameState) => void,
     onError: (err: string) => void,
-    onChatLine?: (sender: string, text: string) => void
+    onChatLine?: (sender: string, text: string) => void,
+    onStreamStatus?: (
+      status: 'connecting' | 'connected' | 'reconnecting' | 'offline',
+      retryInSec?: number
+    ) => void
   ) {
     this.stopGameStream();
-    const controller = new AbortController();
-    this.gameStreamAbortController = controller;
+    this.streamManuallyStopped = false;
 
     let currentState: ActiveLichessGameState = {
       gameId,
@@ -687,128 +866,242 @@ class LichessService {
       binc: 0,
       status: 'started',
       rated: false,
+      opponentGone: false,
     };
 
-    try {
-      const res = await myPCService.proxyFetch(`${LICHESS_BASE}/api/board/game/stream/${encodeURIComponent(gameId)}`, {
-        method: 'GET',
-        headers: this.getHeaders('application/x-ndjson'),
-        signal: controller.signal,
-      });
+    const isGameStillActive = () =>
+      currentState.status === 'started' || currentState.status === 'created';
 
-      if (!res.ok || !res.body) {
-        onError(`Could not open game stream (${res.status})`);
+    const clearReconnectTimers = () => {
+      if (this.reconnectTimeoutId !== null) {
+        clearTimeout(this.reconnectTimeoutId);
+        this.reconnectTimeoutId = null;
+      }
+      if (this.reconnectCountdownId !== null) {
+        clearInterval(this.reconnectCountdownId);
+        this.reconnectCountdownId = null;
+      }
+      if (this.onlineReconnectListener && typeof window !== 'undefined') {
+        window.removeEventListener('online', this.onlineReconnectListener);
+        this.onlineReconnectListener = null;
+      }
+    };
+
+    const scheduleReconnect = () => {
+      if (this.streamManuallyStopped || !isGameStillActive()) return;
+      clearReconnectTimers();
+
+      let remaining = 10;
+      const isBrowserOnline = typeof navigator !== 'undefined' ? navigator.onLine : true;
+      onStreamStatus?.(isBrowserOnline ? 'reconnecting' : 'offline', remaining);
+
+      this.reconnectCountdownId = window.setInterval(() => {
+        if (this.streamManuallyStopped || !isGameStillActive()) {
+          clearReconnectTimers();
+          return;
+        }
+        remaining = Math.max(1, remaining - 1);
+        const onlineNow = typeof navigator !== 'undefined' ? navigator.onLine : true;
+        onStreamStatus?.(onlineNow ? 'reconnecting' : 'offline', remaining);
+      }, 1000);
+
+      const triggerNow = () => {
+        if (this.streamManuallyStopped || !isGameStillActive()) return;
+        clearReconnectTimers();
+        connectAttempt();
+      };
+
+      this.reconnectTimeoutId = window.setTimeout(triggerNow, 10000);
+
+      if (typeof window !== 'undefined') {
+        this.onlineReconnectListener = () => {
+          triggerNow();
+        };
+        window.addEventListener('online', this.onlineReconnectListener, { once: true });
+      }
+    };
+
+    const connectAttempt = async () => {
+      if (this.streamManuallyStopped) return;
+      clearReconnectTimers();
+
+      if (typeof navigator !== 'undefined' && !navigator.onLine) {
+        scheduleReconnect();
         return;
       }
 
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
+      const controller = new AbortController();
+      this.gameStreamAbortController = controller;
+      onStreamStatus?.('connecting');
 
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
+      try {
+        const res = await myPCService.proxyFetch(
+          `${LICHESS_BASE}/api/board/game/stream/${encodeURIComponent(gameId)}`,
+          {
+            method: 'GET',
+            headers: this.getHeaders('application/x-ndjson'),
+            signal: controller.signal,
+          }
+        );
 
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (!trimmed) continue;
-          try {
-            const msg = JSON.parse(trimmed);
-            if (msg.type === 'gameFull') {
-              const whiteId = (msg.white?.id || msg.white?.name || '').toLowerCase();
-              const isWhite = whiteId === myUserId.toLowerCase();
-              const myColor: 'w' | 'b' = isWhite ? 'w' : 'b';
-              const opp = isWhite ? msg.black : msg.white;
-              const me = isWhite ? msg.white : msg.black;
-              const resolvedMyName = me?.name || me?.id || myUserId || this.getUsername() || 'Lichess Player';
-              if (me?.name) {
-                this.setUsername(me.name);
-              }
+        if (!res.ok || !res.body) {
+          if (res.status === 401 || res.status === 404) {
+            onStreamStatus?.('offline');
+            onError(`Could not open game stream (${res.status})`);
+            return;
+          }
+          scheduleReconnect();
+          return;
+        }
 
-              currentState = {
-                gameId: msg.id || gameId,
-                myColor,
-                myUsername: resolvedMyName,
-                opponentName: opp?.name || (opp?.aiLevel ? `Lichess AI Lv.${opp.aiLevel}` : 'Opponent'),
-                opponentRating: opp?.rating,
-                myRating: me?.rating,
-                initialFen: msg.initialFen || 'startpos',
-                movesUci: msg.state?.moves || '',
-                wtime: msg.state?.wtime ?? 600000,
-                btime: msg.state?.btime ?? 600000,
-                winc: msg.state?.winc ?? 0,
-                binc: msg.state?.binc ?? 0,
-                status: msg.state?.status || 'started',
-                winner: msg.state?.winner,
-                rated: !!msg.rated,
-                speed: msg.speed || msg.perf?.name || 'rapid',
-                clockInitialSec: msg.clock?.initial ? Math.round(msg.clock.initial / 1000) : undefined,
-                clockIncrementSec: msg.clock?.increment ? Math.round(msg.clock.increment / 1000) : undefined,
-                wdraw: !!(msg.state?.wdraw || msg.state?.wtie),
-                bdraw: !!(msg.state?.bdraw || msg.state?.btie),
-              };
-              onUpdate({ ...currentState });
-            } else if (msg.type === 'gameState') {
-              const movesChanged =
-                msg.moves !== undefined && msg.moves !== currentState.movesUci;
-              currentState = {
-                ...currentState,
-                movesUci: msg.moves ?? currentState.movesUci,
-                wtime: msg.wtime ?? currentState.wtime,
-                btime: msg.btime ?? currentState.btime,
-                status: msg.status || currentState.status,
-                winner: msg.winner ?? currentState.winner,
-                wdraw:
-                  msg.wdraw !== undefined
-                    ? !!msg.wdraw
-                    : msg.wtie !== undefined
-                    ? !!msg.wtie
-                    : movesChanged
-                    ? false
-                    : currentState.wdraw,
-                bdraw:
-                  msg.bdraw !== undefined
-                    ? !!msg.bdraw
-                    : msg.btie !== undefined
-                    ? !!msg.btie
-                    : movesChanged
-                    ? false
-                    : currentState.bdraw,
-              };
-              onUpdate({ ...currentState });
-            } else if (msg.type === 'chatLine') {
-              const lowerText = String(msg.text || '').toLowerCase();
-              const isSystemUser = String(msg.username || '').toLowerCase() === 'lichess';
-              if (isSystemUser && lowerText.includes('offers draw')) {
-                if (lowerText.includes('white')) {
-                  currentState = { ...currentState, wdraw: true };
-                  onUpdate({ ...currentState });
-                } else if (lowerText.includes('black')) {
-                  currentState = { ...currentState, bdraw: true };
+        onStreamStatus?.('connected');
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed) continue;
+            try {
+              const msg = JSON.parse(trimmed);
+              if (msg.type === 'gameFull') {
+                const whiteId = (msg.white?.id || msg.white?.name || '').toLowerCase();
+                const isWhite = whiteId === myUserId.toLowerCase();
+                const myColor: 'w' | 'b' = isWhite ? 'w' : 'b';
+                const opp = isWhite ? msg.black : msg.white;
+                const me = isWhite ? msg.white : msg.black;
+                const resolvedMyName =
+                  me?.name || me?.id || myUserId || this.getUsername() || 'Lichess Player';
+                if (me?.name) {
+                  this.setUsername(me.name);
+                }
+
+                currentState = {
+                  gameId: msg.id || gameId,
+                  myColor,
+                  myUsername: resolvedMyName,
+                  opponentName:
+                    opp?.name || (opp?.aiLevel ? `Lichess AI Lv.${opp.aiLevel}` : 'Opponent'),
+                  opponentRating: opp?.rating,
+                  myRating: me?.rating,
+                  initialFen: msg.initialFen || 'startpos',
+                  movesUci: msg.state?.moves || '',
+                  wtime: msg.state?.wtime ?? 600000,
+                  btime: msg.state?.btime ?? 600000,
+                  winc: msg.state?.winc ?? 0,
+                  binc: msg.state?.binc ?? 0,
+                  status: msg.state?.status || 'started',
+                  winner: msg.state?.winner,
+                  rated: !!msg.rated,
+                  speed: msg.speed || msg.perf?.name || 'rapid',
+                  clockInitialSec: msg.clock?.initial
+                    ? Math.round(msg.clock.initial / 1000)
+                    : undefined,
+                  clockIncrementSec: msg.clock?.increment
+                    ? Math.round(msg.clock.increment / 1000)
+                    : undefined,
+                  wdraw: !!(msg.state?.wdraw || msg.state?.wtie),
+                  bdraw: !!(msg.state?.bdraw || msg.state?.btie),
+                  opponentGone: false,
+                };
+                onUpdate({ ...currentState });
+              } else if (msg.type === 'gameState') {
+                const movesChanged =
+                  msg.moves !== undefined && msg.moves !== currentState.movesUci;
+                currentState = {
+                  ...currentState,
+                  movesUci: msg.moves ?? currentState.movesUci,
+                  wtime: msg.wtime ?? currentState.wtime,
+                  btime: msg.btime ?? currentState.btime,
+                  status: msg.status || currentState.status,
+                  winner: msg.winner ?? currentState.winner,
+                  wdraw:
+                    msg.wdraw !== undefined
+                      ? !!msg.wdraw
+                      : msg.wtie !== undefined
+                      ? !!msg.wtie
+                      : movesChanged
+                      ? false
+                      : currentState.wdraw,
+                  bdraw:
+                    msg.bdraw !== undefined
+                      ? !!msg.bdraw
+                      : msg.btie !== undefined
+                      ? !!msg.btie
+                      : movesChanged
+                      ? false
+                      : currentState.bdraw,
+                  opponentGone: movesChanged ? false : currentState.opponentGone,
+                };
+                onUpdate({ ...currentState });
+              } else if (msg.type === 'opponentGone') {
+                currentState = {
+                  ...currentState,
+                  opponentGone: !!msg.gone,
+                };
+                onUpdate({ ...currentState });
+              } else if (msg.type === 'chatLine') {
+                const lowerText = String(msg.text || '').toLowerCase();
+                const isSystemUser = String(msg.username || '').toLowerCase() === 'lichess';
+                if (isSystemUser && lowerText.includes('offers draw')) {
+                  if (lowerText.includes('white')) {
+                    currentState = { ...currentState, wdraw: true };
+                    onUpdate({ ...currentState });
+                  } else if (lowerText.includes('black')) {
+                    currentState = { ...currentState, bdraw: true };
+                    onUpdate({ ...currentState });
+                  }
+                } else if (isSystemUser && lowerText.includes('declines draw')) {
+                  currentState = { ...currentState, wdraw: false, bdraw: false };
                   onUpdate({ ...currentState });
                 }
-              } else if (isSystemUser && lowerText.includes('declines draw')) {
-                currentState = { ...currentState, wdraw: false, bdraw: false };
-                onUpdate({ ...currentState });
+                if (onChatLine && msg.username && msg.text) {
+                  onChatLine(msg.username, msg.text);
+                }
               }
-              if (onChatLine && msg.username && msg.text) {
-                onChatLine(msg.username, msg.text);
-              }
-            }
-          } catch {}
+            } catch {}
+          }
+        }
+
+        // If stream ended naturally while the game is still active, auto-reconnect
+        if (!this.streamManuallyStopped && isGameStillActive()) {
+          scheduleReconnect();
+        }
+      } catch (err: any) {
+        if (err?.name !== 'AbortError' && !this.streamManuallyStopped) {
+          if (isGameStillActive()) {
+            scheduleReconnect();
+          } else {
+            onError(err?.message || 'Lichess game stream disconnected');
+          }
         }
       }
-    } catch (err: any) {
-      if (err?.name !== 'AbortError') {
-        onError(err?.message || 'Lichess game stream disconnected');
-      }
-    }
+    };
+
+    await connectAttempt();
   }
 
   public stopGameStream() {
+    this.streamManuallyStopped = true;
+    if (this.reconnectTimeoutId !== null) {
+      clearTimeout(this.reconnectTimeoutId);
+      this.reconnectTimeoutId = null;
+    }
+    if (this.reconnectCountdownId !== null) {
+      clearInterval(this.reconnectCountdownId);
+      this.reconnectCountdownId = null;
+    }
+    if (this.onlineReconnectListener && typeof window !== 'undefined') {
+      window.removeEventListener('online', this.onlineReconnectListener);
+      this.onlineReconnectListener = null;
+    }
     if (this.gameStreamAbortController) {
       try {
         this.gameStreamAbortController.abort();

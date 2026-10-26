@@ -177,6 +177,17 @@ class MyPCService {
     }
   }
 
+  public triggerSystemPause(): boolean {
+    const MyPC = typeof window !== 'undefined' ? (window as any).MyPC : null;
+    if (MyPC && typeof MyPC.pause === 'function') {
+      try {
+        MyPC.pause();
+        return true;
+      } catch {}
+    }
+    return false;
+  }
+
   public isMultiplayerSupported(): boolean {
     const MyPC = (window as any).MyPC;
     return !!(MyPC?.multiplayer && MyPC.multiplayer.supported);

@@ -1,6 +1,6 @@
 {
-  "summary":  "Implementation plan for dual open-source non-MIDI sound packs (Wooden Classic & Modern Broadcast), per-player last-move cursor memory, real global Text Size scaling in Settings + Top HUD Bar, Low-CPU/Low-RAM optimizations with auto-detection + manual toggle, and cross-device Lichess API token persistence via MyPC.save/load.",
-  "updatedAt":  "2026-10-25T13:07:03.591502452Z",
+  "summary":  "Implementation plan for Lichess real-time presence and auto-reconnect, resuming ongoing cloud and local matches, typography scaling up to 50px, adaptive widescreen left-panel layout, clock progress bar with 10-second red alert and audio warning, larger HUD controls, and multi-zone TV/controller/keyboard navigation.",
+  "updatedAt":  "2026-10-26T09:51:19.902228899Z",
   "requestFeedback":  true,
   "userFacing":  true
 }

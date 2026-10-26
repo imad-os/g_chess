@@ -6,7 +6,12 @@ export type UnifiedAction =
   | NavDirection
   | 'confirm'
   | 'cancel'
+  | 'mypc_menu'
   | 'zone_switch'
+  | 'cycle_zone_prev'
+  | 'cycle_zone_next'
+  | 'focus_left'
+  | 'focus_right'
   | 'flip'
   | 'prev_tab'
   | 'next_tab'
@@ -71,11 +76,36 @@ export function clearAllSpatialFocus(): void {
 }
 
 /**
+ * Checks whether an element is a text-editable input or textarea
+ */
+export function isTextInputElement(el: HTMLElement | null): boolean {
+  if (!el) return false;
+  const tag = el.tagName;
+  return (
+    (tag === 'INPUT' &&
+      (el as HTMLInputElement).type !== 'range' &&
+      (el as HTMLInputElement).type !== 'checkbox' &&
+      (el as HTMLInputElement).type !== 'button' &&
+      (el as HTMLInputElement).type !== 'submit') ||
+    tag === 'TEXTAREA'
+  );
+}
+
+/**
  * Sets [data-tv-focused="true"] on a specific element and scrolls it gently into view
  */
 export function setSpatialFocus(el: HTMLElement | null): HTMLElement | null {
   clearAllSpatialFocus();
   if (!el || !isElementVisible(el)) return null;
+
+  // Blur native button/control focus so pressing Enter or Space does not trigger a duplicate native browser click
+  const activeEl = document.activeElement as HTMLElement | null;
+  if (activeEl && activeEl !== document.body && !isTextInputElement(activeEl)) {
+    try {
+      activeEl.blur();
+    } catch {}
+  }
+
   el.setAttribute('data-tv-focused', 'true');
   try {
     el.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
@@ -215,15 +245,7 @@ export function triggerSpatialConfirm(
   const current = getCurrentFocusedElement(container);
   if (!current) return false;
 
-  const tag = current.tagName;
-  if (
-    (tag === 'INPUT' &&
-      (current as HTMLInputElement).type !== 'range' &&
-      (current as HTMLInputElement).type !== 'checkbox' &&
-      (current as HTMLInputElement).type !== 'button' &&
-      (current as HTMLInputElement).type !== 'submit') ||
-    tag === 'TEXTAREA'
-  ) {
+  if (isTextInputElement(current)) {
     if (document.activeElement !== current) {
       current.focus();
       return true;
@@ -236,6 +258,14 @@ export function triggerSpatialConfirm(
       current.blur();
       return true;
     }
+  }
+
+  // Ensure native focus is cleared from buttons so Spacebar keyup / Enter keydown never double-clicks
+  const activeEl = document.activeElement as HTMLElement | null;
+  if (activeEl && activeEl !== document.body && !isTextInputElement(activeEl)) {
+    try {
+      activeEl.blur();
+    } catch {}
   }
 
   current.click();
@@ -273,8 +303,8 @@ export function mapMyPCAction(rawAction: string): UnifiedAction | null {
     case 'back':
     case 'b':
     case 'east':
-      return 'cancel';
     case 'run':
+      return 'cancel';
     case 'x':
     case 'west':
     case 'tab':
@@ -285,14 +315,26 @@ export function mapMyPCAction(rawAction: string): UnifiedAction | null {
       return 'flip';
     case 'l1':
     case 'lb':
-    case 'pageup':
       return 'prev_tab';
     case 'r1':
     case 'rb':
-    case 'pagedown':
       return 'next_tab';
+    case 'pageup':
+    case 'channelup':
+    case 'ch_up':
+      return 'cycle_zone_prev';
+    case 'pagedown':
+    case 'channeldown':
+    case 'ch_down':
+      return 'cycle_zone_next';
+    case 'home':
+    case 'guide':
+    case 'return':
+      return 'mypc_menu';
     case 'menu':
     case 'pause':
+    case 'playpause':
+    case 'mediaplaypause':
     case 'start':
     case 'plus':
     case '+':
@@ -332,41 +374,72 @@ export function mapKeyboardOrTVEvent(e: KeyboardEvent): UnifiedAction | null {
     return 'confirm';
   }
 
-  // Cancel / Back on Keyboard & Smart TV Remotes (WebOS 461, Tizen 10009, Android TV 4)
+  // Only Return (TV Remote), Esc (Keyboard), or Home/Guide (Controller) shows MyPC Menu
   if (
     key === 'Escape' ||
-    key === 'Backspace' ||
     key === 'BrowserBack' ||
     key === 'GoBack' ||
     key === 'XF86Back' ||
     key === 'Back' ||
+    key === 'Return' ||
+    key === 'Home' ||
+    key === 'Guide' ||
     code === 27 ||
-    code === 8 ||
     code === 4 ||
-    code === 461 ||
-    code === 10009
+    code === 461 || // LG WebOS Return
+    code === 10009 // Samsung Tizen Return
   ) {
+    return 'mypc_menu';
+  }
+
+  // Backspace acts as in-app cancel / back
+  if (key === 'Backspace' || code === 8) {
     return 'cancel';
   }
 
-  // Zone Switch (Board <-> Side Panels & Action Buttons)
+  // Zone Switch (Board <-> Side Panels)
   if (key === 'Tab' || key === 'ColorF2Yellow') {
-    return 'zone_switch';
+    return 'cycle_zone_next';
   }
 
-  // Plus (+) button / TV Remote Menu / PlayPause / Red button -> Match Menu (Pause)
+  // TV Remote Play/Pause & Plus (+) button -> Show/Hide In-Game Match Menu
   if (
+    key === 'MediaPlayPause' ||
+    key === 'MediaPlay' ||
+    key === 'MediaPause' ||
+    key === 'Play' ||
+    key === 'Pause' ||
+    code === 179 || // Standard MediaPlayPause
+    code === 415 || // Tizen / WebOS Play
+    code === 10252 || // Tizen PlayPause
     key === '+' ||
     key === '=' ||
     e.code === 'NumpadAdd' ||
     e.code === 'Equal' ||
-    key === 'MediaPlayPause' ||
     key === 'ContextMenu' ||
     key === 'Menu' ||
     key === 'ColorF0Red' ||
     code === 82
   ) {
     return 'pause';
+  }
+
+  // TV Remote Channel Up / Channel Down & PageUp / PageDown -> Cycle Focus (Left <-> Board <-> Right)
+  if (
+    key === 'ChannelUp' ||
+    key === 'PageUp' ||
+    code === 427 || // Tizen / WebOS ChannelUp
+    code === 33
+  ) {
+    return 'cycle_zone_prev';
+  }
+  if (
+    key === 'ChannelDown' ||
+    key === 'PageDown' ||
+    code === 428 || // Tizen / WebOS ChannelDown
+    code === 34
+  ) {
+    return 'cycle_zone_next';
   }
 
   // TV Remote Green button -> Flip Board
@@ -378,10 +451,6 @@ export function mapKeyboardOrTVEvent(e: KeyboardEvent): UnifiedAction | null {
   if (key === 'ColorF3Blue') {
     return 'chat';
   }
-
-  // PageUp / PageDown -> Prev / Next Tab or Move History Step
-  if (key === 'PageUp') return 'prev_tab';
-  if (key === 'PageDown') return 'next_tab';
 
   return null;
 }
