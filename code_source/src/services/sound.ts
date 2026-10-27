@@ -50,12 +50,15 @@ class SoundService {
       // Pre-generate studio & acoustic PCM AudioBuffers for both packs (instant, zero latency, low CPU)
       this.buildStudioSoundPacks();
 
-      // Also load open-source recorded .ogg assets for wooden pack enhancement & background music
-      this.loadOggAsset('move', 'assets/audio/move.ogg?v=3.4.0');
-      this.loadOggAsset('capture', 'assets/audio/capture.ogg?v=3.4.0');
-      this.loadOggAsset('check', 'assets/audio/check.ogg?v=3.4.0');
-      this.loadOggAsset('end', 'assets/audio/end.ogg?v=3.4.0');
-      this.loadMusic('assets/audio/music.ogg?v=3.4.0');
+      // Also load open-source recorded .ogg/.wav assets for wooden pack enhancement, Checko little chick audio & background music
+      this.loadOggAsset('move', 'assets/audio/move.ogg?v=3.8.0');
+      this.loadOggAsset('capture', 'assets/audio/capture.ogg?v=3.8.0');
+      this.loadOggAsset('check', 'assets/audio/check.ogg?v=3.8.0');
+      this.loadOggAsset('end', 'assets/audio/end.ogg?v=3.8.0');
+      this.loadOggAsset('checko_crow', 'assets/audio/checko_crow.wav?v=3.8.0');
+      this.loadOggAsset('checko_correct', 'assets/audio/checko_correct.wav?v=3.8.0');
+      this.loadOggAsset('checko_wrong', 'assets/audio/checko_wrong.wav?v=3.8.0');
+      this.loadMusic('assets/audio/music.ogg?v=3.8.0');
 
       this.initialized = true;
     } catch (e) {
@@ -168,9 +171,16 @@ class SoundService {
     // Map legacy 'end' to 'draw' if called directly
     const resolvedName: SoundEffect = name === 'end' ? 'draw' : name;
 
-    // For 'wooden' pack, prefer the recorded open-source .ogg buffer for core board moves if loaded
+    // Prefer recorded audio buffer for Checko little chick sounds or wooden pack core moves if loaded
     let buffer: AudioBuffer | undefined;
     if (
+      (resolvedName === 'checko_crow' ||
+        resolvedName === 'checko_correct' ||
+        resolvedName === 'checko_wrong') &&
+      this.oggBuffers[resolvedName]
+    ) {
+      buffer = this.oggBuffers[resolvedName];
+    } else if (
       this.soundPack === 'wooden' &&
       (resolvedName === 'move' || resolvedName === 'capture' || resolvedName === 'check') &&
       this.oggBuffers[resolvedName]
@@ -547,69 +557,83 @@ class SoundService {
     });
 
     // =========================================================================
-    // CHECKO THE WHITE ROOSTER SOUND EFFECTS (Shared across both packs)
+    // CHECKO LITTLE CHICK SOUND EFFECTS (Refined, soft acoustic baby chick peeps)
     // =========================================================================
-    // Helper for warm vocal rooster cluck/chirp formant
-    const roosterCluck = (
-      t: number,
-      noise: number,
-      startFreq: number,
-      endFreq: number,
-      dur: number,
-      amp: number
-    ): number => {
-      if (t < 0 || t > dur) return 0;
-      const u = t / dur;
-      const env = Math.sin(Math.PI * u) * Math.exp(-u * 2.2);
-      const f = startFreq + (endFreq - startFreq) * Math.pow(u, 0.75);
-      const vib = 1 + 0.025 * Math.sin(2 * Math.PI * 28 * t);
-      const phase = 2 * Math.PI * f * vib * t;
-      const formant =
-        Math.sin(phase) * 0.58 +
-        Math.sin(phase * 2) * 0.28 +
-        Math.sin(phase * 3) * 0.14 +
-        noise * 0.08 * Math.exp(-u * 5);
-      return formant * env * amp;
+    const buildChickBuffer = (
+      durationSec: number,
+      peeps: { start: number; dur: number; f0: number; f1: number; amp: number }[],
+      chimes: { start: number; freq: number; decay: number; amp: number }[]
+    ): AudioBuffer => {
+      const length = Math.max(1, Math.floor(sr * durationSec));
+      const buf = this.ctx!.createBuffer(2, length, sr);
+      const left = buf.getChannelData(0);
+      const right = buf.getChannelData(1);
+      const phases = peeps.map(() => 0);
+
+      for (let i = 0; i < length; i++) {
+        const t = i / sr;
+        let out = 0;
+        for (let pIdx = 0; pIdx < peeps.length; pIdx++) {
+          const p = peeps[pIdx];
+          const lt = t - p.start;
+          if (lt >= 0 && lt <= p.dur) {
+            const u = lt / p.dur;
+            const env = Math.pow(Math.sin(Math.PI * u), 1.35) * Math.exp(-u * 0.9);
+            const freq = p.f0 + (p.f1 - p.f0) * Math.sin(Math.PI * Math.pow(u, 0.8));
+            phases[pIdx] += (2 * Math.PI * freq) / sr;
+            const ph = phases[pIdx];
+            const voice = Math.sin(ph) * 0.88 + Math.sin(ph * 2) * 0.12 * (1 - u);
+            out += voice * env * p.amp;
+          }
+        }
+        for (const c of chimes) {
+          const outNote = acousticNote(t - c.start, c.freq, c.decay, c.amp, 1.15);
+          out += outNote;
+        }
+        const clamped = Math.max(-0.95, Math.min(0.95, out));
+        left[i] = clamped * 0.98;
+        right[i] = clamped * 1.02;
+      }
+      return buf;
     };
 
-    // 1. Checko Crow ("Cock-a-doodle-doo!" cheerful 5-syllable melodic rooster greeting)
-    const crowBuf = createBuffer(1.05, (t, _i, noise) => {
-      const s1 = roosterCluck(t - 0.0, noise, 520, 680, 0.11, 0.42); // Cock-
-      const s2 = roosterCluck(t - 0.13, noise, 620, 740, 0.09, 0.38); // a-
-      const s3 = roosterCluck(t - 0.24, noise, 740, 920, 0.13, 0.46); // doo-
-      const s4 = roosterCluck(t - 0.39, noise, 660, 790, 0.1, 0.4); // dle-
-      const s5 = roosterCluck(t - 0.51, noise, 880, 720, 0.48, 0.52); // doo!
-      const sparkle =
-        acousticNote(t - 0.51, 880.0, 5.5, 0.18, 1.1) +
-        acousticNote(t - 0.62, 1174.66, 4.5, 0.22, 1.2);
-      const v = s1 + s2 + s3 + s4 + s5 + sparkle;
-      return [v * 0.97, v * 1.03];
-    });
+    // 1. Checko Greeting ("Peep-peep!" gentle baby chick double peep)
+    const crowBuf = buildChickBuffer(
+      0.45,
+      [
+        { start: 0.01, dur: 0.095, f0: 2350, f1: 2780, amp: 0.34 },
+        { start: 0.13, dur: 0.125, f0: 2480, f1: 2920, amp: 0.38 },
+      ],
+      [
+        { start: 0.14, freq: 783.99, decay: 10.0, amp: 0.14 },
+        { start: 0.21, freq: 1046.5, decay: 8.0, amp: 0.16 },
+      ]
+    );
     this.packBuffers.wooden.checko_crow = crowBuf;
     this.packBuffers.broadcast.checko_crow = crowBuf;
 
-    // 2. Checko Correct Move (Happy double cluck + bright golden chime)
-    const correctBuf = createBuffer(0.65, (t, _i, noise) => {
-      const cluck1 = roosterCluck(t - 0.0, noise, 560, 760, 0.09, 0.44);
-      const cluck2 = roosterCluck(t - 0.11, noise, 680, 980, 0.13, 0.48);
-      const chime =
-        acousticNote(t - 0.05, 587.33, 8.0, 0.26, 1.2) + // D5
-        acousticNote(t - 0.14, 880.0, 6.5, 0.32, 1.3) + // A5
-        acousticNote(t - 0.23, 1174.66, 4.8, 0.36, 1.4); // D6
-      const v = cluck1 + cluck2 + chime;
-      return [v * 0.96, v * 1.04];
-    });
+    // 2. Checko Correct Move (Happy little chick peep + warm wooden bell chime)
+    const correctBuf = buildChickBuffer(
+      0.52,
+      [
+        { start: 0.01, dur: 0.085, f0: 2450, f1: 2880, amp: 0.32 },
+        { start: 0.11, dur: 0.11, f0: 2620, f1: 3080, amp: 0.36 },
+      ],
+      [
+        { start: 0.03, freq: 587.33, decay: 9.0, amp: 0.22 },
+        { start: 0.11, freq: 880.0, decay: 7.5, amp: 0.25 },
+        { start: 0.19, freq: 1174.66, decay: 6.0, amp: 0.28 },
+      ]
+    );
     this.packBuffers.wooden.checko_correct = correctBuf;
     this.packBuffers.broadcast.checko_correct = correctBuf;
 
-    // 3. Checko Wrong Move (Gentle, curious head-tilt "buk-buk?" cluck)
-    const wrongBuf = createBuffer(0.42, (t, _i, noise) => {
-      const cluck1 = roosterCluck(t - 0.0, noise, 420, 340, 0.12, 0.42);
-      const cluck2 = roosterCluck(t - 0.15, noise, 360, 290, 0.18, 0.45);
-      const softWood = woodKnock(t, noise, 180, 160, 0.25);
-      const v = cluck1 + cluck2 + softWood;
-      return [v, v * 0.98];
-    });
+    // 3. Checko Wrong Move (Soft, gentle downward single chick peep)
+    const wrongBuf = buildChickBuffer(
+      0.32,
+      [{ start: 0.01, dur: 0.13, f0: 2250, f1: 1820, amp: 0.28 }],
+      [{ start: 0.01, freq: 329.63, decay: 11.0, amp: 0.18 }]
+    );
     this.packBuffers.wooden.checko_wrong = wrongBuf;
     this.packBuffers.broadcast.checko_wrong = wrongBuf;
   }

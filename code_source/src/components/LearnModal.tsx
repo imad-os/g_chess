@@ -1,17 +1,23 @@
-// Checko's Chess Academy Modal — Interactive Multilingual Lessons (0 to 1500 Elo) with Checko the White Rooster & MyPC AI TTS
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+// Checko's Chess Academy Modal — 3-Screen TV-First Hierarchy (Levels -> Categories -> Lesson) with Continue & Sequential Unlocking
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Chess, Square, PieceSymbol } from 'chess.js';
 import { GameSettings } from '../types/chess';
 import { ChessBoard, BoardArrow } from './ChessBoard';
 import {
   LearnLanguage,
   LearnTierId,
+  LearnTier,
+  LearnCategory,
+  LearnLesson,
   LEARN_UI_TEXT,
   LEARN_TIERS,
+  LEARN_CATEGORIES,
   LEARN_LESSONS,
+  loadRuntimeLessonsData,
 } from '../services/learnLessons';
 import { myPCService } from '../services/mypc';
 import { soundManager } from '../services/sound';
+import { setSpatialFocus } from '../services/spatialInput';
 import {
   Volume2,
   VolumeX,
@@ -19,12 +25,11 @@ import {
   ChevronRight,
   ChevronLeft,
   CheckCircle2,
-  Sparkles,
   Lightbulb,
-  GraduationCap,
-  Globe,
+  Lock,
+  Play,
+  LayoutGrid,
   X,
-  Award,
 } from 'lucide-react';
 
 interface LearnModalProps {
@@ -33,6 +38,52 @@ interface LearnModalProps {
 }
 
 export type CheckoMood = 'idle' | 'talking' | 'happy' | 'wrong';
+
+const PIECE_UNICODE: Record<string, string> = {
+  p: '♟',
+  n: '♞',
+  b: '♝',
+  r: '♜',
+  q: '♛',
+  k: '♚',
+};
+
+/**
+ * Compact Checko SVG Icon for buttons (Main Menu & Header)
+ */
+export const CheckoButtonIcon: React.FC<{ className?: string }> = ({ className = 'w-6 h-6' }) => (
+  <svg viewBox="0 0 120 120" className={className}>
+    <circle cx="60" cy="64" r="52" fill="rgba(251, 191, 36, 0.18)" />
+    <path
+      d="M 30 92 C 26 62, 40 38, 62 38 C 82 38, 92 56, 88 92 Z"
+      fill="#ffffff"
+      stroke="#cbd5e1"
+      strokeWidth="4"
+    />
+    <path
+      d="M 48 39 C 44 20, 56 14, 60 28 C 64 12, 76 14, 72 30 C 80 18, 88 28, 76 41 Z"
+      fill="#ef4444"
+      stroke="#b91c1c"
+      strokeWidth="3"
+      strokeLinejoin="round"
+    />
+    <path
+      d="M 76 58 C 74 70, 86 72, 84 60 Z"
+      fill="#ef4444"
+      stroke="#b91c1c"
+      strokeWidth="2.5"
+    />
+    <circle cx="69" cy="48" r="5" fill="#0f172a" />
+    <circle cx="70.5" cy="46.5" r="1.8" fill="#ffffff" />
+    <polygon
+      points="79,47 102,54 79,60"
+      fill="#f59e0b"
+      stroke="#b45309"
+      strokeWidth="3"
+      strokeLinejoin="round"
+    />
+  </svg>
+);
 
 /**
  * Cartoon SVG Illustration of Checko — The Beloved White Rooster Teacher (Raised from Week 1!)
@@ -61,14 +112,14 @@ export const CheckoMascot: React.FC<{
     size === 'sm'
       ? 'w-12 h-12'
       : size === 'lg'
-      ? 'w-28 h-28 sm:w-32 sm:h-32'
-      : 'w-20 h-20 sm:w-24 sm:h-24';
+      ? 'w-24 h-24 sm:w-28 sm:h-28'
+      : 'w-16 h-16 sm:w-20 sm:h-20';
 
   return (
     <button
       type="button"
       onClick={onClick}
-      title="Checko the White Rooster — Click to hear Checko!"
+      title="Checko — Click to hear Checko!"
       className={`relative ${sizeClass} rounded-2xl bg-gradient-to-br from-amber-500/20 via-slate-900 to-emerald-500/20 border-2 ${
         mood === 'happy'
           ? 'border-emerald-400 shadow-[0_0_24px_rgba(52,211,153,0.45)]'
@@ -79,12 +130,10 @@ export const CheckoMascot: React.FC<{
           : 'border-amber-400/60 shadow-lg'
       } flex items-center justify-center p-1.5 transition-all cursor-pointer shrink-0 group overflow-visible`}
     >
-      {/* Sound Wave Ring while speaking */}
       {isSpeaking && (
         <span className="absolute -inset-1 rounded-2xl border-2 border-sky-400/60 animate-ping pointer-events-none" />
       )}
 
-      {/* Cartoon SVG of Checko the White Rooster */}
       <svg
         viewBox="0 0 120 120"
         className={`w-full h-full overflow-visible transition-transform duration-300 ${
@@ -97,10 +146,9 @@ export const CheckoMascot: React.FC<{
             : 'group-hover:scale-105'
         }`}
       >
-        {/* Warm Halo Glow */}
         <circle cx="60" cy="64" r="46" fill="rgba(251, 191, 36, 0.12)" />
 
-        {/* Fluffy White Tail Feathers (Left) */}
+        {/* Fluffy White Tail Feathers */}
         <path
           d="M 28 74 C 10 64, 10 42, 26 46 C 14 34, 24 22, 36 36"
           fill="#f8fafc"
@@ -117,7 +165,7 @@ export const CheckoMascot: React.FC<{
           strokeWidth="2.5"
         />
 
-        {/* Soft Wing Feather Detail (Flaps up when happy!) */}
+        {/* Soft Wing Feather Detail */}
         <path
           d={
             mood === 'happy'
@@ -130,7 +178,7 @@ export const CheckoMascot: React.FC<{
           strokeLinecap="round"
         />
 
-        {/* Bright Red Rooster Comb (3 proud crowns on top of Checko's head) */}
+        {/* Bright Red Rooster Comb */}
         <path
           d="M 48 39 C 44 22, 56 16, 60 28 C 64 14, 76 16, 72 30 C 80 20, 88 28, 76 41 Z"
           fill="#ef4444"
@@ -149,7 +197,6 @@ export const CheckoMascot: React.FC<{
 
         {/* Expressive Eye */}
         {mood === 'happy' ? (
-          // Happy curved smiling eye
           <path
             d="M 64 48 Q 69 42 74 48"
             fill="none"
@@ -180,10 +227,9 @@ export const CheckoMascot: React.FC<{
         {/* Warm Rosy Cheek */}
         <ellipse cx="62" cy="56" rx="4.5" ry="2.8" fill="#fca5a5" opacity="0.7" />
 
-        {/* Golden Beak (Opens & closes when speaking!) */}
+        {/* Golden Beak */}
         {beakOpen || mood === 'happy' ? (
           <g>
-            {/* Upper Beak */}
             <polygon
               points="79,47 100,51 79,55"
               fill="#f59e0b"
@@ -191,9 +237,7 @@ export const CheckoMascot: React.FC<{
               strokeWidth="2"
               strokeLinejoin="round"
             />
-            {/* Open Mouth Interior */}
             <polygon points="79,54 93,56 79,60" fill="#dc2626" />
-            {/* Lower Beak */}
             <polygon
               points="79,55 96,60 79,61"
               fill="#fbbf24"
@@ -212,7 +256,7 @@ export const CheckoMascot: React.FC<{
           />
         )}
 
-        {/* Coach Checko's Chess Knight Gold Medal Ribbon around neck */}
+        {/* Coach Checko's Chess Knight Gold Medal Ribbon */}
         <path
           d="M 46 82 Q 62 90 78 82"
           fill="none"
@@ -238,18 +282,8 @@ export const CheckoMascot: React.FC<{
         >
           ♞
         </text>
-
-        {/* Celebratory Stars when Happy */}
-        {mood === 'happy' && (
-          <g fill="#fbbf24">
-            <circle cx="22" cy="24" r="3" />
-            <circle cx="96" cy="26" r="3.5" />
-            <circle cx="102" cy="44" r="2.5" />
-          </g>
-        )}
       </svg>
 
-      {/* Name Tag Badge */}
       <span className="absolute -bottom-2 px-2 py-0.5 rounded-full bg-amber-400 text-slate-950 font-black text-[9px] sm:text-[10px] uppercase tracking-wider shadow border border-amber-200">
         Checko
       </span>
@@ -258,10 +292,28 @@ export const CheckoMascot: React.FC<{
 };
 
 export const LearnModal: React.FC<LearnModalProps> = ({ settings, onClose }) => {
-  // Language state ('en' | 'fr' | 'es' | 'ar') initialized from MyPC SDK or browser
-  const [lang, setLang] = useState<LearnLanguage>(() => myPCService.getLanguage());
+  // Language comes automatically from MyPC user basic configs (MyPC.info().lang: 'en' | 'fr' | 'es' | 'ar')
+  const lang: LearnLanguage = myPCService.getLanguage();
   const ui = LEARN_UI_TEXT[lang] || LEARN_UI_TEXT.en;
   const isRtl = lang === 'ar';
+
+  // Curriculum data (loaded from lessons.json with runtime refresh)
+  const [tiers, setTiers] = useState<LearnTier[]>(LEARN_TIERS);
+  const [categories, setCategories] = useState<LearnCategory[]>(LEARN_CATEGORIES);
+  const [lessons, setLessons] = useState<LearnLesson[]>(LEARN_LESSONS);
+
+  useEffect(() => {
+    let mounted = true;
+    loadRuntimeLessonsData().then((payload) => {
+      if (!mounted) return;
+      if (payload.tiers?.length) setTiers(payload.tiers);
+      if (payload.categories?.length) setCategories(payload.categories);
+      if (payload.lessons?.length) setLessons(payload.lessons);
+    });
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   // Auto-voice narration state
   const [autoVoice, setAutoVoice] = useState<boolean>(() =>
@@ -274,12 +326,17 @@ export const LearnModal: React.FC<LearnModalProps> = ({ settings, onClose }) => 
     myPCService.load<string[]>('checko_completed_lessons', [])
   );
 
-  // Selected Tier & Active Lesson/Step state
+  // Selected Tier (last played level), Selected Category, and Active Lesson/Step state
   const [selectedTierId, setSelectedTierId] = useState<LearnTierId>(() =>
     myPCService.load<LearnTierId>('checko_selected_tier', 'beginner')
   );
-  const [viewMode, setViewMode] = useState<'levels' | 'lesson'>('levels');
-  const [activeLessonId, setActiveLessonId] = useState<string>('beg_pawn');
+  const [selectedCategoryId, setSelectedCategoryId] = useState<string>(() =>
+    myPCService.load<string>('checko_selected_category', 'beg_cat_pieces')
+  );
+  const [viewMode, setViewMode] = useState<'levels' | 'categories' | 'lesson'>('levels');
+  const [activeLessonId, setActiveLessonId] = useState<string>(() =>
+    myPCService.load<string>('checko_last_lesson', 'beg_01_pawn_push')
+  );
   const [activeStepIdx, setActiveStepIdx] = useState<number>(0);
 
   // Interactive Board State for the active step
@@ -289,28 +346,98 @@ export const LearnModal: React.FC<LearnModalProps> = ({ settings, onClose }) => 
   const [lastMove, setLastMove] = useState<{ from: Square; to: Square } | null>(null);
   const [stepStatus, setStepStatus] = useState<'prompt' | 'correct' | 'wrong'>('prompt');
   const [checkoMood, setCheckoMood] = useState<CheckoMood>('idle');
+  const [customNotice, setCustomNotice] = useState<string | null>(null);
+
+  // Refs for TV remote auto-focus
+  const continueBtnRef = useRef<HTMLButtonElement | null>(null);
+  const nextBtnRef = useRef<HTMLButtonElement | null>(null);
+  const activeLessonBtnRef = useRef<HTMLButtonElement | null>(null);
+  const categoryNextLessonBtnRef = useRef<HTMLButtonElement | null>(null);
+
+  /**
+   * Sequential Unlocking Rule:
+   * Within each level (tier), Lesson 0 is unlocked from the start.
+   * Lesson `i` (i > 0) is unlocked if and only if Lesson `i - 1` is completed (or Lesson `i` itself is already completed).
+   * Once unlocked, a lesson can be replayed anytime.
+   */
+  const isLessonUnlocked = useCallback(
+    (lessonId: string): boolean => {
+      const lesson = lessons.find((l) => l.id === lessonId);
+      if (!lesson) return false;
+      if (completedLessons.includes(lessonId)) return true;
+      const tierLessonsList = lessons.filter((l) => l.tierId === lesson.tierId);
+      const idx = tierLessonsList.findIndex((l) => l.id === lessonId);
+      if (idx <= 0) return true;
+      return completedLessons.includes(tierLessonsList[idx - 1].id);
+    },
+    [lessons, completedLessons]
+  );
+
+  // Get the next lesson the user should play in a given tier (first uncompleted unlocked lesson, or last lesson if all done)
+  const getNextPlayableLessonForTier = useCallback(
+    (tierId: LearnTierId): LearnLesson | undefined => {
+      const list = lessons.filter((l) => l.tierId === tierId);
+      if (!list.length) return undefined;
+      const firstUncompleted = list.find((l) => !completedLessons.includes(l.id));
+      return firstUncompleted || list[list.length - 1];
+    },
+    [lessons, completedLessons]
+  );
+
+  // Resolve a lesson's categoryId (even if a custom lesson in lessons.json omitted categoryId)
+  const getLessonCategoryId = useCallback(
+    (lesson: LearnLesson): string => {
+      if (lesson.categoryId) return lesson.categoryId;
+      const tierCats = categories.filter((c) => c.tierId === lesson.tierId);
+      if (!tierCats.length) return '';
+      const tierList = lessons.filter((l) => l.tierId === lesson.tierId);
+      const idx = Math.max(0, tierList.findIndex((l) => l.id === lesson.id));
+      const catIdx = Math.min(
+        tierCats.length - 1,
+        Math.floor((idx / Math.max(1, tierList.length)) * tierCats.length)
+      );
+      return tierCats[catIdx].id;
+    },
+    [categories, lessons]
+  );
 
   const activeLesson = useMemo(
-    () => LEARN_LESSONS.find((l) => l.id === activeLessonId) || LEARN_LESSONS[0],
-    [activeLessonId]
+    () => lessons.find((l) => l.id === activeLessonId) || lessons[0],
+    [lessons, activeLessonId]
   );
 
   const activeStep = useMemo(
-    () => activeLesson.steps[activeStepIdx] || activeLesson.steps[0],
+    () => activeLesson?.steps[activeStepIdx] || activeLesson?.steps[0],
     [activeLesson, activeStepIdx]
   );
 
-  const tierLessons = useMemo(
-    () => LEARN_LESSONS.filter((l) => l.tierId === selectedTierId),
-    [selectedTierId]
-  );
-
   const activeTier = useMemo(
-    () => LEARN_TIERS.find((t) => t.id === selectedTierId) || LEARN_TIERS[0],
-    [selectedTierId]
+    () => tiers.find((t) => t.id === selectedTierId) || tiers[0],
+    [tiers, selectedTierId]
   );
 
-  // Speak text through MyPC AI TTS (with Checko talking animation)
+  const tierCategories = useMemo(
+    () => categories.filter((c) => c.tierId === selectedTierId),
+    [categories, selectedTierId]
+  );
+
+  const activeCategory = useMemo(
+    () =>
+      tierCategories.find((c) => c.id === selectedCategoryId) ||
+      tierCategories[0] ||
+      categories[0],
+    [tierCategories, selectedCategoryId, categories]
+  );
+
+  const categoryLessons = useMemo(
+    () =>
+      lessons.filter(
+        (l) => l.tierId === selectedTierId && getLessonCategoryId(l) === activeCategory?.id
+      ),
+    [lessons, selectedTierId, activeCategory, getLessonCategoryId]
+  );
+
+  // Speak text through MyPC AI TTS
   const triggerCheckoSpeech = useCallback(
     (text: string, forceSpeak: boolean = false) => {
       if (!autoVoice && !forceSpeak) return;
@@ -322,15 +449,37 @@ export const LearnModal: React.FC<LearnModalProps> = ({ settings, onClose }) => 
     [autoVoice, lang]
   );
 
-  // Play Checko's rooster crow greeting on initial mount and stop TTS on unmount
+  // Play Checko's little chick peep greeting on initial mount and stop TTS on unmount
   useEffect(() => {
     soundManager.playSound('checko_crow');
-    const greeting = activeTier.checkoGreeting[lang] || activeTier.checkoGreeting.en;
+    const greeting = activeTier?.checkoGreeting[lang] || activeTier?.checkoGreeting.en || '';
     triggerCheckoSpeech(greeting);
     return () => {
       myPCService.stopSpeech();
     };
   }, []);
+
+  // Auto-focus the default "Continue" button on Screen 1 ('levels') so pressing OK on TV remote continues immediately!
+  useEffect(() => {
+    if (viewMode === 'levels') {
+      const timer = setTimeout(() => {
+        if (continueBtnRef.current) {
+          setSpatialFocus(continueBtnRef.current);
+          continueBtnRef.current.focus();
+        }
+      }, 50);
+      return () => clearTimeout(timer);
+    }
+    if (viewMode === 'categories') {
+      const timer = setTimeout(() => {
+        if (categoryNextLessonBtnRef.current) {
+          setSpatialFocus(categoryNextLessonBtnRef.current);
+          categoryNextLessonBtnRef.current.focus();
+        }
+      }, 50);
+      return () => clearTimeout(timer);
+    }
+  }, [viewMode, selectedCategoryId]);
 
   // Load step FEN whenever activeLessonId or activeStepIdx changes in 'lesson' view
   useEffect(() => {
@@ -346,23 +495,35 @@ export const LearnModal: React.FC<LearnModalProps> = ({ settings, onClose }) => 
     setLastMove(null);
     setStepStatus('prompt');
     setCheckoMood('idle');
+    setCustomNotice(null);
 
     const promptText = activeStep.bubble[lang] || activeStep.bubble.en;
     triggerCheckoSpeech(promptText);
   }, [viewMode, activeLessonId, activeStepIdx, activeStep, lang, triggerCheckoSpeech]);
 
-  const handleLanguageChange = (newLang: LearnLanguage) => {
-    soundManager.playSound('select');
-    setLang(newLang);
-    myPCService.setLanguage(newLang);
-    if (viewMode === 'levels') {
-      const greeting = activeTier.checkoGreeting[newLang] || activeTier.checkoGreeting.en;
-      myPCService.speakText(greeting, newLang, {
-        onStart: () => setIsSpeaking(true),
-        onEnd: () => setIsSpeaking(false),
+  // Keep the active lesson pill visible in the switcher strip
+  useEffect(() => {
+    if (viewMode === 'lesson' && activeLessonBtnRef.current) {
+      activeLessonBtnRef.current.scrollIntoView({
+        behavior: 'smooth',
+        block: 'nearest',
+        inline: 'center',
       });
     }
-  };
+  }, [viewMode, activeLessonId]);
+
+  // Auto-focus the "Next Lesson / Next Step" button as soon as the user plays the correct move!
+  useEffect(() => {
+    if (stepStatus === 'correct') {
+      const timer = setTimeout(() => {
+        if (nextBtnRef.current) {
+          setSpatialFocus(nextBtnRef.current);
+          nextBtnRef.current.focus();
+        }
+      }, 40);
+      return () => clearTimeout(timer);
+    }
+  }, [stepStatus]);
 
   const handleToggleAutoVoice = () => {
     soundManager.playSound('select');
@@ -374,7 +535,7 @@ export const LearnModal: React.FC<LearnModalProps> = ({ settings, onClose }) => 
       setIsSpeaking(false);
     } else {
       const currentBubble =
-        viewMode === 'levels'
+        viewMode !== 'lesson'
           ? activeTier.checkoGreeting[lang]
           : stepStatus === 'correct'
           ? activeStep.success[lang]
@@ -388,20 +549,94 @@ export const LearnModal: React.FC<LearnModalProps> = ({ settings, onClose }) => 
     }
   };
 
-  const handleSelectTier = (tierId: LearnTierId) => {
-    soundManager.playSound('checko_crow');
+  /**
+   * Clicking "Continue" on Screen 1 immediately jumps straight to Screen 3 ('lesson')
+   * at the user's current unlocked lesson in their last played level (no need to click through 3 screens!).
+   */
+  const handleContinueTier = (tierId: LearnTierId, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    soundManager.playSound('game_start');
     setSelectedTierId(tierId);
     myPCService.save('checko_selected_tier', tierId);
-    const tierObj = LEARN_TIERS.find((t) => t.id === tierId);
-    if (tierObj) {
-      triggerCheckoSpeech(tierObj.checkoGreeting[lang]);
+
+    // Check if saved last lesson is in this tier, unlocked, and not yet completed; otherwise pick next playable lesson
+    const savedLesson = lessons.find((l) => l.id === activeLessonId && l.tierId === tierId);
+    const targetLesson =
+      savedLesson && isLessonUnlocked(savedLesson.id) && !completedLessons.includes(savedLesson.id)
+        ? savedLesson
+        : getNextPlayableLessonForTier(tierId);
+
+    if (targetLesson) {
+      const catId = getLessonCategoryId(targetLesson);
+      setSelectedCategoryId(catId);
+      myPCService.save('checko_selected_category', catId);
+      setActiveLessonId(targetLesson.id);
+      myPCService.save('checko_last_lesson', targetLesson.id);
+      setActiveStepIdx(0);
+      setViewMode('lesson');
     }
   };
 
+  /**
+   * Clicking a Level card (or "Categories") opens Screen 2 ('categories' — sublevels screen)
+   * with the user's active category pre-selected.
+   */
+  const handleOpenTierCategories = (tierId: LearnTierId, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    soundManager.playSound('checko_crow');
+    setSelectedTierId(tierId);
+    myPCService.save('checko_selected_tier', tierId);
+
+    const nextLesson = getNextPlayableLessonForTier(tierId);
+    const tierCats = categories.filter((c) => c.tierId === tierId);
+    const targetCatId = nextLesson
+      ? getLessonCategoryId(nextLesson)
+      : tierCats[0]?.id || '';
+
+    if (targetCatId) {
+      setSelectedCategoryId(targetCatId);
+      myPCService.save('checko_selected_category', targetCatId);
+    }
+    setCustomNotice(null);
+    setViewMode('categories');
+  };
+
+  /**
+   * Selecting a Category in Screen 2 ('categories')
+   */
+  const handleSelectCategory = (catId: string) => {
+    soundManager.playSound('select');
+    setSelectedCategoryId(catId);
+    myPCService.save('checko_selected_category', catId);
+    setCustomNotice(null);
+  };
+
+  /**
+   * Starting a specific lesson from Screen 2 ('categories') or the Screen 3 switcher bar.
+   * Enforces sequential unlocking: if the lesson is locked, plays wrong sound and Checko explains why.
+   */
   const handleStartLesson = (lessonId: string) => {
+    if (!isLessonUnlocked(lessonId)) {
+      soundManager.playSound('checko_wrong');
+      setCheckoMood('wrong');
+      setCustomNotice(ui.lockedMessage);
+      triggerCheckoSpeech(ui.lockedMessage, true);
+      return;
+    }
+
+    const target = lessons.find((l) => l.id === lessonId);
+    if (!target) return;
+
     soundManager.playSound('game_start');
-    setActiveLessonId(lessonId);
+    const catId = getLessonCategoryId(target);
+    setSelectedTierId(target.tierId);
+    setSelectedCategoryId(catId);
+    setActiveLessonId(target.id);
     setActiveStepIdx(0);
+    setCustomNotice(null);
+    myPCService.save('checko_selected_tier', target.tierId);
+    myPCService.save('checko_selected_category', catId);
+    myPCService.save('checko_last_lesson', target.id);
     setViewMode('lesson');
   };
 
@@ -417,6 +652,7 @@ export const LearnModal: React.FC<LearnModalProps> = ({ settings, onClose }) => 
     setLastMove(null);
     setStepStatus('prompt');
     setCheckoMood('idle');
+    setCustomNotice(null);
     triggerCheckoSpeech(activeStep.bubble[lang]);
   };
 
@@ -424,6 +660,7 @@ export const LearnModal: React.FC<LearnModalProps> = ({ settings, onClose }) => 
     soundManager.playSound('checko_crow');
     setStepStatus('wrong');
     setCheckoMood('wrong');
+    setCustomNotice(null);
     triggerCheckoSpeech(activeStep.hint[lang], true);
   };
 
@@ -435,20 +672,23 @@ export const LearnModal: React.FC<LearnModalProps> = ({ settings, onClose }) => 
     );
 
     if (!isExpected) {
-      // Wrong move — Checko clucks gently and shows hint arrow
       soundManager.playSound('checko_wrong');
       setStepStatus('wrong');
       setCheckoMood('wrong');
+      setCustomNotice(null);
       setSelectedSquare(null);
       setValidMoves([]);
       triggerCheckoSpeech(activeStep.hint[lang]);
       return;
     }
 
-    // Correct move! Execute on board and celebrate with Checko!
+    // Correct move! Execute on board and auto-focus Next Lesson button
     try {
       const nextChess = new Chess(chess.fen());
-      const mv = nextChess.move({ from, to, promotion: 'q' });
+      const pieceOnFrom = nextChess.get(from);
+      const isPromo =
+        pieceOnFrom?.type === 'p' && (to[1] === '8' || to[1] === '1');
+      const mv = nextChess.move(isPromo ? { from, to, promotion: 'q' } : { from, to });
       if (!mv) {
         soundManager.playSound('checko_wrong');
         return;
@@ -459,10 +699,10 @@ export const LearnModal: React.FC<LearnModalProps> = ({ settings, onClose }) => 
       setValidMoves([]);
       setStepStatus('correct');
       setCheckoMood('happy');
+      setCustomNotice(null);
       soundManager.playSound('checko_correct');
       triggerCheckoSpeech(activeStep.success[lang]);
 
-      // If this was the final step of the lesson, mark the lesson completed
       if (activeStepIdx + 1 >= activeLesson.steps.length) {
         setCompletedLessons((prev) => {
           if (prev.includes(activeLesson.id)) return prev;
@@ -527,84 +767,75 @@ export const LearnModal: React.FC<LearnModalProps> = ({ settings, onClose }) => 
       setActiveStepIdx((prev) => prev + 1);
       return;
     }
-    // Advance to next lesson in curriculum
-    const currentIdx = LEARN_LESSONS.findIndex((l) => l.id === activeLesson.id);
-    if (currentIdx !== -1 && currentIdx + 1 < LEARN_LESSONS.length) {
-      const nextLesson = LEARN_LESSONS[currentIdx + 1];
+    const currentIdx = lessons.findIndex((l) => l.id === activeLesson.id);
+    if (currentIdx !== -1 && currentIdx + 1 < lessons.length) {
+      const nextLesson = lessons[currentIdx + 1];
+      const nextCatId = getLessonCategoryId(nextLesson);
       soundManager.playSound('checko_crow');
       setSelectedTierId(nextLesson.tierId);
+      setSelectedCategoryId(nextCatId);
       setActiveLessonId(nextLesson.id);
       setActiveStepIdx(0);
+      myPCService.save('checko_selected_tier', nextLesson.tierId);
+      myPCService.save('checko_selected_category', nextCatId);
+      myPCService.save('checko_last_lesson', nextLesson.id);
     } else {
       soundManager.playSound('checko_crow');
       setViewMode('levels');
     }
   };
 
-  const currentBubbleText =
-    viewMode === 'levels'
-      ? activeTier.checkoGreeting[lang] || activeTier.checkoGreeting.en
-      : stepStatus === 'correct'
-      ? activeStep.success[lang] || activeStep.success.en
-      : stepStatus === 'wrong'
-      ? activeStep.hint[lang] || activeStep.hint.en
-      : activeStep.bubble[lang] || activeStep.bubble.en;
+  const currentBubbleText = customNotice
+    ? customNotice
+    : viewMode !== 'lesson'
+    ? activeTier?.checkoGreeting[lang] || activeTier?.checkoGreeting.en || ''
+    : stepStatus === 'correct'
+    ? activeStep?.success[lang] || activeStep?.success.en || ''
+    : stepStatus === 'wrong'
+    ? activeStep?.hint[lang] || activeStep?.hint.en || ''
+    : activeStep?.bubble[lang] || activeStep?.bubble.en || '';
 
   const displayedArrows: BoardArrow[] =
-    stepStatus === 'correct' ? [] : activeStep.arrows || [];
+    stepStatus === 'correct' ? [] : activeStep?.arrows || [];
 
   const displayedHighlights: Square[] =
-    stepStatus === 'correct' ? [] : activeStep.highlightSquares || [];
+    stepStatus === 'correct' ? [] : activeStep?.highlightSquares || [];
 
-  const languages: { code: LearnLanguage; label: string }[] = [
-    { code: 'en', label: 'EN' },
-    { code: 'fr', label: 'FR' },
-    { code: 'es', label: 'ES' },
-    { code: 'ar', label: 'العربية' },
-  ];
+  // Find the first uncompleted unlocked lesson in the active category for auto-focus in Screen 2
+  const nextCategoryLessonId = useMemo(() => {
+    const uncompletedUnlocked = categoryLessons.find(
+      (l) => !completedLessons.includes(l.id) && isLessonUnlocked(l.id)
+    );
+    if (uncompletedUnlocked) return uncompletedUnlocked.id;
+    const lastUnlocked = [...categoryLessons].reverse().find((l) => isLessonUnlocked(l.id));
+    return lastUnlocked?.id || categoryLessons[0]?.id;
+  }, [categoryLessons, completedLessons, isLessonUnlocked]);
 
   return (
     <div
       data-tv-modal="true"
       className="fixed inset-0 z-50 bg-[#12110f]/95 backdrop-blur-md flex flex-col items-center justify-between p-2 sm:p-4 overflow-hidden select-none"
     >
-      <div className="w-full max-w-6xl h-full flex flex-col gap-2.5 overflow-hidden">
-        {/* TOP HEADER BAR: Title + Language Selector (EN/FR/ES/AR) + Voice Toggle + Close */}
-        <div className="flex flex-wrap items-center justify-between gap-2 bg-[#201e1b] border border-slate-800 rounded-2xl px-3.5 py-2.5 shrink-0 shadow-lg">
+      <div className="w-full max-w-6xl h-full flex flex-col gap-3 overflow-hidden">
+        {/* STREAMLINED TOP HEADER BAR */}
+        <div className="flex items-center justify-between gap-2 bg-[#201e1b] border border-slate-800 rounded-2xl px-4 py-2.5 shrink-0 shadow-lg">
           <div className="flex items-center gap-2.5 min-w-0">
-            <div className="p-2 rounded-xl bg-amber-500/20 border border-amber-400/40 text-amber-300 shrink-0">
-              <GraduationCap size={22} />
+            <div className="w-9 h-9 rounded-xl bg-amber-500/20 border border-amber-400/40 flex items-center justify-center shrink-0">
+              <CheckoButtonIcon className="w-7 h-7" />
             </div>
-            <div className="min-w-0">
-              <h2 className="font-black text-base sm:text-lg text-white truncate">
-                {ui.academyTitle}
-              </h2>
-              <p className="text-[11px] text-amber-300/90 font-medium truncate hidden sm:block">
-                {ui.academySubtitle}
-              </p>
-            </div>
+            <h2 className="font-black text-base sm:text-xl text-white truncate">
+              {ui.academyTitle}
+            </h2>
+            {viewMode !== 'levels' && activeTier && (
+              <span
+                className={`hidden sm:inline-block px-2.5 py-0.5 rounded-full bg-gradient-to-r ${activeTier.badgeColor} text-white font-mono font-black text-xs shadow`}
+              >
+                {activeTier.title[lang] || activeTier.title.en}
+              </span>
+            )}
           </div>
 
-          <div className="flex items-center gap-2 flex-wrap">
-            {/* Language Selector Pills */}
-            <div className="flex items-center bg-slate-900 border border-slate-700 rounded-xl p-0.5">
-              <Globe size={14} className="text-slate-400 mx-1.5 hidden sm:inline" />
-              {languages.map((l) => (
-                <button
-                  key={l.code}
-                  type="button"
-                  onClick={() => handleLanguageChange(l.code)}
-                  className={`px-2.5 py-1 rounded-lg text-xs font-extrabold transition-colors cursor-pointer ${
-                    lang === l.code
-                      ? 'bg-amber-400 text-slate-950 shadow'
-                      : 'text-slate-300 hover:text-white'
-                  }`}
-                >
-                  {l.label}
-                </button>
-              ))}
-            </div>
-
+          <div className="flex items-center gap-2">
             {/* Auto-Voice TTS Toggle */}
             <button
               type="button"
@@ -624,6 +855,22 @@ export const LearnModal: React.FC<LearnModalProps> = ({ settings, onClose }) => 
                 type="button"
                 onClick={() => {
                   soundManager.playSound('click');
+                  setCustomNotice(null);
+                  setViewMode('categories');
+                }}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-600 text-amber-300 text-xs font-bold transition-colors cursor-pointer"
+              >
+                <LayoutGrid size={14} />
+                <span>{ui.categoriesBtn}</span>
+              </button>
+            )}
+
+            {viewMode !== 'levels' && (
+              <button
+                type="button"
+                onClick={() => {
+                  soundManager.playSound('click');
+                  setCustomNotice(null);
                   setViewMode('levels');
                 }}
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-600 text-slate-200 text-xs font-bold transition-colors cursor-pointer"
@@ -648,14 +895,14 @@ export const LearnModal: React.FC<LearnModalProps> = ({ settings, onClose }) => 
         </div>
 
         {/* =================================================================== */}
-        {/* VIEW 1: LEVEL & ELO SELECTOR + CURRICULUM OVERVIEW                  */}
+        {/* SCREEN 1: MAIN LEARN SCREEN (4 LEVELS + AUTO-FOCUSED CONTINUE)      */}
         {/* =================================================================== */}
         {viewMode === 'levels' && (
-          <div className="flex-1 min-h-0 flex flex-col gap-3 overflow-y-auto pr-1">
-            {/* Checko Welcome Speech Banner */}
+          <div className="flex-1 min-h-0 flex flex-col justify-center gap-3.5 max-w-5xl mx-auto w-full px-1 overflow-y-auto">
+            {/* Compact Checko Greeting Bar */}
             <div
               dir={isRtl ? 'rtl' : 'ltr'}
-              className="bg-gradient-to-r from-[#26231e] via-[#1e1c18] to-[#26231e] border-2 border-amber-400/50 rounded-2xl p-3.5 sm:p-4 flex items-center gap-4 shadow-xl shrink-0"
+              className="bg-[#1e1c18] border-2 border-amber-400/50 rounded-2xl p-3 flex items-center gap-4 shadow-xl shrink-0"
             >
               <CheckoMascot
                 mood="happy"
@@ -666,155 +913,290 @@ export const LearnModal: React.FC<LearnModalProps> = ({ settings, onClose }) => 
                   triggerCheckoSpeech(currentBubbleText, true);
                 }}
               />
-
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center justify-between gap-2 mb-1">
-                  <span className="text-xs font-black uppercase tracking-wider text-amber-400">
-                    🐓 {ui.checkoRole}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => triggerCheckoSpeech(currentBubbleText, true)}
-                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-amber-400/20 hover:bg-amber-400/30 border border-amber-400/50 text-amber-200 text-xs font-bold cursor-pointer"
-                  >
-                    <Volume2 size={13} />
-                    <span>{ui.speakBtn}</span>
-                  </button>
-                </div>
-                <p className="text-sm sm:text-base font-bold text-white leading-snug">
-                  “{currentBubbleText}”
-                </p>
-              </div>
+              <p className="flex-1 text-sm sm:text-base font-bold text-white leading-snug">
+                “{currentBubbleText}”
+              </p>
             </div>
 
-            {/* 4 Skill Tiers Grid (Select Level with Words & Elo Option) */}
-            <div dir={isRtl ? 'rtl' : 'ltr'} className="grid grid-cols-1 md:grid-cols-4 gap-2.5 shrink-0">
-              {LEARN_TIERS.map((tier, idx) => {
-                const isSelected = selectedTierId === tier.id;
-                const lessonsForTier = LEARN_LESSONS.filter((l) => l.tierId === tier.id);
+            {/* 4 Skill Level Cards — Last played level is highlighted & auto-focused with "Continue"! */}
+            <div
+              dir={isRtl ? 'rtl' : 'ltr'}
+              className="grid grid-cols-1 sm:grid-cols-2 gap-3.5"
+            >
+              {tiers.map((tier) => {
+                const lessonsForTier = lessons.filter((l) => l.tierId === tier.id);
                 const doneCount = lessonsForTier.filter((l) =>
                   completedLessons.includes(l.id)
                 ).length;
+                const isLastPlayedTier = tier.id === selectedTierId;
+                const nextLesson = getNextPlayableLessonForTier(tier.id);
+                const progressPct = lessonsForTier.length
+                  ? Math.round((doneCount / lessonsForTier.length) * 100)
+                  : 0;
 
                 return (
-                  <button
+                  <div
                     key={tier.id}
-                    type="button"
-                    data-tv-autofocus={idx === 0 ? 'true' : undefined}
-                    onClick={() => handleSelectTier(tier.id)}
-                    className={`flex flex-col justify-between p-3.5 rounded-2xl border-2 text-left transition-all cursor-pointer ${
-                      isSelected
-                        ? 'bg-slate-900 border-amber-400 ring-2 ring-amber-400/40 shadow-xl'
-                        : 'bg-[#1c1a17] hover:bg-slate-900/80 border-slate-800 hover:border-slate-700'
+                    onClick={() => handleOpenTierCategories(tier.id)}
+                    className={`group flex flex-col justify-between gap-3 p-4 sm:p-5 rounded-2xl border-2 transition-all cursor-pointer shadow-lg ${
+                      isLastPlayedTier
+                        ? 'bg-gradient-to-br from-amber-500/15 via-[#1c1a17] to-emerald-500/10 border-amber-400 shadow-[0_0_25px_rgba(251,191,36,0.2)]'
+                        : 'bg-[#1c1a17] hover:bg-slate-900 border-slate-800 hover:border-slate-600'
                     }`}
                   >
                     <div>
-                      <div className="flex items-center justify-between gap-2 mb-1.5">
-                        <span
-                          className={`px-2.5 py-0.5 rounded-full bg-gradient-to-r ${tier.badgeColor} text-white font-mono font-black text-xs shadow`}
-                        >
-                          {tier.eloRange}
-                        </span>
-                        <span className="text-[11px] font-mono font-bold text-emerald-400">
-                          {doneCount}/{lessonsForTier.length} {ui.lessonsCompleted}
-                        </span>
+                      <div className="flex items-center justify-between gap-2 mb-2">
+                        <div className="flex items-center gap-2">
+                          <span
+                            className={`px-2.5 py-0.5 rounded-full bg-gradient-to-r ${tier.badgeColor} text-white font-mono font-black text-xs shadow`}
+                          >
+                            {tier.eloRange}
+                          </span>
+                          <span className="text-xs font-mono font-bold text-emerald-400">
+                            {doneCount}/{lessonsForTier.length} {ui.lessonsCompleted}
+                          </span>
+                        </div>
+
+                        {isLastPlayedTier && (
+                          <span className="px-2 py-0.5 rounded-md bg-amber-400/20 border border-amber-400/50 text-amber-300 font-black text-[10px] uppercase tracking-wider">
+                            ★ {ui.continueBtn}
+                          </span>
+                        )}
                       </div>
-                      <h3 className="text-base sm:text-lg font-black text-white">
-                        {tier.title[lang]}
+
+                      <h3 className="text-lg sm:text-xl font-black text-white truncate">
+                        {tier.title[lang] || tier.title.en}
                       </h3>
-                      <div className="text-xs font-bold text-amber-300 mt-0.5">
-                        {tier.levelWords[lang]}
+                      <div className="text-xs sm:text-sm font-bold text-amber-300/90 truncate mt-0.5">
+                        {tier.levelWords[lang] || tier.levelWords.en}
                       </div>
-                      <p className="text-xs text-slate-300 mt-1.5 line-clamp-2">
-                        {tier.description[lang]}
-                      </p>
+
+                      {/* Next Unlocked Lesson Preview */}
+                      {nextLesson && (
+                        <div className="mt-2.5 px-3 py-1.5 rounded-xl bg-slate-900/90 border border-slate-800 flex items-center justify-between gap-2">
+                          <span className="text-xs text-slate-300 font-bold truncate">
+                            {PIECE_UNICODE[nextLesson.pieceIcon]}{' '}
+                            {nextLesson.title[lang] || nextLesson.title.en}
+                          </span>
+                          <span className="text-[11px] font-mono text-amber-400 shrink-0">
+                            {progressPct}%
+                          </span>
+                        </div>
+                      )}
                     </div>
 
-                    <div className="mt-3 pt-2 border-t border-slate-800 flex items-center justify-between">
-                      <span className="text-xs font-bold text-slate-400">
-                        {lessonsForTier.length} Lessons
-                      </span>
-                      <span
-                        className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-black ${
-                          isSelected
-                            ? 'bg-amber-400 text-slate-950'
-                            : 'bg-slate-800 text-slate-200'
+                    {/* Action Buttons Row: Auto-focused "Continue" (jumps straight to lesson!) + "Categories" (opens Screen 2) */}
+                    <div className="flex items-center gap-2 pt-1">
+                      {isLastPlayedTier ? (
+                        <>
+                          <button
+                            ref={continueBtnRef}
+                            type="button"
+                            data-tv-autofocus="true"
+                            onClick={(e) => handleContinueTier(tier.id, e)}
+                            className="flex-1 flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 font-black text-xs sm:text-sm shadow-lg transition-transform active:scale-95 cursor-pointer"
+                          >
+                            <Play size={16} fill="currentColor" />
+                            <span>{ui.continueBtn}</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(e) => handleOpenTierCategories(tier.id, e)}
+                            className="flex items-center justify-center gap-1.5 py-2.5 px-3.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-600 text-slate-200 font-bold text-xs sm:text-sm transition-colors cursor-pointer"
+                          >
+                            <LayoutGrid size={15} />
+                            <span>{ui.categoriesBtn}</span>
+                          </button>
+                        </>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={(e) => handleOpenTierCategories(tier.id, e)}
+                          className="w-full flex items-center justify-between py-2.5 px-4 rounded-xl bg-slate-800/90 group-hover:bg-slate-800 border border-slate-700 group-hover:border-amber-400/60 text-white font-bold text-xs sm:text-sm transition-all cursor-pointer"
+                        >
+                          <span>
+                            {doneCount > 0 ? ui.continueBtn : ui.startLearning} • {ui.categoriesBtn}
+                          </span>
+                          <ChevronRight size={18} className="text-amber-400" />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* =================================================================== */}
+        {/* SCREEN 2: SUBLEVEL CATEGORIES & SEQUENTIAL LOCKED/UNLOCKED LESSONS  */}
+        {/* =================================================================== */}
+        {viewMode === 'categories' && (
+          <div
+            dir={isRtl ? 'rtl' : 'ltr'}
+            className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-[1fr_1.35fr] gap-4 overflow-hidden px-1"
+          >
+            {/* LEFT COLUMN: 4 SUBLEVEL CATEGORIES FOR THIS TIER */}
+            <div className="flex flex-col gap-2.5 overflow-y-auto pr-1">
+              {tierCategories.map((cat) => {
+                const catLessonsList = lessons.filter(
+                  (l) => l.tierId === selectedTierId && getLessonCategoryId(l) === cat.id
+                );
+                const doneInCat = catLessonsList.filter((l) =>
+                  completedLessons.includes(l.id)
+                ).length;
+                const isSelectedCat = cat.id === activeCategory?.id;
+                const isCatUnlocked =
+                  catLessonsList.length === 0 || isLessonUnlocked(catLessonsList[0].id);
+
+                return (
+                  <button
+                    key={cat.id}
+                    type="button"
+                    onClick={() => handleSelectCategory(cat.id)}
+                    className={`flex items-center justify-between gap-3 p-4 rounded-2xl border-2 text-left transition-all cursor-pointer ${
+                      isSelectedCat
+                        ? 'bg-gradient-to-r from-amber-500/20 to-[#1f1d19] border-amber-400 shadow-lg'
+                        : isCatUnlocked
+                        ? 'bg-[#1c1a17] hover:bg-slate-900 border-slate-800 hover:border-slate-700'
+                        : 'bg-[#161513] border-slate-900 opacity-75'
+                    }`}
+                  >
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div
+                        className={`w-11 h-11 rounded-xl flex items-center justify-center text-2xl shrink-0 border ${
+                          isSelectedCat
+                            ? 'bg-amber-400 text-slate-950 border-amber-200'
+                            : isCatUnlocked
+                            ? 'bg-slate-800 text-amber-300 border-slate-700'
+                            : 'bg-slate-900 text-slate-500 border-slate-800'
                         }`}
                       >
-                        <span>{ui.startLearning}</span>
-                        <ChevronRight size={14} />
+                        {isCatUnlocked ? PIECE_UNICODE[cat.icon] || '♟' : <Lock size={18} />}
+                      </div>
+
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <h4 className="font-black text-sm sm:text-base text-white truncate">
+                            {cat.title[lang] || cat.title.en}
+                          </h4>
+                        </div>
+                        <p className="text-xs text-slate-400 truncate mt-0.5">
+                          {cat.subtitle[lang] || cat.subtitle.en}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-col items-end shrink-0 gap-1">
+                      <span
+                        className={`px-2 py-0.5 rounded-full font-mono font-black text-xs ${
+                          doneInCat === catLessonsList.length && catLessonsList.length > 0
+                            ? 'bg-emerald-950 text-emerald-400 border border-emerald-700'
+                            : 'bg-slate-800 text-amber-300'
+                        }`}
+                      >
+                        {doneInCat}/{catLessonsList.length}
                       </span>
                     </div>
                   </button>
                 );
               })}
+
+              {/* Checko Notice / Tip Box inside Category View */}
+              <div className="mt-auto bg-[#1e1c18] border border-amber-400/40 rounded-2xl p-3 flex items-center gap-3">
+                <CheckoMascot
+                  mood={customNotice ? 'wrong' : 'happy'}
+                  isSpeaking={isSpeaking}
+                  size="sm"
+                  onClick={() => triggerCheckoSpeech(currentBubbleText, true)}
+                />
+                <p className="text-xs sm:text-sm font-bold text-amber-100 leading-snug">
+                  “{currentBubbleText}”
+                </p>
+              </div>
             </div>
 
-            {/* Lessons List for the Selected Level */}
-            <div
-              dir={isRtl ? 'rtl' : 'ltr'}
-              className="bg-[#1c1a17] border border-slate-800 rounded-2xl p-3.5 sm:p-4 flex-1 flex flex-col justify-between gap-3"
-            >
-              <div className="flex items-center justify-between gap-2">
-                <div className="flex items-center gap-2">
-                  <Award size={18} className="text-amber-400" />
-                  <h3 className="font-black text-sm sm:text-base text-white">
-                    {activeTier.title[lang]} ({activeTier.eloRange}) — {activeTier.levelWords[lang]}
+            {/* RIGHT COLUMN: LESSONS IN THE SELECTED CATEGORY (WITH LOCK / UNLOCK) */}
+            <div className="flex flex-col bg-[#1b1916] border border-slate-800 rounded-3xl p-4 overflow-hidden shadow-xl">
+              <div className="flex items-center justify-between gap-2 pb-3 mb-3 border-b border-slate-800 shrink-0">
+                <div>
+                  <h3 className="text-base sm:text-lg font-black text-white">
+                    {activeCategory?.title[lang] || activeCategory?.title.en}
                   </h3>
+                  <p className="text-xs text-slate-400">
+                    {activeCategory?.subtitle[lang] || activeCategory?.subtitle.en}
+                  </p>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    const firstUnfinished =
-                      tierLessons.find((l) => !completedLessons.includes(l.id)) ||
-                      tierLessons[0];
-                    if (firstUnfinished) {
-                      handleStartLesson(firstUnfinished.id);
-                    }
-                  }}
-                  className="px-4 py-1.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-slate-950 font-black text-xs sm:text-sm shadow-lg cursor-pointer"
-                >
-                  ▶ {ui.startLearning}
-                </button>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
-                {tierLessons.map((lesson) => {
+              <div className="flex-1 overflow-y-auto flex flex-col gap-2 pr-1">
+                {categoryLessons.map((lesson) => {
                   const isDone = completedLessons.includes(lesson.id);
+                  const unlocked = isLessonUnlocked(lesson.id);
+                  const isNextToPlay = lesson.id === nextCategoryLessonId && unlocked;
+
                   return (
                     <button
                       key={lesson.id}
+                      ref={isNextToPlay ? categoryNextLessonBtnRef : undefined}
                       type="button"
+                      data-tv-autofocus={isNextToPlay ? 'true' : undefined}
                       onClick={() => handleStartLesson(lesson.id)}
-                      className={`flex items-center justify-between gap-3 p-3 rounded-xl border text-left transition-all cursor-pointer ${
-                        isDone
-                          ? 'bg-emerald-950/35 border-emerald-500/50 hover:border-emerald-400'
-                          : 'bg-slate-900/90 border-slate-800 hover:border-amber-400/70 hover:bg-slate-900'
+                      className={`flex items-center justify-between gap-3 p-3.5 rounded-2xl border-2 text-left transition-all ${
+                        !unlocked
+                          ? 'bg-slate-950/60 border-slate-900 text-slate-500 opacity-65 cursor-not-allowed'
+                          : isNextToPlay
+                          ? 'bg-amber-500/15 border-amber-400 text-white shadow-md cursor-pointer'
+                          : isDone
+                          ? 'bg-emerald-950/25 hover:bg-emerald-950/40 border-emerald-800/60 text-white cursor-pointer'
+                          : 'bg-slate-900/90 hover:bg-slate-800 border-slate-800 text-white cursor-pointer'
                       }`}
                     >
                       <div className="flex items-center gap-3 min-w-0">
-                        <div className="w-10 h-10 rounded-xl bg-slate-800 border border-slate-700 flex items-center justify-center shrink-0">
-                          <img
-                            src={`assets/pieces/${lesson.pieceIcon}l.svg`}
-                            alt={lesson.pieceIcon}
-                            className="w-7 h-7 object-contain"
-                          />
+                        <div
+                          className={`w-10 h-10 rounded-xl flex items-center justify-center text-xl shrink-0 ${
+                            !unlocked
+                              ? 'bg-slate-900 text-slate-600'
+                              : isDone
+                              ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                              : 'bg-amber-400/20 text-amber-300 border border-amber-400/40'
+                          }`}
+                        >
+                          {!unlocked ? (
+                            <Lock size={16} />
+                          ) : (
+                            <span>{PIECE_UNICODE[lesson.pieceIcon] || '♟'}</span>
+                          )}
                         </div>
+
                         <div className="min-w-0">
-                          <div className="font-bold text-xs sm:text-sm text-white truncate">
-                            {lesson.title[lang]}
+                          <div className="font-black text-sm sm:text-base truncate">
+                            {lesson.title[lang] || lesson.title.en}
                           </div>
-                          <div className="text-[11px] text-slate-400 truncate">
-                            {lesson.subtitle[lang]}
+                          <div className="text-xs text-slate-400 truncate">
+                            {lesson.subtitle[lang] || lesson.subtitle.en}
                           </div>
                         </div>
                       </div>
 
-                      {isDone ? (
-                        <CheckCircle2 size={18} className="text-emerald-400 shrink-0" />
-                      ) : (
-                        <ChevronRight size={18} className="text-amber-400 shrink-0" />
-                      )}
+                      <div className="shrink-0 flex items-center gap-2">
+                        {!unlocked ? (
+                          <span className="px-2.5 py-1 rounded-lg bg-slate-900 border border-slate-800 text-slate-500 font-bold text-xs flex items-center gap-1">
+                            <Lock size={12} />
+                            <span>{ui.lockedBadge}</span>
+                          </span>
+                        ) : isDone ? (
+                          <span className="px-2.5 py-1 rounded-lg bg-emerald-950 border border-emerald-600/60 text-emerald-300 font-bold text-xs flex items-center gap-1">
+                            <CheckCircle2 size={13} />
+                            <span>{ui.lessonsCompleted}</span>
+                          </span>
+                        ) : (
+                          <span className="px-3 py-1.5 rounded-xl bg-amber-400 text-slate-950 font-black text-xs flex items-center gap-1 shadow">
+                            <Play size={12} fill="currentColor" />
+                            <span>{ui.continueBtn}</span>
+                          </span>
+                        )}
+                      </div>
                     </button>
                   );
                 })}
@@ -824,11 +1206,11 @@ export const LearnModal: React.FC<LearnModalProps> = ({ settings, onClose }) => 
         )}
 
         {/* =================================================================== */}
-        {/* VIEW 2: INTERACTIVE LESSON STAGE (BOARD + ARROWS + CHECKO BUBBLE)   */}
+        {/* SCREEN 3: INTERACTIVE LESSON STAGE (BOARD + ARROWS + CHECKO BUBBLE) */}
         {/* =================================================================== */}
-        {viewMode === 'lesson' && (
+        {viewMode === 'lesson' && activeStep && (
           <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-[auto_1fr] items-center gap-4 overflow-y-auto lg:overflow-hidden px-1">
-            {/* LEFT / CENTER: Interactive ChessBoard with Explanatory Arrows & Highlighted Squares */}
+            {/* LEFT / CENTER: Interactive ChessBoard */}
             <div className="flex flex-col items-center justify-center">
               <ChessBoard
                 chess={chess}
@@ -851,36 +1233,55 @@ export const LearnModal: React.FC<LearnModalProps> = ({ settings, onClose }) => 
               dir={isRtl ? 'rtl' : 'ltr'}
               className="flex flex-col justify-between h-full max-h-[80vh] bg-[#1e1c19] border border-slate-800 rounded-3xl p-4 sm:p-5 gap-3 shadow-2xl"
             >
-              {/* Lesson Title & Step Progress Bar */}
+              {/* Compact Category Lesson Switcher Bar & Title */}
               <div>
-                <div className="flex items-center justify-between gap-2 mb-1">
-                  <span className="px-2.5 py-0.5 rounded-full bg-amber-500/20 border border-amber-400/40 text-amber-300 font-mono font-bold text-xs">
-                    {activeTier.eloRange} • {activeTier.title[lang]}
-                  </span>
-                  <span className="text-xs font-mono font-bold text-slate-400">
-                    {ui.stepOf} {activeStepIdx + 1} / {activeLesson.steps.length}
-                  </span>
-                </div>
-                <h3 className="text-lg sm:text-xl font-black text-white">
-                  {activeLesson.title[lang]}
-                </h3>
-                <p className="text-xs text-slate-400">{activeLesson.subtitle[lang]}</p>
+                <div className="flex items-center justify-between gap-2 mb-2">
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <span className="px-2.5 py-0.5 rounded-full bg-amber-500/20 border border-amber-400/40 text-amber-300 font-mono font-bold text-xs">
+                      {activeCategory?.title[lang] || activeTier.eloRange}
+                    </span>
+                    <span className="px-2 py-0.5 rounded-full bg-slate-800 border border-slate-700 text-slate-300 font-mono font-bold text-xs">
+                      {ui.stepOf} {activeStepIdx + 1}/{activeLesson.steps.length}
+                    </span>
+                  </div>
 
-                {/* Step Dots */}
-                <div className="flex items-center gap-1.5 mt-2.5">
-                  {activeLesson.steps.map((st, idx) => (
-                    <div
-                      key={st.id}
-                      className={`h-2 flex-1 rounded-full transition-colors ${
-                        idx < activeStepIdx || (idx === activeStepIdx && stepStatus === 'correct')
-                          ? 'bg-emerald-500'
-                          : idx === activeStepIdx
-                          ? 'bg-amber-400'
-                          : 'bg-slate-800'
-                      }`}
-                    />
-                  ))}
+                  {/* Quick Numbered Lesson Switcher Strip (with Lock enforcement) */}
+                  <div className="flex items-center gap-1 overflow-x-auto max-w-full py-0.5">
+                    {categoryLessons.map((l, i) => {
+                      const isDone = completedLessons.includes(l.id);
+                      const isCurrent = l.id === activeLesson.id;
+                      const unlocked = isLessonUnlocked(l.id);
+                      return (
+                        <button
+                          key={l.id}
+                          ref={isCurrent ? activeLessonBtnRef : undefined}
+                          type="button"
+                          onClick={() => handleStartLesson(l.id)}
+                          className={`px-2.5 py-1 rounded-lg font-mono font-black text-xs flex items-center gap-1 shrink-0 transition-colors ${
+                            isCurrent
+                              ? 'bg-amber-400 text-slate-950 shadow cursor-pointer'
+                              : !unlocked
+                              ? 'bg-slate-900 text-slate-600 border border-slate-800 opacity-60 cursor-not-allowed'
+                              : isDone
+                              ? 'bg-emerald-950 text-emerald-400 border border-emerald-700 cursor-pointer'
+                              : 'bg-slate-800 text-slate-300 hover:text-white cursor-pointer'
+                          }`}
+                        >
+                          <span>{i + 1}</span>
+                          {!unlocked ? (
+                            <Lock size={10} />
+                          ) : (
+                            isDone && !isCurrent && <CheckCircle2 size={11} />
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
+
+                <h3 className="text-lg sm:text-xl font-black text-white">
+                  {activeLesson.title[lang] || activeLesson.title.en}
+                </h3>
               </div>
 
               {/* CHECKO THE WHITE ROOSTER + SPEECH BUBBLE */}
@@ -895,25 +1296,24 @@ export const LearnModal: React.FC<LearnModalProps> = ({ settings, onClose }) => 
                   }}
                 />
 
-                {/* Speech Bubble Box */}
                 <div
                   className={`relative flex-1 rounded-2xl p-4 border-2 shadow-xl transition-colors ${
                     stepStatus === 'correct'
                       ? 'bg-emerald-950/75 border-emerald-400 text-emerald-100'
-                      : stepStatus === 'wrong'
+                      : stepStatus === 'wrong' || customNotice
                       ? 'bg-amber-950/75 border-amber-400 text-amber-100'
                       : 'bg-slate-900/95 border-amber-400/60 text-white'
                   }`}
                 >
                   <div className="flex items-center justify-between gap-2 mb-2">
-                    <span className="text-xs font-black uppercase tracking-wider text-amber-300 flex items-center gap-1.5">
-                      <span>🐓 {ui.checkoRole}</span>
+                    <span className="text-xs font-black uppercase tracking-wider text-amber-300">
+                      {ui.checkoRole}
                     </span>
 
                     <button
                       type="button"
                       onClick={() => triggerCheckoSpeech(currentBubbleText, true)}
-                      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-600 text-amber-300 text-xs font-bold transition-colors cursor-pointer"
+                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-600 text-amber-300 text-xs font-bold transition-colors cursor-pointer"
                     >
                       <Volume2 size={14} />
                       <span>{ui.speakBtn}</span>
@@ -923,21 +1323,14 @@ export const LearnModal: React.FC<LearnModalProps> = ({ settings, onClose }) => 
                   <p className="text-sm sm:text-base font-bold leading-relaxed">
                     “{currentBubbleText}”
                   </p>
-
-                  {/* Goal Legend Pill */}
-                  <div className="mt-3 pt-2.5 border-t border-white/10 flex items-center justify-between gap-2 text-xs">
-                    <span className="text-slate-300 font-medium flex items-center gap-1.5">
-                      <Sparkles size={14} className="text-amber-400 shrink-0" />
-                      <span>{ui.yourGoal}</span>
-                    </span>
-                  </div>
                 </div>
               </div>
 
               {/* BOTTOM LESSON ACTION CONTROLS */}
-              <div className="flex flex-col gap-2.5 pt-2 border-t border-slate-800">
+              <div className="flex flex-col gap-2 pt-2 border-t border-slate-800">
                 {stepStatus === 'correct' ? (
                   <button
+                    ref={nextBtnRef}
                     type="button"
                     data-tv-autofocus="true"
                     onClick={handleAdvanceNext}
@@ -971,38 +1364,6 @@ export const LearnModal: React.FC<LearnModalProps> = ({ settings, onClose }) => 
                     </button>
                   </div>
                 )}
-
-                {/* Quick Lesson Switcher Strip */}
-                <div className="flex items-center justify-between gap-2 text-xs text-slate-400 pt-1">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      soundManager.playSound('click');
-                      setViewMode('levels');
-                    }}
-                    className="hover:text-white font-semibold cursor-pointer"
-                  >
-                    ← {ui.backToLessons}
-                  </button>
-                  <div className="flex items-center gap-1 overflow-x-auto py-0.5">
-                    {tierLessons.map((l, i) => (
-                      <button
-                        key={l.id}
-                        type="button"
-                        onClick={() => handleStartLesson(l.id)}
-                        className={`px-2 py-0.5 rounded-md font-mono font-bold text-[11px] cursor-pointer ${
-                          l.id === activeLesson.id
-                            ? 'bg-amber-400 text-slate-950'
-                            : completedLessons.includes(l.id)
-                            ? 'bg-emerald-950 text-emerald-400 border border-emerald-700'
-                            : 'bg-slate-800 text-slate-400 hover:text-white'
-                        }`}
-                      >
-                        {i + 1}
-                      </button>
-                    ))}
-                  </div>
-                </div>
               </div>
             </div>
           </div>

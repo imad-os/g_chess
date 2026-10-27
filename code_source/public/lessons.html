@@ -1,0 +1,1002 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Checko's Academy — Standalone Visual Lesson Editor (lessons.json)</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js"></script>
+  <style>
+    :root {
+      --bg: #12110f;
+      --panel: #1e1c18;
+      --border: #332f29;
+      --amber: #fbbf24;
+      --emerald: #10b981;
+      --red: #ef4444;
+      --text: #f8fafc;
+      --muted: #94a3b8;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+    header {
+      background: #181613;
+      border-bottom: 1px solid var(--border);
+      padding: 12px 20px;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-weight: 900;
+      font-size: 18px;
+    }
+    .brand span.badge {
+      background: var(--amber);
+      color: #0f172a;
+      font-size: 11px;
+      padding: 3px 8px;
+      border-radius: 999px;
+      text-transform: uppercase;
+    }
+    .toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+    }
+    button, select, input, textarea {
+      font: inherit;
+      color: var(--text);
+      background: #27241f;
+      border: 1px solid #3f3a32;
+      border-radius: 8px;
+      padding: 7px 11px;
+    }
+    button {
+      cursor: pointer;
+      font-weight: 700;
+      transition: all 0.15s;
+    }
+    button:hover { border-color: var(--amber); }
+    button.primary {
+      background: var(--amber);
+      color: #0f172a;
+      border-color: var(--amber);
+    }
+    button.success {
+      background: var(--emerald);
+      color: #052e16;
+      border-color: var(--emerald);
+    }
+    button.danger {
+      background: #451a1a;
+      color: #fca5a5;
+      border-color: #7f1d1d;
+    }
+    .workspace {
+      flex: 1;
+      display: grid;
+      grid-template-columns: 280px 440px 1fr;
+      gap: 16px;
+      padding: 16px;
+      max-width: 1600px;
+      width: 100%;
+      margin: 0 auto;
+    }
+    @media (max-width: 1150px) {
+      .workspace { grid-template-columns: 1fr; }
+    }
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .card h3 {
+      margin: 0;
+      font-size: 14px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--amber);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .lesson-list {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      max-height: 70vh;
+      overflow-y: auto;
+    }
+    .lesson-item {
+      text-align: left;
+      padding: 9px 11px;
+      border-radius: 10px;
+      background: #161411;
+      border: 1px solid #2b2722;
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+    .lesson-item.active {
+      border-color: var(--amber);
+      background: #2b2518;
+    }
+    .lesson-item .tier-tag {
+      font-size: 10px;
+      color: var(--amber);
+      text-transform: uppercase;
+      font-weight: 800;
+    }
+    /* Interactive Board */
+    .board-wrap {
+      position: relative;
+      width: 400px;
+      height: 400px;
+      margin: 0 auto;
+      border: 4px solid #3a342b;
+      border-radius: 10px;
+      overflow: hidden;
+      user-select: none;
+    }
+    .board-grid {
+      display: grid;
+      grid-template-columns: repeat(8, 1fr);
+      grid-template-rows: repeat(8, 1fr);
+      width: 100%;
+      height: 100%;
+    }
+    .sq {
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+    }
+    .sq.light { background: #f0d9b5; }
+    .sq.dark { background: #b58863; }
+    .sq.selected { box-shadow: inset 0 0 0 4px #38bdf8; }
+    .sq.highlight { background: rgba(251, 191, 36, 0.55) !important; }
+    .sq img {
+      width: 82%;
+      height: 82%;
+      pointer-events: none;
+    }
+    .sq .coord {
+      position: absolute;
+      bottom: 2px;
+      right: 3px;
+      font-size: 9px;
+      font-weight: 800;
+      color: rgba(0, 0, 0, 0.55);
+      pointer-events: none;
+    }
+    .arrows-svg {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+    }
+    .palette {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px;
+      justify-content: center;
+    }
+    .palette button {
+      padding: 4px 7px;
+      font-size: 12px;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .palette button.active {
+      border-color: var(--amber);
+      background: #3b3119;
+    }
+    . palette img { width: 22px; height: 22px; }
+    .field-group {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .field-group label {
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--muted);
+      text-transform: uppercase;
+    }
+    .lang-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+    .status-banner {
+      padding: 10px 12px;
+      border-radius: 10px;
+      font-size: 13px;
+      font-weight: 700;
+    }
+    .status-banner.ok {
+      background: rgba(16, 185, 129, 0.15);
+      border: 1px solid var(--emerald);
+      color: #6ee7b7;
+    }
+    .status-banner.err {
+      background: rgba(239, 68, 68, 0.18);
+      border: 1px solid var(--red);
+      color: #fca5a5;
+    }
+    .chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+    .chip {
+      background: #2b2720;
+      border: 1px solid #474035;
+      padding: 3px 8px;
+      border-radius: 6px;
+      font-family: monospace;
+      font-size: 12px;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .chip button {
+      padding: 0 4px;
+      border: none;
+      background: transparent;
+      color: #fca5a5;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <span>🐓 Checko's Lesson Editor</span>
+      <span class="badge">Standalone Tool • Verify Legal Moves</span>
+    </div>
+    <div class="toolbar">
+      <button onclick="validateAllLessons()">✓ Validate All Moves</button>
+      <button class="success" onclick="saveToBrowserPreview()">💾 Save to Browser Preview</button>
+      <button onclick="clearBrowserPreview()">↺ Reset Browser Override</button>
+      <button class="primary" onclick="downloadLessonsJson()">⬇ Download lessons.json</button>
+      <label style="cursor:pointer; background:#27241f; border:1px solid #3f3a32; padding:7px 11px; border-radius:8px; font-weight:700;">
+        📂 Import JSON
+        <input type="file" accept=".json" style="display:none" onchange="importJsonFile(event)" />
+      </label>
+    </div>
+  </header>
+
+  <div class="workspace">
+    <!-- COLUMN 1: LESSONS & STEPS LIST -->
+    <div class="card">
+      <h3>
+        <span>Lessons (<span id="lessonCount">0</span>)</span>
+        <button onclick="addNewLesson()" style="padding:4px 8px; font-size:12px;">+ New Lesson</button>
+      </h3>
+      <select id="tierFilter" onchange="renderLessonList()">
+        <option value="all">All Levels (0 – 1500 Elo)</option>
+        <option value="beginner">Beginner (0 – 400 Elo)</option>
+        <option value="novice">Novice (400 – 800 Elo)</option>
+        <option value="intermediate">Intermediate (800 – 1200 Elo)</option>
+        <option value="club">1500 Elo (1200 – 1500 Elo)</option>
+      </select>
+      <div id="lessonList" class="lesson-list"></div>
+    </div>
+
+    <!-- COLUMN 2: INTERACTIVE BOARD & LEGAL MOVE / ARROW RECORDER -->
+    <div class="card">
+      <h3>
+        <span>Interactive Board & Move Tester</span>
+        <span id="stepBadge" style="color:#fff; font-size:12px;">Step 1</span>
+      </h3>
+
+      <!-- Mode Switcher -->
+      <div class="palette" id="modePalette">
+        <button id="mode_move" class="active" onclick="setEditorMode('move')">🎯 Record Legal Move</button>
+        <button id="mode_arrow" onclick="setEditorMode('arrow')">↗ Draw Arrow</button>
+        <button id="mode_highlight" onclick="setEditorMode('highlight')">🟨 Highlight Square</button>
+        <button id="mode_erase" onclick="setEditorMode('erase')">🗑 Remove Piece</button>
+      </div>
+
+      <!-- Piece Placement Palette -->
+      <div class="palette" id="piecePalette"></div>
+
+      <!-- 8x8 Board -->
+      <div class="board-wrap">
+        <div id="boardGrid" class="board-grid"></div>
+        <svg id="arrowsSvg" class="arrows-svg" viewBox="0 0 800 800"></svg>
+      </div>
+
+      <!-- Legality Status Banner -->
+      <div id="legalityBanner" class="status-banner ok">Checking position legality...</div>
+
+      <!-- Quick Board Actions -->
+      <div style="display:flex; gap:6px; flex-wrap:wrap; justify-content:center;">
+        <button onclick="setStartFen()">Standard Start FEN</button>
+        <button onclick="clearBoardKeepKings()">Clear (Keep Kings)</button>
+        <button onclick="clearArrows()">Clear Arrows</button>
+      </div>
+    </div>
+
+    <!-- COLUMN 3: LESSON & STEP DETAILS + MULTILINGUAL TEXT -->
+    <div class="card" style="overflow-y:auto; max-height:85vh;">
+      <h3>
+        <span>Lesson & Step Properties</span>
+        <div style="display:flex; gap:6px;">
+          <button onclick="addStepToLesson()" style="padding:4px 8px; font-size:12px;">+ Add Step</button>
+          <button class="danger" onclick="deleteCurrentLesson()" style="padding:4px 8px; font-size:12px;">Delete Lesson</button>
+        </div>
+      </h3>
+
+      <!-- Step Switcher -->
+      <div id="stepTabs" class="chips"></div>
+
+      <div class="lang-grid">
+        <div class="field-group">
+          <label>Lesson ID</label>
+          <input id="lessonIdInput" oninput="updateLessonMeta()" />
+        </div>
+        <div class="field-group">
+          <label>Skill Level Tier</label>
+          <select id="lessonTierSelect" onchange="updateLessonMeta()">
+            <option value="beginner">Beginner (0–400 Elo)</option>
+            <option value="novice">Novice (400–800 Elo)</option>
+            <option value="intermediate">Intermediate (800–1200 Elo)</option>
+            <option value="club">Club (1200–1500 Elo)</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="lang-grid">
+        <div class="field-group">
+          <label>Lesson Title (EN)</label>
+          <input id="title_en" oninput="updateLessonMeta()" />
+        </div>
+        <div class="field-group">
+          <label>Lesson Title (FR)</label>
+          <input id="title_fr" oninput="updateLessonMeta()" />
+        </div>
+        <div class="field-group">
+          <label>Lesson Title (ES)</label>
+          <input id="title_es" oninput="updateLessonMeta()" />
+        </div>
+        <div class="field-group">
+          <label>Lesson Title (AR)</label>
+          <input id="title_ar" dir="rtl" oninput="updateLessonMeta()" />
+        </div>
+      </div>
+
+      <hr style="border-color:var(--border); width:100%;" />
+
+      <div class="lang-grid">
+        <div class="field-group">
+          <label>FEN String (Auto-updates from board)</label>
+          <input id="stepFenInput" oninput="onManualFenInput()" style="font-family:monospace; font-size:12px;" />
+        </div>
+        <div class="field-group">
+          <label>Player Turn Color</label>
+          <select id="stepColorSelect" onchange="onChangeTurnColor()">
+            <option value="w">White to Move (w)</option>
+            <option value="b">Black to Move (b)</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="field-group">
+        <label>Expected Legal Moves (UCI e.g. e2e4 — Click two squares in "Record Legal Move" mode to add)</label>
+        <div id="expectedMovesChips" class="chips"></div>
+      </div>
+
+      <div class="lang-grid">
+        <div class="field-group">
+          <label>Checko Prompt Bubble (EN)</label>
+          <textarea id="bubble_en" rows="2" oninput="updateStepText()"></textarea>
+        </div>
+        <div class="field-group">
+          <label>Checko Prompt Bubble (FR)</label>
+          <textarea id="bubble_fr" rows="2" oninput="updateStepText()"></textarea>
+        </div>
+        <div class="field-group">
+          <label>Checko Prompt Bubble (ES)</label>
+          <textarea id="bubble_es" rows="2" oninput="updateStepText()"></textarea>
+        </div>
+        <div class="field-group">
+          <label>Checko Prompt Bubble (AR)</label>
+          <textarea id="bubble_ar" rows="2" dir="rtl" oninput="updateStepText()"></textarea>
+        </div>
+      </div>
+
+      <div class="lang-grid">
+        <div class="field-group">
+          <label>Hint Message (EN)</label>
+          <input id="hint_en" oninput="updateStepText()" />
+        </div>
+        <div class="field-group">
+          <label>Hint Message (AR)</label>
+          <input id="hint_ar" dir="rtl" oninput="updateStepText()" />
+        </div>
+        <div class="field-group">
+          <label>Success Message (EN)</label>
+          <input id="success_en" oninput="updateStepText()" />
+        </div>
+        <div class="field-group">
+          <label>Success Message (AR)</label>
+          <input id="success_ar" dir="rtl" oninput="updateStepText()" />
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let curriculum = { version: "3.8.0", tiers: [], lessons: [] };
+    let currentLessonIdx = 0;
+    let currentStepIdx = 0;
+    let editorMode = 'move'; // 'move' | 'arrow' | 'highlight' | 'erase' | 'place_wP' etc.
+    let selectedSq = null;
+
+    const FILES = ['a','b','c','d','e','f','g','h'];
+    const RANKS = ['8','7','6','5','4','3','2','1'];
+    const PIECES = [
+      { code: 'wP', type: 'p', color: 'w', img: 'assets/pieces/pl.svg' },
+      { code: 'wN', type: 'n', color: 'w', img: 'assets/pieces/nl.svg' },
+      { code: 'wB', type: 'b', color: 'w', img: 'assets/pieces/bl.svg' },
+      { code: 'wR', type: 'r', color: 'w', img: 'assets/pieces/rl.svg' },
+      { code: 'wQ', type: 'q', color: 'w', img: 'assets/pieces/ql.svg' },
+      { code: 'wK', type: 'k', color: 'w', img: 'assets/pieces/kl.svg' },
+      { code: 'bP', type: 'p', color: 'b', img: 'assets/pieces/pd.svg' },
+      { code: 'bN', type: 'n', color: 'b', img: 'assets/pieces/nd.svg' },
+      { code: 'bB', type: 'b', color: 'b', img: 'assets/pieces/bd.svg' },
+      { code: 'bR', type: 'r', color: 'b', img: 'assets/pieces/rd.svg' },
+      { code: 'bQ', type: 'q', color: 'b', img: 'assets/pieces/qd.svg' },
+      { code: 'bK', type: 'k', color: 'b', img: 'assets/pieces/kd.svg' },
+    ];
+
+    function initPiecePalette() {
+      const container = document.getElementById('piecePalette');
+      container.innerHTML = '';
+      PIECES.forEach(p => {
+        const btn = document.createElement('button');
+        btn.id = 'mode_place_' + p.code;
+        btn.innerHTML = `<img src="${p.img}" style="width:18px;height:18px;"/> ${p.code}`;
+        btn.onclick = () => setEditorMode('place_' + p.code);
+        container.appendChild(btn);
+      });
+    }
+
+    function setEditorMode(mode) {
+      editorMode = mode;
+      selectedSq = null;
+      document.querySelectorAll('#modePalette button, #piecePalette button').forEach(b => b.classList.remove('active'));
+      const activeBtn = document.getElementById('mode_' + mode);
+      if (activeBtn) activeBtn.classList.add('active');
+      renderBoard();
+    }
+
+    async function loadInitialLessons() {
+      try {
+        const custom = localStorage.getItem('mypc_chess_custom_lessons');
+        if (custom) {
+          curriculum = JSON.parse(custom);
+        } else {
+          const res = await fetch('assets/lessons.json?t=' + Date.now());
+          curriculum = await res.json();
+        }
+      } catch (e) {
+        alert('Failed to load assets/lessons.json: ' + e.message);
+      }
+      renderLessonList();
+      selectLesson(0);
+    }
+
+    function getCurrentLesson() {
+      return curriculum.lessons[currentLessonIdx];
+    }
+
+    function getCurrentStep() {
+      const l = getCurrentLesson();
+      return l ? l.steps[currentStepIdx] : null;
+    }
+
+    function renderLessonList() {
+      const filter = document.getElementById('tierFilter').value;
+      const list = document.getElementById('lessonList');
+      document.getElementById('lessonCount').textContent = curriculum.lessons.length;
+      list.innerHTML = '';
+      curriculum.lessons.forEach((l, idx) => {
+        if (filter !== 'all' && l.tierId !== filter) return;
+        const btn = document.createElement('button');
+        btn.className = 'lesson-item' + (idx === currentLessonIdx ? ' active' : '');
+        btn.innerHTML = `
+          <span class="tier-tag">${l.tierId} • ${l.steps.length} step(s)</span>
+          <strong>${l.title.en || l.id}</strong>
+        `;
+        btn.onclick = () => selectLesson(idx);
+        list.appendChild(btn);
+      });
+    }
+
+    function selectLesson(idx) {
+      currentLessonIdx = idx;
+      currentStepIdx = 0;
+      selectedSq = null;
+      renderLessonList();
+      syncFormFromState();
+      renderBoard();
+    }
+
+    function syncFormFromState() {
+      const l = getCurrentLesson();
+      const s = getCurrentStep();
+      if (!l || !s) return;
+
+      document.getElementById('lessonIdInput').value = l.id || '';
+      document.getElementById('lessonTierSelect').value = l.tierId || 'beginner';
+      document.getElementById('title_en').value = l.title?.en || '';
+      document.getElementById('title_fr').value = l.title?.fr || '';
+      document.getElementById('title_es').value = l.title?.es || '';
+      document.getElementById('title_ar').value = l.title?.ar || '';
+
+      // Step tabs
+      const tabs = document.getElementById('stepTabs');
+      tabs.innerHTML = '';
+      l.steps.forEach((st, i) => {
+        const b = document.createElement('button');
+        b.textContent = 'Step ' + (i + 1);
+        if (i === currentStepIdx) b.className = 'primary';
+        b.onclick = () => {
+          currentStepIdx = i;
+          syncFormFromState();
+          renderBoard();
+        };
+        tabs.appendChild(b);
+      });
+      document.getElementById('stepBadge').textContent = `Step ${currentStepIdx + 1} of ${l.steps.length}`;
+
+      document.getElementById('stepFenInput').value = s.fen || '';
+      document.getElementById('stepColorSelect').value = s.playerColor || 'w';
+
+      document.getElementById('bubble_en').value = s.bubble?.en || '';
+      document.getElementById('bubble_fr').value = s.bubble?.fr || '';
+      document.getElementById('bubble_es').value = s.bubble?.es || '';
+      document.getElementById('bubble_ar').value = s.bubble?.ar || '';
+
+      document.getElementById('hint_en').value = s.hint?.en || '';
+      document.getElementById('hint_ar').value = s.hint?.ar || '';
+      document.getElementById('success_en').value = s.success?.en || '';
+      document.getElementById('success_ar').value = s.success?.ar || '';
+
+      renderExpectedMovesChips();
+      validateCurrentStep();
+    }
+
+    function renderExpectedMovesChips() {
+      const s = getCurrentStep();
+      const container = document.getElementById('expectedMovesChips');
+      container.innerHTML = '';
+      (s.expectedMoves || []).forEach((m, i) => {
+        const span = document.createElement('span');
+        span.className = 'chip';
+        span.innerHTML = `${m} <button onclick="removeExpectedMove(${i})">×</button>`;
+        container.appendChild(span);
+      });
+    }
+
+    function removeExpectedMove(idx) {
+      const s = getCurrentStep();
+      s.expectedMoves.splice(idx, 1);
+      renderExpectedMovesChips();
+      validateCurrentStep();
+    }
+
+    function validateCurrentStep() {
+      const s = getCurrentStep();
+      const banner = document.getElementById('legalityBanner');
+      if (!s) return;
+      try {
+        const c = new Chess(s.fen);
+        if (!c || !c.fen()) {
+          banner.className = 'status-banner err';
+          banner.textContent = '❌ Invalid FEN string (Make sure both White and Black Kings are on the board).';
+          return false;
+        }
+        if (c.turn() !== s.playerColor) {
+          banner.className = 'status-banner err';
+          banner.textContent = `❌ FEN active turn (${c.turn()}) does not match Player Turn Color (${s.playerColor}).`;
+          return false;
+        }
+        if (!s.expectedMoves || s.expectedMoves.length === 0) {
+          banner.className = 'status-banner err';
+          banner.textContent = '⚠️ Add at least 1 expected legal move by clicking From → To on the board.';
+          return false;
+        }
+        for (const m of s.expectedMoves) {
+          const testChess = new Chess(s.fen);
+          const from = m.slice(0, 2);
+          const to = m.slice(2, 4);
+          const mv = testChess.move({ from, to, promotion: 'q' });
+          if (!mv) {
+            banner.className = 'status-banner err';
+            banner.textContent = `❌ ILLEGAL MOVE DETECTED: "${m}" is not legal in this FEN position!`;
+            return false;
+          }
+        }
+        banner.className = 'status-banner ok';
+        banner.textContent = `✅ 100% Legal! All ${s.expectedMoves.length} expected move(s) verified with chess.js.`;
+        return true;
+      } catch (e) {
+        banner.className = 'status-banner err';
+        banner.textContent = '❌ Error validating FEN: ' + e.message;
+        return false;
+      }
+    }
+
+    function renderBoard() {
+      const s = getCurrentStep();
+      if (!s) return;
+      const grid = document.getElementById('boardGrid');
+      grid.innerHTML = '';
+      const c = new Chess();
+      c.load(s.fen);
+
+      for (let r = 0; r < 8; r++) {
+        for (let f = 0; f < 8; f++) {
+          const sqName = FILES[f] + RANKS[r];
+          const isLight = (r + f) % 2 === 0;
+          const div = document.createElement('div');
+          div.className = 'sq ' + (isLight ? 'light' : 'dark');
+          if (selectedSq === sqName) div.classList.add('selected');
+          if ((s.highlightSquares || []).includes(sqName)) div.classList.add('highlight');
+
+          const piece = c.get(sqName);
+          if (piece) {
+            const pInfo = PIECES.find(p => p.type === piece.type && p.color === piece.color);
+            if (pInfo) {
+              const img = document.createElement('img');
+              img.src = pInfo.img;
+              div.appendChild(img);
+            }
+          }
+          if (f === 7 || r === 7) {
+            const coord = document.createElement('span');
+            coord.className = 'coord';
+            coord.textContent = sqName;
+            div.appendChild(coord);
+          }
+          div.onclick = () => onSquareClick(sqName);
+          grid.appendChild(div);
+        }
+      }
+      renderArrowsSvg();
+    }
+
+    function renderArrowsSvg() {
+      const s = getCurrentStep();
+      const svg = document.getElementById('arrowsSvg');
+      svg.innerHTML = `
+        <defs>
+          <marker id="ah-gold" markerWidth="4" markerHeight="4" refX="2.6" refY="2" orient="auto">
+            <polygon points="0 0, 4 2, 0 4" fill="#fbbf24" />
+          </marker>
+        </defs>
+      `;
+      (s.arrows || []).forEach(a => {
+        const f1 = FILES.indexOf(a.from[0]);
+        const r1 = RANKS.indexOf(a.from[1]);
+        const f2 = FILES.indexOf(a.to[0]);
+        const r2 = RANKS.indexOf(a.to[1]);
+        if (f1 < 0 || r1 < 0 || f2 < 0 || r2 < 0) return;
+        const x1 = f1 * 100 + 50, y1 = r1 * 100 + 50;
+        const x2 = f2 * 100 + 50, y2 = r2 * 100 + 50;
+        const dx = x2 - x1, dy = y2 - y1;
+        const len = Math.hypot(dx, dy) || 1;
+        const ex = x2 - (dx / len) * 28, ey = y2 - (dy / len) * 28;
+        const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+        line.setAttribute('x1', x1);
+        line.setAttribute('y1', y1);
+        line.setAttribute('x2', ex);
+        line.setAttribute('y2', ey);
+        line.setAttribute('stroke', '#fbbf24');
+        line.setAttribute('stroke-width', '18');
+        line.setAttribute('stroke-linecap', 'round');
+        line.setAttribute('marker-end', 'url(#ah-gold)');
+        line.setAttribute('opacity', '0.88');
+        svg.appendChild(line);
+      });
+    }
+
+    function onSquareClick(sq) {
+      const s = getCurrentStep();
+      const c = new Chess();
+      c.load(s.fen);
+
+      if (editorMode === 'highlight') {
+        s.highlightSquares = s.highlightSquares || [];
+        const idx = s.highlightSquares.indexOf(sq);
+        if (idx >= 0) s.highlightSquares.splice(idx, 1);
+        else s.highlightSquares.push(sq);
+        renderBoard();
+        return;
+      }
+
+      if (editorMode === 'erase') {
+        c.remove(sq);
+        s.fen = c.fen();
+        document.getElementById('stepFenInput').value = s.fen;
+        renderBoard();
+        validateCurrentStep();
+        return;
+      }
+
+      if (editorMode.startsWith('place_')) {
+        const code = editorMode.replace('place_', '');
+        const pInfo = PIECES.find(p => p.code === code);
+        if (pInfo) {
+          c.remove(sq);
+          c.put({ type: pInfo.type, color: pInfo.color }, sq);
+          s.fen = c.fen();
+          document.getElementById('stepFenInput').value = s.fen;
+          renderBoard();
+          validateCurrentStep();
+        }
+        return;
+      }
+
+      if (editorMode === 'arrow') {
+        if (!selectedSq) {
+          selectedSq = sq;
+          renderBoard();
+        } else {
+          if (selectedSq !== sq) {
+            s.arrows = s.arrows || [];
+            s.arrows.push({ from: selectedSq, to: sq, color: 'gold' });
+          }
+          selectedSq = null;
+          renderBoard();
+        }
+        return;
+      }
+
+      // Default: 'move' — Record legal move!
+      if (!selectedSq) {
+        selectedSq = sq;
+        renderBoard();
+      } else {
+        const from = selectedSq;
+        const to = sq;
+        selectedSq = null;
+        if (from !== to) {
+          const test = new Chess(s.fen);
+          const mv = test.move({ from, to, promotion: 'q' });
+          if (!mv) {
+            alert(`Illegal Move! ${from} -> ${to} is not legal in this position according to chess.js.`);
+          } else {
+            const uci = from + to;
+            s.expectedMoves = s.expectedMoves || [];
+            if (!s.expectedMoves.includes(uci)) {
+              s.expectedMoves.push(uci);
+            }
+            s.arrows = s.arrows || [];
+            if (!s.arrows.some(a => a.from === from && a.to === to)) {
+              s.arrows.push({ from, to, color: 'gold' });
+            }
+            renderExpectedMovesChips();
+            validateCurrentStep();
+          }
+        }
+        renderBoard();
+      }
+    }
+
+    function updateLessonMeta() {
+      const l = getCurrentLesson();
+      l.id = document.getElementById('lessonIdInput').value;
+      l.tierId = document.getElementById('lessonTierSelect').value;
+      l.title.en = document.getElementById('title_en').value;
+      l.title.fr = document.getElementById('title_fr').value;
+      l.title.es = document.getElementById('title_es').value;
+      l.title.ar = document.getElementById('title_ar').value;
+      renderLessonList();
+    }
+
+    function updateStepText() {
+      const s = getCurrentStep();
+      s.bubble.en = document.getElementById('bubble_en').value;
+      s.bubble.fr = document.getElementById('bubble_fr').value;
+      s.bubble.es = document.getElementById('bubble_es').value;
+      s.bubble.ar = document.getElementById('bubble_ar').value;
+      s.hint.en = document.getElementById('hint_en').value;
+      s.hint.ar = document.getElementById('hint_ar').value;
+      s.success.en = document.getElementById('success_en').value;
+      s.success.ar = document.getElementById('success_ar').value;
+    }
+
+    function onManualFenInput() {
+      const s = getCurrentStep();
+      s.fen = document.getElementById('stepFenInput').value.trim();
+      renderBoard();
+      validateCurrentStep();
+    }
+
+    function onChangeTurnColor() {
+      const s = getCurrentStep();
+      const color = document.getElementById('stepColorSelect').value;
+      s.playerColor = color;
+      const parts = s.fen.split(' ');
+      if (parts.length >= 2) {
+        parts[1] = color;
+        s.fen = parts.join(' ');
+        document.getElementById('stepFenInput').value = s.fen;
+      }
+      validateCurrentStep();
+    }
+
+    function setStartFen() {
+      const s = getCurrentStep();
+      s.fen = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
+      s.playerColor = 'w';
+      syncFormFromState();
+      renderBoard();
+    }
+
+    function clearBoardKeepKings() {
+      const s = getCurrentStep();
+      s.fen = '4k3/8/8/8/8/8/8/4K3 w - - 0 1';
+      s.playerColor = 'w';
+      s.expectedMoves = [];
+      s.arrows = [];
+      s.highlightSquares = [];
+      syncFormFromState();
+      renderBoard();
+    }
+
+    function clearArrows() {
+      const s = getCurrentStep();
+      s.arrows = [];
+      s.highlightSquares = [];
+      renderBoard();
+    }
+
+    function addNewLesson() {
+      const newLesson = {
+        id: 'custom_lesson_' + (curriculum.lessons.length + 1),
+        tierId: 'beginner',
+        pieceIcon: 'p',
+        title: { en: 'New Custom Lesson', fr: 'Nouvelle leçon', es: 'Nueva lección', ar: 'درس جديد' },
+        subtitle: { en: 'Custom Tactic', fr: 'Tactique', es: 'Táctica', ar: 'تكتيك' },
+        steps: [
+          {
+            id: 'step_1',
+            fen: '4k3/8/8/8/8/8/4P3/4K3 w - - 0 1',
+            playerColor: 'w',
+            bubble: { en: 'Play the best move!', fr: 'Jouez le meilleur coup !', es: '¡Juega la mejor jugada!', ar: 'العب النقلة الأفضل!' },
+            hint: { en: 'Follow the arrow.', fr: 'Suivez la flèche.', es: 'Sigue la flecha.', ar: 'اتبع السهم.' },
+            success: { en: 'Great job!', fr: 'Bravo !', es: '¡Bien hecho!', ar: 'أحسنت!' },
+            expectedMoves: ['e2e4'],
+            arrows: [{ from: 'e2', to: 'e4', color: 'gold' }],
+            highlightSquares: ['e4']
+          }
+        ]
+      };
+      curriculum.lessons.push(newLesson);
+      selectLesson(curriculum.lessons.length - 1);
+    }
+
+    function addStepToLesson() {
+      const l = getCurrentLesson();
+      l.steps.push({
+        id: l.id + '_s' + (l.steps.length + 1),
+        fen: '4k3/8/8/8/8/8/4P3/4K3 w - - 0 1',
+        playerColor: 'w',
+        bubble: { en: 'Next step: make your move!', fr: 'Étape suivante !', es: '¡Siguiente paso!', ar: 'الخطوة التالية!' },
+        hint: { en: 'Look at the arrow.', fr: 'Regardez la flèche.', es: 'Mira la flecha.', ar: 'انظر إلى السهم.' },
+        success: { en: 'Excellent!', fr: 'Excellent !', es: '¡Excelente!', ar: 'ممتاز!' },
+        expectedMoves: ['e2e4'],
+        arrows: [{ from: 'e2', to: 'e4', color: 'gold' }],
+        highlightSquares: ['e4']
+      });
+      currentStepIdx = l.steps.length - 1;
+      syncFormFromState();
+      renderBoard();
+    }
+
+    function deleteCurrentLesson() {
+      if (curriculum.lessons.length <= 1) return;
+      if (!confirm('Delete this lesson?')) return;
+      curriculum.lessons.splice(currentLessonIdx, 1);
+      selectLesson(Math.max(0, currentLessonIdx - 1));
+    }
+
+    function validateAllLessons() {
+      let errors = [];
+      let totalSteps = 0;
+      curriculum.lessons.forEach(l => {
+        l.steps.forEach((s, idx) => {
+          totalSteps++;
+          const c = new Chess();
+          if (!c.load(s.fen)) {
+            errors.push(`${l.id} [Step ${idx + 1}]: Invalid FEN`);
+            return;
+          }
+          if (!s.expectedMoves || !s.expectedMoves.length) {
+            errors.push(`${l.id} [Step ${idx + 1}]: No expectedMoves`);
+          }
+          (s.expectedMoves || []).forEach(m => {
+            const c2 = new Chess(s.fen);
+            const mv = c2.move({ from: m.slice(0, 2), to: m.slice(2, 4), promotion: 'q' });
+            if (!mv) errors.push(`${l.id} [Step ${idx + 1}]: Illegal move ${m}`);
+          });
+        });
+      });
+      if (errors.length === 0) {
+        alert(`✅ All ${curriculum.lessons.length} lessons (${totalSteps} steps) passed 100% chess.js legal move verification!`);
+      } else {
+        alert(`❌ Found ${errors.length} issue(s):\n\n` + errors.join('\n'));
+      }
+    }
+
+    function saveToBrowserPreview() {
+      localStorage.setItem('mypc_chess_custom_lessons', JSON.stringify(curriculum));
+      alert('✅ Saved to browser storage! Open the Chess game and click Learn to test your changes immediately.');
+    }
+
+    function clearBrowserPreview() {
+      localStorage.removeItem('mypc_chess_custom_lessons');
+      loadInitialLessons();
+      alert('↺ Reset to default assets/lessons.json.');
+    }
+
+    function downloadLessonsJson() {
+      const blob = new Blob([JSON.stringify(curriculum, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'lessons.json';
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+
+    function importJsonFile(e) {
+      const file = e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        try {
+          const parsed = JSON.parse(ev.target.result);
+          if (parsed && Array.isArray(parsed.lessons)) {
+            curriculum = parsed;
+            selectLesson(0);
+            alert('✅ Imported lessons.json successfully!');
+          }
+        } catch (err) {
+          alert('Invalid JSON file: ' + err.message);
+        }
+      };
+      reader.readAsText(file);
+    }
+
+    initPiecePalette();
+    loadInitialLessons();
+  </script>
+</body>
+</html>

@@ -16,6 +16,7 @@ class MyPCService {
   private isReady: boolean = false;
   private pendingSaves: Map<string, any> = new Map();
   private profileName: string = 'Player 1';
+  private systemLang: 'en' | 'fr' | 'es' | 'ar' | null = null;
   private currentHandlers: MyPCHandlers = {};
 
   constructor() {
@@ -45,6 +46,15 @@ class MyPCService {
     this.pendingSaves.clear();
   }
 
+  private normalizeLang(raw?: any): 'en' | 'fr' | 'es' | 'ar' | null {
+    if (!raw || typeof raw !== 'string') return null;
+    const prefix = raw.trim().slice(0, 2).toLowerCase();
+    if (prefix === 'en' || prefix === 'fr' || prefix === 'es' || prefix === 'ar') {
+      return prefix;
+    }
+    return null;
+  }
+
   public init(handlers: MyPCHandlers) {
     this.currentHandlers = { ...this.currentHandlers, ...handlers };
     if (typeof window === 'undefined') return;
@@ -60,6 +70,13 @@ class MyPCService {
           this.flushPendingSaves();
           if (info?.profile?.name) {
             this.profileName = info.profile.name;
+          }
+          const detectedLang =
+            this.normalizeLang(info?.lang) ||
+            this.normalizeLang(info?.language) ||
+            this.normalizeLang(info?.profile?.lang);
+          if (detectedLang) {
+            this.systemLang = detectedLang;
           }
           this.currentHandlers.onInit?.(info);
           MyPC.ready?.();
@@ -252,32 +269,33 @@ class MyPCService {
   private speechAbortId: number = 0;
 
   /**
-   * Detects current language from MyPC.info().lang ('en' | 'fr' | 'es' | 'ar'),
-   * saved preference, or browser navigator.language.
+   * Detects current language directly from MyPC user basic configs (info.lang / MyPC.info().lang: 'en' | 'fr' | 'es' | 'ar'),
+   * with fallback to browser navigator.language.
    */
   public getLanguage(): 'en' | 'fr' | 'es' | 'ar' {
-    const saved = this.load<string>('learn_lang', '');
-    if (saved === 'en' || saved === 'fr' || saved === 'es' || saved === 'ar') {
-      return saved;
+    if (this.systemLang) {
+      return this.systemLang;
     }
     const MyPC = typeof window !== 'undefined' ? (window as any).MyPC : null;
     try {
-      const infoLang = MyPC?.info?.()?.lang;
-      if (infoLang === 'en' || infoLang === 'fr' || infoLang === 'es' || infoLang === 'ar') {
-        return infoLang;
+      const infoObj = typeof MyPC?.info === 'function' ? MyPC.info() : MyPC?.info;
+      const fromMyPC =
+        this.normalizeLang(infoObj?.lang) ||
+        this.normalizeLang(infoObj?.language) ||
+        this.normalizeLang(infoObj?.profile?.lang) ||
+        this.normalizeLang(MyPC?.lang);
+      if (fromMyPC) {
+        this.systemLang = fromMyPC;
+        return fromMyPC;
       }
     } catch {}
     if (typeof navigator !== 'undefined' && navigator.language) {
-      const prefix = navigator.language.slice(0, 2).toLowerCase();
-      if (prefix === 'fr' || prefix === 'es' || prefix === 'ar') {
-        return prefix;
+      const fromNav = this.normalizeLang(navigator.language);
+      if (fromNav) {
+        return fromNav;
       }
     }
     return 'en';
-  }
-
-  public setLanguage(lang: 'en' | 'fr' | 'es' | 'ar') {
-    this.save('learn_lang', lang);
   }
 
   public stopSpeech() {

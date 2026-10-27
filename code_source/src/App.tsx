@@ -32,7 +32,7 @@ import { SettingsModal } from './components/SettingsModal';
 import { MultiplayerModal } from './components/MultiplayerModal';
 import { HistoryModal } from './components/HistoryModal';
 import { LichessModal } from './components/LichessModal';
-import { LearnModal } from './components/LearnModal';
+import { LearnModal, CheckoButtonIcon } from './components/LearnModal';
 import { MiniBoardPreview } from './components/MiniBoardPreview';
 import { soundManager } from './services/sound';
 import { stockfishService } from './services/stockfish';
@@ -55,7 +55,7 @@ import {
   stepRangeInput,
   triggerSpatialConfirm,
 } from './services/spatialInput';
-import { Bot, Users, Wifi, Sliders, ChevronRight, History, Play, GraduationCap } from 'lucide-react';
+import { Bot, Users, Wifi, Sliders, ChevronRight, History, Play } from 'lucide-react';
 
 export const App: React.FC = () => {
   // App state
@@ -2957,7 +2957,7 @@ export const App: React.FC = () => {
               Grandmaster AI • Lichess Online • Wi-Fi Multiplayer
             </p>
 
-            {/* Menu Options */}
+            {/* Menu Options (Titles only — clean TV-first layout) */}
             <div className="flex flex-col gap-2 w-full">
               {/* Play vs AI */}
               <button
@@ -2973,12 +2973,7 @@ export const App: React.FC = () => {
                   <div className="p-2 rounded-xl bg-blue-500/20 text-blue-400 border border-blue-400/30">
                     <Bot size={20} />
                   </div>
-                  <div className="text-left">
-                    <div className="font-bold text-sm sm:text-base">Play vs AI</div>
-                    <div className="text-[11px] text-slate-300">
-                      Stockfish Engine (Elo {settings.ai_elo})
-                    </div>
-                  </div>
+                  <div className="font-bold text-sm sm:text-base text-left">Play vs AI</div>
                 </div>
                 <ChevronRight size={18} className="text-slate-300" />
               </button>
@@ -3000,22 +2995,19 @@ export const App: React.FC = () => {
                   <div className="p-2 rounded-xl bg-slate-950 text-white flex items-center justify-center font-black text-base w-9 h-9">
                     ♞
                   </div>
-                  <div className="text-left">
-                    <div className="font-black text-sm sm:text-base text-slate-950 flex items-center gap-2">
-                      Lichess
+                  <div className="font-black text-sm sm:text-base text-slate-950 flex items-center gap-2 text-left">
+                    <span>Lichess</span>
+                    {lichessUsername && (
                       <span className="px-1.5 py-0.5 rounded bg-slate-900 text-white text-[9px] font-extrabold uppercase">
-                        {lichessUsername ? lichessUsername : 'Online API'}
+                        {lichessUsername}
                       </span>
-                    </div>
-                    <div className="text-[11px] text-slate-700 font-medium">
-                      Rated Matchmaking Grid • Ongoing Games • Puzzles • Stats
-                    </div>
+                    )}
                   </div>
                 </div>
                 <ChevronRight size={18} className="text-slate-800" />
               </button>
 
-              {/* Learn with Checko (0 to 1500 Elo) */}
+              {/* Learn (with Checko cartoon rooster icon) */}
               <button
                 onClick={() => {
                   soundManager.playSound('click');
@@ -3030,35 +3022,15 @@ export const App: React.FC = () => {
               >
                 <div className="flex items-center gap-3.5">
                   <div
-                    className={`p-2 rounded-xl flex items-center justify-center border ${
+                    className={`w-9 h-9 rounded-xl flex items-center justify-center border ${
                       menuIndex === 2 + menuOffset
-                        ? 'bg-slate-950/20 text-slate-950 border-slate-950/30'
-                        : 'bg-amber-500/20 text-amber-400 border-amber-400/30'
+                        ? 'bg-slate-950/20 border-slate-950/30'
+                        : 'bg-amber-500/20 border-amber-400/30'
                     }`}
                   >
-                    <GraduationCap size={20} />
+                    <CheckoButtonIcon className="w-7 h-7" />
                   </div>
-                  <div className="text-left">
-                    <div className="font-black text-sm sm:text-base flex items-center gap-2">
-                      <span>Learn with Checko</span>
-                      <span
-                        className={`px-1.5 py-0.5 rounded text-[9px] font-black uppercase ${
-                          menuIndex === 2 + menuOffset
-                            ? 'bg-slate-950 text-amber-300'
-                            : 'bg-amber-400 text-slate-950'
-                        }`}
-                      >
-                        🐓 0–1500 Elo
-                      </span>
-                    </div>
-                    <div
-                      className={`text-[11px] font-medium ${
-                        menuIndex === 2 + menuOffset ? 'text-slate-900' : 'text-slate-300'
-                      }`}
-                    >
-                      Interactive lessons, arrows & AI voice with Checko the Rooster
-                    </div>
-                  </div>
+                  <div className="font-black text-sm sm:text-base text-left">Learn</div>
                 </div>
                 <ChevronRight
                   size={18}
@@ -3080,12 +3052,7 @@ export const App: React.FC = () => {
                   <div className="p-2 rounded-xl bg-indigo-500/20 text-indigo-400 border border-indigo-400/30">
                     <Users size={20} />
                   </div>
-                  <div className="text-left">
-                    <div className="font-bold text-sm sm:text-base">Couch Play</div>
-                    <div className="text-[11px] text-slate-300">
-                      Local pass-and-play for 2 players
-                    </div>
-                  </div>
+                  <div className="font-bold text-sm sm:text-base text-left">Couch Play</div>
                 </div>
                 <ChevronRight size={18} className="text-slate-300" />
               </button>
@@ -3107,17 +3074,12 @@ export const App: React.FC = () => {
                   <div className="p-2 rounded-xl bg-cyan-500/20 text-cyan-400 border border-cyan-400/30">
                     <Wifi size={20} />
                   </div>
-                  <div className="text-left">
-                    <div className="font-bold text-sm sm:text-base">Online Multiplayer</div>
-                    <div className="text-[11px] text-slate-300">
-                      MyPC local Wi-Fi peer matching
-                    </div>
-                  </div>
+                  <div className="font-bold text-sm sm:text-base text-left">Online Multiplayer</div>
                 </div>
                 <ChevronRight size={18} className="text-slate-300" />
               </button>
 
-              {/* Game History & Analysis Lab */}
+              {/* Game History & Analysis */}
               <button
                 onClick={() => {
                   soundManager.playSound('click');
@@ -3134,18 +3096,13 @@ export const App: React.FC = () => {
                   <div className="p-2 rounded-xl bg-amber-500/20 text-amber-400 border border-amber-400/30">
                     <History size={20} />
                   </div>
-                  <div className="text-left">
-                    <div className="font-bold text-sm sm:text-base flex items-center gap-2">
-                      Game History & Analysis
-                      {savedGames.length > 0 && (
-                        <span className="px-1.5 py-0.2 rounded-full bg-amber-500/20 text-amber-300 text-[10px] font-mono">
-                          {savedGames.length}
-                        </span>
-                      )}
-                    </div>
-                    <div className="text-[11px] text-slate-300">
-                      Saved games, PGN text import & instant test samples
-                    </div>
+                  <div className="font-bold text-sm sm:text-base flex items-center gap-2 text-left">
+                    <span>Game History & Analysis</span>
+                    {savedGames.length > 0 && (
+                      <span className="px-1.5 py-0.2 rounded-full bg-amber-500/20 text-amber-300 text-[10px] font-mono">
+                        {savedGames.length}
+                      </span>
+                    )}
                   </div>
                 </div>
                 <ChevronRight size={18} className="text-slate-300" />
@@ -3165,12 +3122,7 @@ export const App: React.FC = () => {
                   <div className="p-2 rounded-xl bg-slate-700/40 text-slate-300 border border-slate-600/40">
                     <Sliders size={20} />
                   </div>
-                  <div className="text-left">
-                    <div className="font-bold text-sm sm:text-base">Settings</div>
-                    <div className="text-[11px] text-slate-300">
-                      Display, text size (up to 50px), Lichess mode & AI
-                    </div>
-                  </div>
+                  <div className="font-bold text-sm sm:text-base text-left">Settings</div>
                 </div>
                 <ChevronRight size={18} className="text-slate-300" />
               </button>

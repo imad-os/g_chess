@@ -1,6 +1,6 @@
 {
-  "summary":  "Implementation plan for flipping usernames/clocks with board orientation, upgrading the Game Over modal with personalized You/Opponent copy, live Rematch offers, and Checkmate animations, and building the multilingual Learn mode taught by Checko the White Rooster with MyPC AI TTS support.",
-  "updatedAt":  "2026-10-26T11:17:00.291337613Z",
+  "summary":  "Implementation plan to scale Checko's Chess Academy curriculum to 80 multi-step lessons (20 lessons per tier across Beginner, Novice, Intermediate, and 1500 Elo) with 2–3 progressive steps per lesson, multilingual instructions (EN, FR, ES, AR), explanatory arrows, and 100% automated chess.js move legality verification.",
+  "updatedAt":  "2026-10-27T09:39:19.594472145Z",
   "requestFeedback":  true,
   "userFacing":  true
 }
