@@ -10,10 +10,18 @@ export default defineConfig({
     outDir: '../',
     emptyOutDir: false,
     assetsDir: 'assets',
+    minify: false,
+    cssMinify: false,
     rollupOptions: {
       output: {
+        banner: '/*! MyPC Chess Build */\n',
         entryFileNames: 'assets/index-CcsGiZvm.js',
         chunkFileNames: 'assets/[name].js',
+        manualChunks(id) {
+          if (id.includes('node_modules')) {
+            return 'vendor';
+          }
+        },
         assetFileNames: (assetInfo) => {
           if (assetInfo.name && assetInfo.name.endsWith('.css')) {
             return 'assets/index-BtfQxKnt.css';

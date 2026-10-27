@@ -3151,6 +3151,10 @@ export const App: React.FC = () => {
               >
                 Text: {numericFontSize}px
               </button>
+              <span>•</span>
+              <span className="px-2 py-0.5 rounded-lg bg-slate-900 border border-amber-500/40 text-amber-400 font-mono font-bold text-[11px]">
+                Build v4.1.0
+              </span>
             </div>
           </div>
         </div>
