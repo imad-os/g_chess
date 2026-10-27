@@ -55,7 +55,78 @@ import {
   stepRangeInput,
   triggerSpatialConfirm,
 } from './services/spatialInput';
-import { Bot, Users, Wifi, Sliders, ChevronRight, History, Play } from 'lucide-react';
+import { Bot, Users, Wifi, Sliders, ChevronRight, History, Play, X } from 'lucide-react';
+
+// Strict 30-minute Time-To-Live (TTL) for saved local/AI ongoing matches
+const LOCAL_MATCH_TTL_MS = 30 * 60 * 1000;
+
+/**
+ * Validates that a saved local/AI match snapshot is genuinely active, recent (within TTL),
+ * has moves played by the human player, has time remaining, and is not game over.
+ * Automatically purges stale/invalid snapshots from storage.
+ */
+const validateActiveLocalMatch = (
+  snap: ActiveMatchSnapshot | null | undefined
+): ActiveMatchSnapshot | null => {
+  if (!snap || typeof snap !== 'object') return null;
+
+  const purge = (): null => {
+    myPCService.save('active_local_match', null);
+    myPCService.remove('active_local_match');
+    return null;
+  };
+
+  // 1. Only local or AI matches belong in active_local_match (Lichess is tracked live via Lichess API)
+  if (snap.gameMode !== 'ai' && snap.gameMode !== 'local') {
+    return purge();
+  }
+
+  // 2. Strict TTL check (must have a valid timestamp within the last 30 minutes)
+  const now = Date.now();
+  if (
+    typeof snap.updatedAt !== 'number' ||
+    snap.updatedAt <= 0 ||
+    now - snap.updatedAt > LOCAL_MATCH_TTL_MS
+  ) {
+    return purge();
+  }
+
+  // 3. Must have actually started with moves played by BOTH sides (at least 2 plies AND at least 1 human move)
+  if (!Array.isArray(snap.moves) || snap.moves.length < 2) {
+    return purge();
+  }
+  const humanPlayedAtLeastOnce = snap.moves.some(
+    (_, idx) => (idx % 2 === 0 ? 'w' : 'b') === snap.playerColor
+  );
+  if (!humanPlayedAtLeastOnce) {
+    return purge();
+  }
+
+  // 4. Both clocks must still be positive
+  if (
+    typeof snap.wtime !== 'number' ||
+    snap.wtime <= 0 ||
+    typeof snap.btime !== 'number' ||
+    snap.btime <= 0
+  ) {
+    return purge();
+  }
+
+  // 5. Board FEN must be valid, not the starting position, and not ended
+  try {
+    if (!snap.fen || snap.fen === 'startpos') {
+      return purge();
+    }
+    const testChess = new Chess(snap.fen);
+    if (testChess.isGameOver() || testChess.fen() === new Chess().fen()) {
+      return purge();
+    }
+  } catch {
+    return purge();
+  }
+
+  return snap;
+};
 
 export const App: React.FC = () => {
   // App state
@@ -193,8 +264,14 @@ export const App: React.FC = () => {
   // Ongoing games state (Resume Lichess cloud game started on phone/TV or unfinished local/AI match)
   const [ongoingLichessGames, setOngoingLichessGames] = useState<OngoingLichessGame[]>([]);
   const [savedLocalMatch, setSavedLocalMatch] = useState<ActiveMatchSnapshot | null>(() =>
-    myPCService.load<ActiveMatchSnapshot | null>('active_local_match', null)
+    validateActiveLocalMatch(myPCService.load<ActiveMatchSnapshot | null>('active_local_match', null))
   );
+
+  const clearActiveLocalMatch = useCallback(() => {
+    setSavedLocalMatch(null);
+    myPCService.save('active_local_match', null);
+    myPCService.remove('active_local_match');
+  }, []);
 
   // Track browser Wi-Fi / internet online & offline events
   useEffect(() => {
@@ -297,13 +374,10 @@ export const App: React.FC = () => {
           setMatchNotes(loadedNotes);
         }
 
-        const loadedActiveMatch = myPCService.load<ActiveMatchSnapshot | null>(
-          'active_local_match',
-          null
+        const loadedActiveMatch = validateActiveLocalMatch(
+          myPCService.load<ActiveMatchSnapshot | null>('active_local_match', null)
         );
-        if (loadedActiveMatch && loadedActiveMatch.moves?.length > 0) {
-          setSavedLocalMatch(loadedActiveMatch);
-        }
+        setSavedLocalMatch(loadedActiveMatch);
 
         const savedConfig = myPCService.load<Partial<GameSettings>>('config', {});
         if (savedConfig) {
@@ -368,14 +442,25 @@ export const App: React.FC = () => {
     });
   }, []);
 
-  // Refresh ongoing Lichess cloud games whenever returning to the Main Menu
+  // Refresh & validate ongoing Lichess cloud games and local match TTL whenever on the Main Menu
   useEffect(() => {
-    if (appState === 'menu' && lichessService.getToken()) {
-      lichessService
-        .fetchOngoingGames()
-        .then((playing) => setOngoingLichessGames(playing))
-        .catch(() => {});
-    }
+    if (appState !== 'menu') return;
+
+    const revalidateOngoing = () => {
+      setSavedLocalMatch((prev) => validateActiveLocalMatch(prev));
+      if (lichessService.getToken()) {
+        lichessService
+          .fetchOngoingGames()
+          .then((playing) => setOngoingLichessGames(playing))
+          .catch(() => {});
+      } else {
+        setOngoingLichessGames([]);
+      }
+    };
+
+    revalidateOngoing();
+    const ttlTimer = setInterval(revalidateOngoing, 15000);
+    return () => clearInterval(ttlTimer);
   }, [appState]);
 
   // Update soundManager flags and sound pack when settings change
@@ -439,6 +524,10 @@ export const App: React.FC = () => {
       pColor: Color,
       oppName: string
     ) => {
+      // Always clear any active local match snapshot immediately when a game concludes/resigns/aborts,
+      // even if 0 moves were made!
+      clearActiveLocalMatch();
+
       if (currentMatchSavedRef.current || movesList.length === 0) return;
       currentMatchSavedRef.current = true;
 
@@ -485,12 +574,8 @@ export const App: React.FC = () => {
         myPCService.save('saved_games', updated);
         return updated;
       });
-
-      // Clear active unfinished match snapshot once game concludes
-      setSavedLocalMatch(null);
-      myPCService.save('active_local_match', null);
     },
-    [profileName, lichessUsername]
+    [profileName, lichessUsername, clearActiveLocalMatch]
   );
 
   // Open settings with preserved return state & optional initial tab
@@ -516,6 +601,8 @@ export const App: React.FC = () => {
       soundManager.playSound('game_start');
       lichessService.stopGameStream();
       setActiveLichessGameId(null);
+      // Clear any previous saved local match when starting a brand new game
+      clearActiveLocalMatch();
 
       const startMs = Math.max(30000, Math.round(customMinutes * 60 * 1000));
       const incMs = Math.max(0, Math.round(customIncrementSec * 1000));
@@ -578,7 +665,7 @@ export const App: React.FC = () => {
       ]);
       setAppState('playing');
     },
-    [settings.ai_elo]
+    [settings.ai_elo, clearActiveLocalMatch]
   );
 
   // Check Game Over conditions
@@ -923,6 +1010,9 @@ export const App: React.FC = () => {
             state.status !== 'started' &&
             state.status !== 'created'
           ) {
+            lichessService.markGameEnded(gameId);
+            setOngoingLichessGames((prev) => prev.filter((item) => item.gameId !== gameId));
+
             const wWinner: 'w' | 'b' | 'draw' =
               state.winner === 'white'
                 ? 'w'
@@ -967,10 +1057,27 @@ export const App: React.FC = () => {
     [archiveCompletedGame, appendChatMessage]
   );
 
-  // Persist active unfinished match snapshot so the player can close & reopen the app and continue
+  // Persist active unfinished local/AI match snapshot (only when genuinely started by human player & active)
   useEffect(() => {
-    if (appState !== 'playing' || chess.isGameOver()) return;
-    if (gameHistory.length === 0 && gameMode !== 'lichess') return;
+    if (appState !== 'playing') return;
+    if (gameMode !== 'ai' && gameMode !== 'local') return;
+    if (currentMatchSavedRef.current || chess.isGameOver()) {
+      clearActiveLocalMatch();
+      return;
+    }
+
+    // Require at least 2 plies AND at least 1 move played by the human player before saving as ongoing
+    const humanPlayed = gameHistory.some(
+      (_, idx) => (idx % 2 === 0 ? 'w' : 'b') === playerColor
+    );
+    if (gameHistory.length < 2 || !humanPlayed) {
+      return;
+    }
+
+    if (matchClocks.wtime <= 0 || matchClocks.btime <= 0) {
+      clearActiveLocalMatch();
+      return;
+    }
 
     const snapshot: ActiveMatchSnapshot = {
       gameMode,
@@ -985,14 +1092,8 @@ export const App: React.FC = () => {
       timeControlLabel,
       speedLabel,
       ratedMatch,
-      opponentName:
-        gameMode === 'ai'
-          ? 'Stockfish AI'
-          : gameMode === 'lichess' || gameMode === 'online'
-          ? remotePlayerName
-          : 'Player 2',
-      opponentElo: gameMode === 'lichess' ? opponentElo : settings.ai_elo,
-      lichessGameId: activeLichessGameId || undefined,
+      opponentName: gameMode === 'ai' ? 'Stockfish AI' : 'Player 2',
+      opponentElo: settings.ai_elo,
       updatedAt: Date.now(),
     };
     setSavedLocalMatch(snapshot);
@@ -1011,10 +1112,8 @@ export const App: React.FC = () => {
     timeControlLabel,
     speedLabel,
     ratedMatch,
-    remotePlayerName,
-    opponentElo,
     settings.ai_elo,
-    activeLichessGameId,
+    clearActiveLocalMatch,
   ]);
 
   // Resume an ongoing cloud Lichess game or saved local/AI match
@@ -1287,6 +1386,9 @@ export const App: React.FC = () => {
         } else {
           setLastMove(null);
         }
+        if (newHist.length < 2) {
+          clearActiveLocalMatch();
+        }
         const activeTurnColor = gameMode === 'local' ? nextChess.turn() : playerColor;
         setCursorSquare(lastPlayerMoveSquareRef.current[activeTurnColor]);
         return newHist;
@@ -1294,11 +1396,14 @@ export const App: React.FC = () => {
 
       return nextChess;
     });
-  }, [appState, gameMode, gameHistory.length, playerColor]);
+  }, [appState, gameMode, gameHistory.length, playerColor, clearActiveLocalMatch]);
 
   // Resign match (synchronizes across Multiplayer so both Host and Guest save the game!)
   const handleResign = useCallback(() => {
     soundManager.playSound('lose');
+    // Immediately clear any saved ongoing local match so a resigned game never appears on Home Menu
+    clearActiveLocalMatch();
+
     const winner: Color = playerColor === 'w' ? 'b' : 'w';
     const eloChange = gameMode === 'ai' ? -15 : 0;
     const updatedElo = Math.max(400, myElo + eloChange);
@@ -1309,6 +1414,10 @@ export const App: React.FC = () => {
     }
 
     if (gameMode === 'lichess' && activeLichessGameId) {
+      lichessService.markGameEnded(activeLichessGameId);
+      setOngoingLichessGames((prev) =>
+        prev.filter((item) => item.gameId !== activeLichessGameId)
+      );
       lichessService.resignBoardGame(activeLichessGameId);
     }
 
@@ -1364,6 +1473,7 @@ export const App: React.FC = () => {
     isHost,
     remotePlayerName,
     archiveCompletedGame,
+    clearActiveLocalMatch,
   ]);
 
   // Open Resign Confirmation dialog so accidental presses never immediately resign
@@ -1497,12 +1607,15 @@ export const App: React.FC = () => {
   // Abort or Restart match handler
   const handleAbortOrRestart = useCallback(() => {
     soundManager.playSound('click');
+    clearActiveLocalMatch();
     if (gameMode === 'lichess' && activeLichessGameId) {
       if (gameHistoryRef.current.length < 2) {
+        lichessService.markGameEnded(activeLichessGameId);
+        setOngoingLichessGames((prev) =>
+          prev.filter((item) => item.gameId !== activeLichessGameId)
+        );
         lichessService.abortBoardGame(activeLichessGameId);
         lichessService.stopGameStream();
-        setSavedLocalMatch(null);
-        myPCService.save('active_local_match', null);
         setAppState('lichess_hub');
       } else {
         appendChatMessage(
@@ -1514,7 +1627,14 @@ export const App: React.FC = () => {
       return;
     }
     startNewGame(gameMode, playerColor);
-  }, [gameMode, activeLichessGameId, playerColor, startNewGame, appendChatMessage]);
+  }, [
+    gameMode,
+    activeLichessGameId,
+    playerColor,
+    startNewGame,
+    appendChatMessage,
+    clearActiveLocalMatch,
+  ]);
 
   // Add +15 seconds to opponent clock
   const handleGiveMoreTime = useCallback(() => {
@@ -2823,118 +2943,153 @@ export const App: React.FC = () => {
 
               <div className="space-y-2 max-h-[60vh] overflow-y-auto pr-0.5">
                 {ongoingLichessGames.map((g, idx) => (
-                  <button
+                  <div
                     key={g.gameId}
-                    type="button"
-                    onClick={() => {
-                      soundManager.playSound('game_start');
-                      handleStartLiveLichessGame(
-                        g.gameId,
-                        lichessUsername || lichessService.getUsername() || 'Me'
-                      );
-                    }}
-                    onMouseEnter={() => {
-                      if (idx === 0) setMenuIndex(0);
-                    }}
-                    className={`w-full flex items-center gap-3 p-2.5 rounded-2xl border transition-colors text-left cursor-pointer ${
+                    className={`relative w-full flex items-center gap-3 p-2.5 rounded-2xl border transition-colors text-left ${
                       idx === 0 && menuIndex === 0
                         ? 'bg-emerald-900/80 border-emerald-300 ring-2 ring-emerald-400/60 shadow-lg'
                         : 'bg-slate-950/90 hover:bg-slate-950 border-emerald-500/50 hover:border-emerald-400'
                     }`}
                   >
-                    <MiniBoardPreview
-                      fen={g.fen}
-                      myColor={g.myColor}
-                      lastMoveUci={g.lastMove}
-                      sizeClass="w-20 h-20 sm:w-24 sm:h-24"
-                    />
-                    <div className="min-w-0 flex-1 flex flex-col justify-between">
-                      <div>
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          <span className="px-1.5 py-0.5 rounded bg-emerald-400 text-slate-950 text-[9px] font-black uppercase">
-                            Lichess Live
-                          </span>
-                          <span className="text-[10px] font-bold text-emerald-300 uppercase">
-                            {g.speed}
-                          </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        soundManager.playSound('game_start');
+                        handleStartLiveLichessGame(
+                          g.gameId,
+                          lichessUsername || lichessService.getUsername() || 'Me'
+                        );
+                      }}
+                      onMouseEnter={() => {
+                        if (idx === 0) setMenuIndex(0);
+                      }}
+                      className="flex-1 min-w-0 flex items-center gap-3 text-left cursor-pointer"
+                    >
+                      <MiniBoardPreview
+                        fen={g.fen}
+                        myColor={g.myColor}
+                        lastMoveUci={g.lastMove}
+                        sizeClass="w-20 h-20 sm:w-24 sm:h-24"
+                      />
+                      <div className="min-w-0 flex-1 flex flex-col justify-between pr-5">
+                        <div>
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="px-1.5 py-0.5 rounded bg-emerald-400 text-slate-950 text-[9px] font-black uppercase">
+                              Lichess Live
+                            </span>
+                            <span className="text-[10px] font-bold text-emerald-300 uppercase">
+                              {g.speed}
+                            </span>
+                          </div>
+                          <div className="font-extrabold text-sm text-white truncate mt-1">
+                            vs {g.opponentName}
+                            {g.opponentRating ? ` (${g.opponentRating})` : ''}
+                          </div>
+                          <div className="text-[11px] text-slate-300 mt-0.5">
+                            Playing as {g.myColor === 'w' ? 'White' : 'Black'}
+                            {g.secondsLeft !== undefined
+                              ? ` • ${Math.floor(g.secondsLeft / 60)}:${String(
+                                  g.secondsLeft % 60
+                                ).padStart(2, '0')}`
+                              : ''}
+                          </div>
                         </div>
-                        <div className="font-extrabold text-sm text-white truncate mt-1">
-                          vs {g.opponentName}
-                          {g.opponentRating ? ` (${g.opponentRating})` : ''}
-                        </div>
-                        <div className="text-[11px] text-slate-300 mt-0.5">
-                          Playing as {g.myColor === 'w' ? 'White' : 'Black'}
-                          {g.secondsLeft !== undefined
-                            ? ` • ${Math.floor(g.secondsLeft / 60)}:${String(
-                                g.secondsLeft % 60
-                              ).padStart(2, '0')}`
-                            : ''}
+                        <div className="mt-2 flex items-center justify-between gap-2">
+                          <span
+                            className={`text-[10px] font-bold ${
+                              g.isMyTurn ? 'text-emerald-400' : 'text-slate-400'
+                            }`}
+                          >
+                            {g.isMyTurn ? '● Your turn' : 'Waiting...'}
+                          </span>
+                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-400 text-slate-950 font-black text-[11px]">
+                            <Play size={11} className="fill-current" />
+                            Resume
+                          </span>
                         </div>
                       </div>
-                      <div className="mt-2 flex items-center justify-between gap-2">
-                        <span
-                          className={`text-[10px] font-bold ${
-                            g.isMyTurn ? 'text-emerald-400' : 'text-slate-400'
-                          }`}
-                        >
-                          {g.isMyTurn ? '● Your turn' : 'Waiting...'}
-                        </span>
-                        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-400 text-slate-950 font-black text-[11px]">
-                          <Play size={11} className="fill-current" />
-                          Resume
-                        </span>
-                      </div>
-                    </div>
-                  </button>
+                    </button>
+                    <button
+                      type="button"
+                      title="Dismiss from Ongoing Games"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        soundManager.playSound('select');
+                        lichessService.markGameEnded(g.gameId);
+                        setOngoingLichessGames((prev) =>
+                          prev.filter((item) => item.gameId !== g.gameId)
+                        );
+                      }}
+                      className="absolute top-2 right-2 p-1 rounded-lg bg-slate-900/80 hover:bg-red-950/90 text-slate-400 hover:text-red-300 border border-slate-700/60 transition-colors cursor-pointer"
+                    >
+                      <X size={13} />
+                    </button>
+                  </div>
                 ))}
 
                 {savedLocalMatch && ongoingLichessGames.length === 0 && (
-                  <button
-                    type="button"
-                    onClick={handleContinueOngoingGame}
-                    onMouseEnter={() => setMenuIndex(0)}
-                    className={`w-full flex items-center gap-3 p-2.5 rounded-2xl border transition-colors text-left cursor-pointer ${
+                  <div
+                    className={`relative w-full flex items-center gap-3 p-2.5 rounded-2xl border transition-colors text-left ${
                       menuIndex === 0
                         ? 'bg-emerald-900/80 border-emerald-300 ring-2 ring-emerald-400/60 shadow-lg'
                         : 'bg-slate-950/90 hover:bg-slate-950 border-emerald-500/50 hover:border-emerald-400'
                     }`}
                   >
-                    <MiniBoardPreview
-                      fen={savedLocalMatch.fen}
-                      myColor={savedLocalMatch.playerColor}
-                      lastMoveUci={
-                        savedLocalMatch.moves.length > 0
-                          ? `${savedLocalMatch.moves[savedLocalMatch.moves.length - 1].from}${
-                              savedLocalMatch.moves[savedLocalMatch.moves.length - 1].to
-                            }`
-                          : undefined
-                      }
-                      sizeClass="w-20 h-20 sm:w-24 sm:h-24"
-                    />
-                    <div className="min-w-0 flex-1 flex flex-col justify-between">
-                      <div>
-                        <span className="px-1.5 py-0.5 rounded bg-sky-400 text-slate-950 text-[9px] font-black uppercase">
-                          Active Match
-                        </span>
-                        <div className="font-extrabold text-sm text-white truncate mt-1">
-                          {savedLocalMatch.gameMode === 'ai'
-                            ? `vs Stockfish AI (${savedLocalMatch.opponentElo})`
-                            : `vs ${savedLocalMatch.opponentName}`}
+                    <button
+                      type="button"
+                      onClick={handleContinueOngoingGame}
+                      onMouseEnter={() => setMenuIndex(0)}
+                      className="flex-1 min-w-0 flex items-center gap-3 text-left cursor-pointer"
+                    >
+                      <MiniBoardPreview
+                        fen={savedLocalMatch.fen}
+                        myColor={savedLocalMatch.playerColor}
+                        lastMoveUci={
+                          savedLocalMatch.moves.length > 0
+                            ? `${savedLocalMatch.moves[savedLocalMatch.moves.length - 1].from}${
+                                savedLocalMatch.moves[savedLocalMatch.moves.length - 1].to
+                              }`
+                            : undefined
+                        }
+                        sizeClass="w-20 h-20 sm:w-24 sm:h-24"
+                      />
+                      <div className="min-w-0 flex-1 flex flex-col justify-between pr-5">
+                        <div>
+                          <span className="px-1.5 py-0.5 rounded bg-sky-400 text-slate-950 text-[9px] font-black uppercase">
+                            Active Match
+                          </span>
+                          <div className="font-extrabold text-sm text-white truncate mt-1">
+                            {savedLocalMatch.gameMode === 'ai'
+                              ? `vs Stockfish AI (${savedLocalMatch.opponentElo})`
+                              : `vs ${savedLocalMatch.opponentName}`}
+                          </div>
+                          <div className="text-[11px] text-slate-300 mt-0.5">
+                            {savedLocalMatch.timeControlLabel || '10+0'} • {savedLocalMatch.moves.length}{' '}
+                            moves
+                          </div>
                         </div>
-                        <div className="text-[11px] text-slate-300 mt-0.5">
-                          {savedLocalMatch.timeControlLabel || '10+0'} • {savedLocalMatch.moves.length}{' '}
-                          moves
+                        <div className="mt-2 flex items-center justify-between gap-2">
+                          <span className="text-[10px] font-bold text-sky-400">Active • 30m TTL</span>
+                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-400 text-slate-950 font-black text-[11px]">
+                            <Play size={11} className="fill-current" />
+                            Continue
+                          </span>
                         </div>
                       </div>
-                      <div className="mt-2 flex items-center justify-between gap-2">
-                        <span className="text-[10px] font-bold text-sky-400">Saved State</span>
-                        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-400 text-slate-950 font-black text-[11px]">
-                          <Play size={11} className="fill-current" />
-                          Continue
-                        </span>
-                      </div>
-                    </div>
-                  </button>
+                    </button>
+                    <button
+                      type="button"
+                      title="Dismiss Saved Match"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        soundManager.playSound('select');
+                        clearActiveLocalMatch();
+                      }}
+                      className="absolute top-2 right-2 p-1 rounded-lg bg-slate-900/80 hover:bg-red-950/90 text-slate-400 hover:text-red-300 border border-slate-700/60 transition-colors cursor-pointer"
+                    >
+                      <X size={13} />
+                    </button>
+                  </div>
                 )}
               </div>
             </div>
@@ -3153,7 +3308,7 @@ export const App: React.FC = () => {
               </button>
               <span>•</span>
               <span className="px-2 py-0.5 rounded-lg bg-slate-900 border border-amber-500/40 text-amber-400 font-mono font-bold text-[11px]">
-                Build v4.1.0
+                Build v4.2.0
               </span>
             </div>
           </div>

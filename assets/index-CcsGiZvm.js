@@ -1,7 +1,7 @@
 var __defProp = Object.defineProperty;
 var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
 var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "symbol" ? key + "" : key, value);
-/*! MyPC Chess Build v4.1.0 */
+/*! MyPC Chess Build v4.2.0 */
 import { R as React, j as jsxRuntimeExports, T as Type, a as RotateCcw, V as Volume2, b as VolumeX, M as Music, S as SlidersVertical, P as Pause, c as Plus, r as reactExports, C as ChevronsLeft, d as ChevronLeft, e as ChevronRight, f as ChevronsRight, X, U as Undo2, g as MessageSquare, h as Send, B as Bot, i as Users, W as Wifi, Z as Zap, F as Flame, k as Clock, l as Flag, H as Handshake, m as Check, n as Play, o as TriangleAlert, L as LogOut, E as Eye, p as Crown, q as ShieldAlert, s as Trophy, t as TrendingUp, u as TrendingDown, v as Swords, w as Sparkles, x as House, y as Chess, A as ArrowLeft, z as ChartColumn, D as EyeOff, G as GraduationCap, I as Compass, J as Monitor, K as Keyboard, N as Cpu, O as Minus, Q as Tv, Y as Gamepad2, _ as LoaderCircle, $ as CircleAlert, a0 as History, a1 as FileText, a2 as Trash2, a3 as Award, a4 as Calendar, a5 as BookOpen, a6 as CircleCheck, a7 as Key, a8 as Puzzle, a9 as RefreshCw, aa as LayoutGrid, ab as Lock, ac as Lightbulb, ad as client } from "./vendor.js";
 (function polyfill() {
   const relList = document.createElement("link").relList;
@@ -5107,6 +5107,7 @@ function sanitizeLichessToken(raw) {
   }
   return str;
 }
+const LICHESS_ONGOING_TTL_MS = 2 * 60 * 60 * 1e3;
 class LichessService {
   constructor() {
     __publicField(this, "token", "");
@@ -5118,6 +5119,31 @@ class LichessService {
     __publicField(this, "reconnectCountdownId", null);
     __publicField(this, "onlineReconnectListener", null);
     __publicField(this, "puzzleIndex", 0);
+    __publicField(this, "endedGameIds", /* @__PURE__ */ new Set());
+  }
+  /**
+   * Marks a Lichess game ID as ended/resigned/aborted/dismissed so it never reappears in ongoing games.
+   */
+  markGameEnded(gameId) {
+    const cleanId = (gameId || "").trim();
+    if (!cleanId) return;
+    this.endedGameIds.add(cleanId);
+    const saved = myPCService.load("lichess_ended_game_ids", []);
+    if (Array.isArray(saved) && !saved.includes(cleanId)) {
+      const updated = [cleanId, ...saved].slice(0, 60);
+      myPCService.save("lichess_ended_game_ids", updated);
+    }
+  }
+  isGameMarkedEnded(gameId) {
+    const cleanId = (gameId || "").trim();
+    if (!cleanId) return true;
+    if (this.endedGameIds.has(cleanId)) return true;
+    const saved = myPCService.load("lichess_ended_game_ids", []);
+    if (Array.isArray(saved) && saved.includes(cleanId)) {
+      this.endedGameIds.add(cleanId);
+      return true;
+    }
+    return false;
   }
   /**
    * Synchronizes the connected Lichess Personal API Token and username from MyPC cloud profile storage.
@@ -5298,6 +5324,7 @@ class LichessService {
    * Allows continuing any game started on phone, PC, or TV.
    */
   async fetchOngoingGames(explicitToken) {
+    var _a, _b, _c, _d, _e, _f, _g, _h;
     if (explicitToken !== void 0 && explicitToken.trim()) {
       this.setToken(explicitToken);
     }
@@ -5315,30 +5342,85 @@ class LichessService {
       if (!res.ok) return [];
       const data = await res.json();
       const nowPlaying = Array.isArray(data == null ? void 0 : data.nowPlaying) ? data.nowPlaying : [];
-      return nowPlaying.map((g) => {
-        var _a, _b, _c, _d, _e, _f, _g;
-        const oppName = ((_a = g.opponent) == null ? void 0 : _a.username) || (((_b = g.opponent) == null ? void 0 : _b.ai) ? `Stockfish Lv.${g.opponent.ai}` : "Opponent");
-        return {
-          gameId: g.gameId || ((_c = g.fullId) == null ? void 0 : _c.slice(0, 8)) || "",
+      const now = Date.now();
+      const activityMap = myPCService.load(
+        "lichess_ongoing_activity",
+        {}
+      ) || {};
+      let activityDirty = false;
+      const defaultStartFen = new Chess().fen();
+      const activeGames = [];
+      for (const g of nowPlaying) {
+        const gameId = (g.gameId || ((_a = g.fullId) == null ? void 0 : _a.slice(0, 8)) || "").trim();
+        if (!gameId) continue;
+        if (this.isGameMarkedEnded(gameId)) continue;
+        if (g.winner) {
+          this.markGameEnded(gameId);
+          continue;
+        }
+        const statusName = typeof g.status === "string" ? g.status : typeof ((_b = g.status) == null ? void 0 : _b.name) === "string" ? g.status.name : "";
+        if (statusName && statusName !== "started" && statusName !== "created") {
+          this.markGameEnded(gameId);
+          continue;
+        }
+        if (typeof g.secondsLeft === "number" && g.secondsLeft <= 0) {
+          this.markGameEnded(gameId);
+          continue;
+        }
+        const fenStr = g.fen && g.fen !== "startpos" ? g.fen : defaultStartFen;
+        const lastMoveStr = (g.lastMove || "").trim();
+        if (!lastMoveStr && fenStr === defaultStartFen) {
+          continue;
+        }
+        try {
+          const checkBoard = new Chess(fenStr);
+          if (checkBoard.isGameOver()) {
+            this.markGameEnded(gameId);
+            continue;
+          }
+        } catch {
+          continue;
+        }
+        const rawTs = g.lastMoveAt || g.createdAt || g.movedAt;
+        if (typeof rawTs === "number" && rawTs > 0) {
+          const tsMs = rawTs < 1e12 ? rawTs * 1e3 : rawTs;
+          if (now - tsMs > LICHESS_ONGOING_TTL_MS) {
+            continue;
+          }
+        }
+        const prevActivity = activityMap[gameId];
+        if (!prevActivity || prevActivity.lastMove !== lastMoveStr) {
+          activityMap[gameId] = { lastMove: lastMoveStr, updatedAt: now };
+          activityDirty = true;
+        } else if (now - prevActivity.updatedAt > LICHESS_ONGOING_TTL_MS) {
+          continue;
+        }
+        const oppName = ((_c = g.opponent) == null ? void 0 : _c.username) || (((_d = g.opponent) == null ? void 0 : _d.ai) ? `Stockfish Lv.${g.opponent.ai}` : "Opponent");
+        activeGames.push({
+          gameId,
           fullId: g.fullId,
           color: g.color === "black" ? "black" : "white",
           myColor: g.color === "black" ? "b" : "w",
-          fen: g.fen || "startpos",
-          lastMove: g.lastMove,
+          fen: fenStr,
+          lastMove: lastMoveStr || void 0,
           opponentName: oppName,
-          opponentRating: (_d = g.opponent) == null ? void 0 : _d.rating,
+          opponentRating: (_e = g.opponent) == null ? void 0 : _e.rating,
           opponent: {
-            id: (_e = g.opponent) == null ? void 0 : _e.id,
+            id: (_f = g.opponent) == null ? void 0 : _f.id,
             username: oppName,
-            rating: (_f = g.opponent) == null ? void 0 : _f.rating,
-            ai: (_g = g.opponent) == null ? void 0 : _g.ai
+            rating: (_g = g.opponent) == null ? void 0 : _g.rating,
+            ai: (_h = g.opponent) == null ? void 0 : _h.ai
           },
           isMyTurn: !!g.isMyTurn,
           secondsLeft: g.secondsLeft,
           speed: g.speed || g.perf || "rapid",
           rated: !!g.rated
-        };
-      });
+        });
+      }
+      if (activityDirty) {
+        myPCService.save("lichess_ongoing_activity", activityMap);
+      }
+      return activeGames;
     } catch {
       return [];
     }
@@ -5903,6 +5985,9 @@ class LichessService {
                   bdraw: !!(((_o = msg.state) == null ? void 0 : _o.bdraw) || ((_p = msg.state) == null ? void 0 : _p.btie)),
                   opponentGone: false
                 };
+                if (currentState.status !== "started" && currentState.status !== "created") {
+                  this.markGameEnded(currentState.gameId);
+                }
                 onUpdate({ ...currentState });
               } else if (msg.type === "gameState") {
                 const movesChanged = msg.moves !== void 0 && msg.moves !== currentState.movesUci;
@@ -5917,6 +6002,9 @@ class LichessService {
                   bdraw: msg.bdraw !== void 0 ? !!msg.bdraw : msg.btie !== void 0 ? !!msg.btie : movesChanged ? false : currentState.bdraw,
                   opponentGone: movesChanged ? false : currentState.opponentGone
                 };
+                if (currentState.status !== "started" && currentState.status !== "created") {
+                  this.markGameEnded(currentState.gameId);
+                }
                 onUpdate({ ...currentState });
               } else if (msg.type === "opponentGone") {
                 currentState = {
@@ -6044,6 +6132,7 @@ class LichessService {
    * Abort an active Lichess Board game
    */
   async abortBoardGame(gameId) {
+    this.markGameEnded(gameId);
     const res = await myPCService.proxyFetch(
       `${LICHESS_BASE}/api/board/game/${encodeURIComponent(gameId)}/abort`,
       {
@@ -6057,6 +6146,7 @@ class LichessService {
    * Resign an active Lichess Board game
    */
   async resignBoardGame(gameId) {
+    this.markGameEnded(gameId);
     const res = await myPCService.proxyFetch(
       `${LICHESS_BASE}/api/board/game/${encodeURIComponent(gameId)}/resign`,
       {
@@ -10227,6 +10317,46 @@ class StockfishService {
   }
 }
 const stockfishService = new StockfishService();
+const LOCAL_MATCH_TTL_MS = 30 * 60 * 1e3;
+const validateActiveLocalMatch = (snap) => {
+  if (!snap || typeof snap !== "object") return null;
+  const purge = () => {
+    myPCService.save("active_local_match", null);
+    myPCService.remove("active_local_match");
+    return null;
+  };
+  if (snap.gameMode !== "ai" && snap.gameMode !== "local") {
+    return purge();
+  }
+  const now = Date.now();
+  if (typeof snap.updatedAt !== "number" || snap.updatedAt <= 0 || now - snap.updatedAt > LOCAL_MATCH_TTL_MS) {
+    return purge();
+  }
+  if (!Array.isArray(snap.moves) || snap.moves.length < 2) {
+    return purge();
+  }
+  const humanPlayedAtLeastOnce = snap.moves.some(
+    (_, idx) => (idx % 2 === 0 ? "w" : "b") === snap.playerColor
+  );
+  if (!humanPlayedAtLeastOnce) {
+    return purge();
+  }
+  if (typeof snap.wtime !== "number" || snap.wtime <= 0 || typeof snap.btime !== "number" || snap.btime <= 0) {
+    return purge();
+  }
+  try {
+    if (!snap.fen || snap.fen === "startpos") {
+      return purge();
+    }
+    const testChess = new Chess(snap.fen);
+    if (testChess.isGameOver() || testChess.fen() === new Chess().fen()) {
+      return purge();
+    }
+  } catch {
+    return purge();
+  }
+  return snap;
+};
 const App = () => {
   const [appState, setAppState] = reactExports.useState("menu");
   const [settingsReturnState, setSettingsReturnState] = reactExports.useState("menu");
@@ -10332,8 +10462,13 @@ const App = () => {
   const [reconnectRetrySec, setReconnectRetrySec] = reactExports.useState(10);
   const [ongoingLichessGames, setOngoingLichessGames] = reactExports.useState([]);
   const [savedLocalMatch, setSavedLocalMatch] = reactExports.useState(
-    () => myPCService.load("active_local_match", null)
+    () => validateActiveLocalMatch(myPCService.load("active_local_match", null))
   );
+  const clearActiveLocalMatch = reactExports.useCallback(() => {
+    setSavedLocalMatch(null);
+    myPCService.save("active_local_match", null);
+    myPCService.remove("active_local_match");
+  }, []);
   reactExports.useEffect(() => {
     if (typeof window === "undefined") return;
     const handleOnline = () => setIsMeOnline(true);
@@ -10392,7 +10527,7 @@ const App = () => {
     soundManager.init();
     myPCService.init({
       onInit: (info) => {
-        var _a, _b, _c;
+        var _a, _b;
         if ((_a = info == null ? void 0 : info.profile) == null ? void 0 : _a.name) {
           setProfileName(info.profile.name);
         }
@@ -10409,13 +10544,10 @@ const App = () => {
         if (typeof loadedNotes === "string") {
           setMatchNotes(loadedNotes);
         }
-        const loadedActiveMatch = myPCService.load(
-          "active_local_match",
-          null
+        const loadedActiveMatch = validateActiveLocalMatch(
+          myPCService.load("active_local_match", null)
         );
-        if (loadedActiveMatch && ((_c = loadedActiveMatch.moves) == null ? void 0 : _c.length) > 0) {
-          setSavedLocalMatch(loadedActiveMatch);
-        }
+        setSavedLocalMatch(loadedActiveMatch);
         const savedConfig = myPCService.load("config", {});
         if (savedConfig) {
           setSettings((prev) => {
@@ -10440,11 +10572,11 @@ const App = () => {
         }
         if (syncedLichess.token) {
           lichessService.fetchAccount().then((acc) => {
-            var _a2, _b2, _c2, _d, _e, _f;
+            var _a2, _b2, _c, _d, _e, _f;
             if (acc == null ? void 0 : acc.username) {
               setLichessUsername(acc.username);
             }
-            const rapidOrBlitz = ((_b2 = (_a2 = acc == null ? void 0 : acc.perfs) == null ? void 0 : _a2.rapid) == null ? void 0 : _b2.rating) || ((_d = (_c2 = acc == null ? void 0 : acc.perfs) == null ? void 0 : _c2.blitz) == null ? void 0 : _d.rating) || ((_f = (_e = acc == null ? void 0 : acc.perfs) == null ? void 0 : _e.classical) == null ? void 0 : _f.rating);
+            const rapidOrBlitz = ((_b2 = (_a2 = acc == null ? void 0 : acc.perfs) == null ? void 0 : _a2.rapid) == null ? void 0 : _b2.rating) || ((_d = (_c = acc == null ? void 0 : acc.perfs) == null ? void 0 : _c.blitz) == null ? void 0 : _d.rating) || ((_f = (_e = acc == null ? void 0 : acc.perfs) == null ? void 0 : _e.classical) == null ? void 0 : _f.rating);
             if (rapidOrBlitz) {
               setMyLichessRating(rapidOrBlitz);
             }
@@ -10472,10 +10604,19 @@ const App = () => {
     });
   }, []);
   reactExports.useEffect(() => {
-    if (appState === "menu" && lichessService.getToken()) {
-      lichessService.fetchOngoingGames().then((playing) => setOngoingLichessGames(playing)).catch(() => {
-      });
-    }
+    if (appState !== "menu") return;
+    const revalidateOngoing = () => {
+      setSavedLocalMatch((prev) => validateActiveLocalMatch(prev));
+      if (lichessService.getToken()) {
+        lichessService.fetchOngoingGames().then((playing) => setOngoingLichessGames(playing)).catch(() => {
+        });
+      } else {
+        setOngoingLichessGames([]);
+      }
+    };
+    revalidateOngoing();
+    const ttlTimer = setInterval(revalidateOngoing, 15e3);
+    return () => clearInterval(ttlTimer);
   }, [appState]);
   reactExports.useEffect(() => {
     soundManager.setSoundEnabled(settings.sound_enabled);
@@ -10519,6 +10660,7 @@ const App = () => {
   }, []);
   const archiveCompletedGame = reactExports.useCallback(
     (movesList, mode, winner, reason, pColor, oppName) => {
+      clearActiveLocalMatch();
       if (currentMatchSavedRef.current || movesList.length === 0) return;
       currentMatchSavedRef.current = true;
       const myActiveLabel = mode === "lichess" ? lichessUsername || lichessService.getUsername() || "Lichess Player" : profileName;
@@ -10543,10 +10685,8 @@ const App = () => {
         myPCService.save("saved_games", updated);
         return updated;
       });
-      setSavedLocalMatch(null);
-      myPCService.save("active_local_match", null);
     },
-    [profileName, lichessUsername]
+    [profileName, lichessUsername, clearActiveLocalMatch]
   );
   const openSettings = reactExports.useCallback(
     (fromState, initialTab = "display") => {
@@ -10563,6 +10703,7 @@ const App = () => {
       soundManager.playSound("game_start");
       lichessService.stopGameStream();
       setActiveLichessGameId(null);
+      clearActiveLocalMatch();
       const startMs = Math.max(3e4, Math.round(customMinutes * 60 * 1e3));
       const incMs = Math.max(0, Math.round(customIncrementSec * 1e3));
       const estDurationSec = customMinutes * 60 + customIncrementSec * 40;
@@ -10610,7 +10751,7 @@ const App = () => {
       ]);
       setAppState("playing");
     },
-    [settings.ai_elo]
+    [settings.ai_elo, clearActiveLocalMatch]
   );
   const checkGameOver = reactExports.useCallback(
     (c, currentMode, myCurrentElo, movesSnapshot, pColor, oppName) => {
@@ -10891,6 +11032,8 @@ const App = () => {
           setIncomingDrawOffer(oppOffered);
           setDrawOfferSent(myOffered);
           if (state.status && state.status !== "started" && state.status !== "created") {
+            lichessService.markGameEnded(gameId);
+            setOngoingLichessGames((prev) => prev.filter((item) => item.gameId !== gameId));
             const wWinner = state.winner === "white" ? "w" : state.winner === "black" ? "b" : "draw";
             if (wWinner === "draw") {
               soundManager.playSound("draw");
@@ -10929,8 +11072,22 @@ const App = () => {
     [archiveCompletedGame, appendChatMessage]
   );
   reactExports.useEffect(() => {
-    if (appState !== "playing" || chess.isGameOver()) return;
-    if (gameHistory.length === 0 && gameMode !== "lichess") return;
+    if (appState !== "playing") return;
+    if (gameMode !== "ai" && gameMode !== "local") return;
+    if (currentMatchSavedRef.current || chess.isGameOver()) {
+      clearActiveLocalMatch();
+      return;
+    }
+    const humanPlayed = gameHistory.some(
+      (_, idx) => (idx % 2 === 0 ? "w" : "b") === playerColor
+    );
+    if (gameHistory.length < 2 || !humanPlayed) {
+      return;
+    }
+    if (matchClocks.wtime <= 0 || matchClocks.btime <= 0) {
+      clearActiveLocalMatch();
+      return;
+    }
     const snapshot = {
       gameMode,
       fen: chess.fen(),
@@ -10944,9 +11101,8 @@ const App = () => {
       timeControlLabel,
       speedLabel,
       ratedMatch,
-      opponentName: gameMode === "ai" ? "Stockfish AI" : gameMode === "lichess" || gameMode === "online" ? remotePlayerName : "Player 2",
-      opponentElo: gameMode === "lichess" ? opponentElo : settings.ai_elo,
-      lichessGameId: activeLichessGameId || void 0,
+      opponentName: gameMode === "ai" ? "Stockfish AI" : "Player 2",
+      opponentElo: settings.ai_elo,
       updatedAt: Date.now()
     };
     setSavedLocalMatch(snapshot);
@@ -10965,10 +11121,8 @@ const App = () => {
     timeControlLabel,
     speedLabel,
     ratedMatch,
-    remotePlayerName,
-    opponentElo,
     settings.ai_elo,
-    activeLichessGameId
+    clearActiveLocalMatch
   ]);
   const handleContinueOngoingGame = reactExports.useCallback(() => {
     soundManager.playSound("game_start");
@@ -11190,16 +11344,20 @@ const App = () => {
         } else {
           setLastMove(null);
         }
+        if (newHist.length < 2) {
+          clearActiveLocalMatch();
+        }
         const activeTurnColor = gameMode === "local" ? nextChess.turn() : playerColor;
         setCursorSquare(lastPlayerMoveSquareRef.current[activeTurnColor]);
         return newHist;
       });
       return nextChess;
     });
-  }, [appState, gameMode, gameHistory.length, playerColor]);
+  }, [appState, gameMode, gameHistory.length, playerColor, clearActiveLocalMatch]);
   const handleResign = reactExports.useCallback(() => {
     var _a;
     soundManager.playSound("lose");
+    clearActiveLocalMatch();
     const winner = playerColor === "w" ? "b" : "w";
     const eloChange = gameMode === "ai" ? -15 : 0;
     const updatedElo = Math.max(400, myElo + eloChange);
@@ -11208,6 +11366,10 @@ const App = () => {
       myPCService.save("elo", updatedElo);
     }
     if (gameMode === "lichess" && activeLichessGameId) {
+      lichessService.markGameEnded(activeLichessGameId);
+      setOngoingLichessGames(
+        (prev) => prev.filter((item) => item.gameId !== activeLichessGameId)
+      );
       lichessService.resignBoardGame(activeLichessGameId);
     }
     if (gameMode === "online" && onlineSession) {
@@ -11249,7 +11411,8 @@ const App = () => {
     onlineSession,
     isHost,
     remotePlayerName,
-    archiveCompletedGame
+    archiveCompletedGame,
+    clearActiveLocalMatch
   ]);
   const handleRequestResignConfirm = reactExports.useCallback(() => {
     soundManager.playSound("click");
@@ -11364,12 +11527,15 @@ const App = () => {
   }, [gameMode, activeLichessGameId, onlineSession, isHost, profileName, appendChatMessage]);
   const handleAbortOrRestart = reactExports.useCallback(() => {
     soundManager.playSound("click");
+    clearActiveLocalMatch();
     if (gameMode === "lichess" && activeLichessGameId) {
       if (gameHistoryRef.current.length < 2) {
+        lichessService.markGameEnded(activeLichessGameId);
+        setOngoingLichessGames(
+          (prev) => prev.filter((item) => item.gameId !== activeLichessGameId)
+        );
         lichessService.abortBoardGame(activeLichessGameId);
         lichessService.stopGameStream();
-        setSavedLocalMatch(null);
-        myPCService.save("active_local_match", null);
         setAppState("lichess_hub");
       } else {
         appendChatMessage(
@@ -11381,7 +11547,14 @@ const App = () => {
       return;
     }
     startNewGame(gameMode, playerColor);
-  }, [gameMode, activeLichessGameId, playerColor, startNewGame, appendChatMessage]);
+  }, [
+    gameMode,
+    activeLichessGameId,
+    playerColor,
+    startNewGame,
+    appendChatMessage,
+    clearActiveLocalMatch
+  ]);
   const handleGiveMoreTime = reactExports.useCallback(() => {
     soundManager.playSound("click");
     const oppColor = playerColor === "w" ? "b" : "w";
@@ -12466,104 +12639,151 @@ const App = () => {
                 ] }),
                 /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "space-y-2 max-h-[60vh] overflow-y-auto pr-0.5", children: [
                   ongoingLichessGames.map((g, idx) => /* @__PURE__ */ jsxRuntimeExports.jsxs(
-                    "button",
+                    "div",
                     {
-                      type: "button",
-                      onClick: () => {
-                        soundManager.playSound("game_start");
-                        handleStartLiveLichessGame(
-                          g.gameId,
-                          lichessUsername || lichessService.getUsername() || "Me"
-                        );
-                      },
-                      onMouseEnter: () => {
-                        if (idx === 0) setMenuIndex(0);
-                      },
-                      className: `w-full flex items-center gap-3 p-2.5 rounded-2xl border transition-colors text-left cursor-pointer ${idx === 0 && menuIndex === 0 ? "bg-emerald-900/80 border-emerald-300 ring-2 ring-emerald-400/60 shadow-lg" : "bg-slate-950/90 hover:bg-slate-950 border-emerald-500/50 hover:border-emerald-400"}`,
+                      className: `relative w-full flex items-center gap-3 p-2.5 rounded-2xl border transition-colors text-left ${idx === 0 && menuIndex === 0 ? "bg-emerald-900/80 border-emerald-300 ring-2 ring-emerald-400/60 shadow-lg" : "bg-slate-950/90 hover:bg-slate-950 border-emerald-500/50 hover:border-emerald-400"}`,
                       children: [
-                        /* @__PURE__ */ jsxRuntimeExports.jsx(
-                          MiniBoardPreview,
+                        /* @__PURE__ */ jsxRuntimeExports.jsxs(
+                          "button",
                           {
-                            fen: g.fen,
-                            myColor: g.myColor,
-                            lastMoveUci: g.lastMove,
-                            sizeClass: "w-20 h-20 sm:w-24 sm:h-24"
+                            type: "button",
+                            onClick: () => {
+                              soundManager.playSound("game_start");
+                              handleStartLiveLichessGame(
+                                g.gameId,
+                                lichessUsername || lichessService.getUsername() || "Me"
+                              );
+                            },
+                            onMouseEnter: () => {
+                              if (idx === 0) setMenuIndex(0);
+                            },
+                            className: "flex-1 min-w-0 flex items-center gap-3 text-left cursor-pointer",
+                            children: [
+                              /* @__PURE__ */ jsxRuntimeExports.jsx(
+                                MiniBoardPreview,
+                                {
+                                  fen: g.fen,
+                                  myColor: g.myColor,
+                                  lastMoveUci: g.lastMove,
+                                  sizeClass: "w-20 h-20 sm:w-24 sm:h-24"
+                                }
+                              ),
+                              /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "min-w-0 flex-1 flex flex-col justify-between pr-5", children: [
+                                /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
+                                  /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center gap-1.5 flex-wrap", children: [
+                                    /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "px-1.5 py-0.5 rounded bg-emerald-400 text-slate-950 text-[9px] font-black uppercase", children: "Lichess Live" }),
+                                    /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-[10px] font-bold text-emerald-300 uppercase", children: g.speed })
+                                  ] }),
+                                  /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "font-extrabold text-sm text-white truncate mt-1", children: [
+                                    "vs ",
+                                    g.opponentName,
+                                    g.opponentRating ? ` (${g.opponentRating})` : ""
+                                  ] }),
+                                  /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "text-[11px] text-slate-300 mt-0.5", children: [
+                                    "Playing as ",
+                                    g.myColor === "w" ? "White" : "Black",
+                                    g.secondsLeft !== void 0 ? ` • ${Math.floor(g.secondsLeft / 60)}:${String(
+                                      g.secondsLeft % 60
+                                    ).padStart(2, "0")}` : ""
+                                  ] })
+                                ] }),
+                                /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-2 flex items-center justify-between gap-2", children: [
+                                  /* @__PURE__ */ jsxRuntimeExports.jsx(
+                                    "span",
+                                    {
+                                      className: `text-[10px] font-bold ${g.isMyTurn ? "text-emerald-400" : "text-slate-400"}`,
+                                      children: g.isMyTurn ? "● Your turn" : "Waiting..."
+                                    }
+                                  ),
+                                  /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-400 text-slate-950 font-black text-[11px]", children: [
+                                    /* @__PURE__ */ jsxRuntimeExports.jsx(Play, { size: 11, className: "fill-current" }),
+                                    "Resume"
+                                  ] })
+                                ] })
+                              ] })
+                            ]
                           }
                         ),
-                        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "min-w-0 flex-1 flex flex-col justify-between", children: [
-                          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
-                            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center gap-1.5 flex-wrap", children: [
-                              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "px-1.5 py-0.5 rounded bg-emerald-400 text-slate-950 text-[9px] font-black uppercase", children: "Lichess Live" }),
-                              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-[10px] font-bold text-emerald-300 uppercase", children: g.speed })
-                            ] }),
-                            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "font-extrabold text-sm text-white truncate mt-1", children: [
-                              "vs ",
-                              g.opponentName,
-                              g.opponentRating ? ` (${g.opponentRating})` : ""
-                            ] }),
-                            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "text-[11px] text-slate-300 mt-0.5", children: [
-                              "Playing as ",
-                              g.myColor === "w" ? "White" : "Black",
-                              g.secondsLeft !== void 0 ? ` • ${Math.floor(g.secondsLeft / 60)}:${String(
-                                g.secondsLeft % 60
-                              ).padStart(2, "0")}` : ""
-                            ] })
-                          ] }),
-                          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-2 flex items-center justify-between gap-2", children: [
-                            /* @__PURE__ */ jsxRuntimeExports.jsx(
-                              "span",
-                              {
-                                className: `text-[10px] font-bold ${g.isMyTurn ? "text-emerald-400" : "text-slate-400"}`,
-                                children: g.isMyTurn ? "● Your turn" : "Waiting..."
-                              }
-                            ),
-                            /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-400 text-slate-950 font-black text-[11px]", children: [
-                              /* @__PURE__ */ jsxRuntimeExports.jsx(Play, { size: 11, className: "fill-current" }),
-                              "Resume"
-                            ] })
-                          ] })
-                        ] })
+                        /* @__PURE__ */ jsxRuntimeExports.jsx(
+                          "button",
+                          {
+                            type: "button",
+                            title: "Dismiss from Ongoing Games",
+                            onClick: (e) => {
+                              e.stopPropagation();
+                              soundManager.playSound("select");
+                              lichessService.markGameEnded(g.gameId);
+                              setOngoingLichessGames(
+                                (prev) => prev.filter((item) => item.gameId !== g.gameId)
+                              );
+                            },
+                            className: "absolute top-2 right-2 p-1 rounded-lg bg-slate-900/80 hover:bg-red-950/90 text-slate-400 hover:text-red-300 border border-slate-700/60 transition-colors cursor-pointer",
+                            children: /* @__PURE__ */ jsxRuntimeExports.jsx(X, { size: 13 })
+                          }
+                        )
                       ]
                     },
                     g.gameId
                   )),
                   savedLocalMatch && ongoingLichessGames.length === 0 && /* @__PURE__ */ jsxRuntimeExports.jsxs(
-                    "button",
+                    "div",
                     {
-                      type: "button",
-                      onClick: handleContinueOngoingGame,
-                      onMouseEnter: () => setMenuIndex(0),
-                      className: `w-full flex items-center gap-3 p-2.5 rounded-2xl border transition-colors text-left cursor-pointer ${menuIndex === 0 ? "bg-emerald-900/80 border-emerald-300 ring-2 ring-emerald-400/60 shadow-lg" : "bg-slate-950/90 hover:bg-slate-950 border-emerald-500/50 hover:border-emerald-400"}`,
+                      className: `relative w-full flex items-center gap-3 p-2.5 rounded-2xl border transition-colors text-left ${menuIndex === 0 ? "bg-emerald-900/80 border-emerald-300 ring-2 ring-emerald-400/60 shadow-lg" : "bg-slate-950/90 hover:bg-slate-950 border-emerald-500/50 hover:border-emerald-400"}`,
                       children: [
-                        /* @__PURE__ */ jsxRuntimeExports.jsx(
-                          MiniBoardPreview,
+                        /* @__PURE__ */ jsxRuntimeExports.jsxs(
+                          "button",
                           {
-                            fen: savedLocalMatch.fen,
-                            myColor: savedLocalMatch.playerColor,
-                            lastMoveUci: savedLocalMatch.moves.length > 0 ? `${savedLocalMatch.moves[savedLocalMatch.moves.length - 1].from}${savedLocalMatch.moves[savedLocalMatch.moves.length - 1].to}` : void 0,
-                            sizeClass: "w-20 h-20 sm:w-24 sm:h-24"
+                            type: "button",
+                            onClick: handleContinueOngoingGame,
+                            onMouseEnter: () => setMenuIndex(0),
+                            className: "flex-1 min-w-0 flex items-center gap-3 text-left cursor-pointer",
+                            children: [
+                              /* @__PURE__ */ jsxRuntimeExports.jsx(
+                                MiniBoardPreview,
+                                {
+                                  fen: savedLocalMatch.fen,
+                                  myColor: savedLocalMatch.playerColor,
+                                  lastMoveUci: savedLocalMatch.moves.length > 0 ? `${savedLocalMatch.moves[savedLocalMatch.moves.length - 1].from}${savedLocalMatch.moves[savedLocalMatch.moves.length - 1].to}` : void 0,
+                                  sizeClass: "w-20 h-20 sm:w-24 sm:h-24"
+                                }
+                              ),
+                              /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "min-w-0 flex-1 flex flex-col justify-between pr-5", children: [
+                                /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
+                                  /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "px-1.5 py-0.5 rounded bg-sky-400 text-slate-950 text-[9px] font-black uppercase", children: "Active Match" }),
+                                  /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "font-extrabold text-sm text-white truncate mt-1", children: savedLocalMatch.gameMode === "ai" ? `vs Stockfish AI (${savedLocalMatch.opponentElo})` : `vs ${savedLocalMatch.opponentName}` }),
+                                  /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "text-[11px] text-slate-300 mt-0.5", children: [
+                                    savedLocalMatch.timeControlLabel || "10+0",
+                                    " • ",
+                                    savedLocalMatch.moves.length,
+                                    " ",
+                                    "moves"
+                                  ] })
+                                ] }),
+                                /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-2 flex items-center justify-between gap-2", children: [
+                                  /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-[10px] font-bold text-sky-400", children: "Active • 30m TTL" }),
+                                  /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-400 text-slate-950 font-black text-[11px]", children: [
+                                    /* @__PURE__ */ jsxRuntimeExports.jsx(Play, { size: 11, className: "fill-current" }),
+                                    "Continue"
+                                  ] })
+                                ] })
+                              ] })
+                            ]
                           }
                         ),
-                        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "min-w-0 flex-1 flex flex-col justify-between", children: [
-                          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
-                            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "px-1.5 py-0.5 rounded bg-sky-400 text-slate-950 text-[9px] font-black uppercase", children: "Active Match" }),
-                            /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "font-extrabold text-sm text-white truncate mt-1", children: savedLocalMatch.gameMode === "ai" ? `vs Stockfish AI (${savedLocalMatch.opponentElo})` : `vs ${savedLocalMatch.opponentName}` }),
-                            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "text-[11px] text-slate-300 mt-0.5", children: [
-                              savedLocalMatch.timeControlLabel || "10+0",
-                              " • ",
-                              savedLocalMatch.moves.length,
-                              " ",
-                              "moves"
-                            ] })
-                          ] }),
-                          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-2 flex items-center justify-between gap-2", children: [
-                            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-[10px] font-bold text-sky-400", children: "Saved State" }),
-                            /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-400 text-slate-950 font-black text-[11px]", children: [
-                              /* @__PURE__ */ jsxRuntimeExports.jsx(Play, { size: 11, className: "fill-current" }),
-                              "Continue"
-                            ] })
-                          ] })
-                        ] })
+                        /* @__PURE__ */ jsxRuntimeExports.jsx(
+                          "button",
+                          {
+                            type: "button",
+                            title: "Dismiss Saved Match",
+                            onClick: (e) => {
+                              e.stopPropagation();
+                              soundManager.playSound("select");
+                              clearActiveLocalMatch();
+                            },
+                            className: "absolute top-2 right-2 p-1 rounded-lg bg-slate-900/80 hover:bg-red-950/90 text-slate-400 hover:text-red-300 border border-slate-700/60 transition-colors cursor-pointer",
+                            children: /* @__PURE__ */ jsxRuntimeExports.jsx(X, { size: 13 })
+                          }
+                        )
                       ]
                     }
                   )
@@ -12754,7 +12974,7 @@ const App = () => {
                     }
                   ),
                   /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "•" }),
-                  /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "px-2 py-0.5 rounded-lg bg-slate-900 border border-amber-500/40 text-amber-400 font-mono font-bold text-[11px]", children: "Build v4.1.0" })
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "px-2 py-0.5 rounded-lg bg-slate-900 border border-amber-500/40 text-amber-400 font-mono font-bold text-[11px]", children: "Build v4.2.0" })
                 ] })
               ] })
             ]

@@ -117,6 +117,8 @@ export function sanitizeLichessToken(raw: unknown): string {
   return str;
 }
 
+const LICHESS_ONGOING_TTL_MS = 2 * 60 * 60 * 1000; // 2 hours strict TTL for ongoing games
+
 class LichessService {
   private token: string = '';
   private username: string = '';
@@ -127,9 +129,36 @@ class LichessService {
   private reconnectCountdownId: number | null = null;
   private onlineReconnectListener: (() => void) | null = null;
   private puzzleIndex: number = 0;
+  private endedGameIds: Set<string> = new Set();
 
   constructor() {
     // Sync lazily or when MyPC.init completes
+  }
+
+  /**
+   * Marks a Lichess game ID as ended/resigned/aborted/dismissed so it never reappears in ongoing games.
+   */
+  public markGameEnded(gameId: string) {
+    const cleanId = (gameId || '').trim();
+    if (!cleanId) return;
+    this.endedGameIds.add(cleanId);
+    const saved = myPCService.load<string[]>('lichess_ended_game_ids', []);
+    if (Array.isArray(saved) && !saved.includes(cleanId)) {
+      const updated = [cleanId, ...saved].slice(0, 60);
+      myPCService.save('lichess_ended_game_ids', updated);
+    }
+  }
+
+  public isGameMarkedEnded(gameId: string): boolean {
+    const cleanId = (gameId || '').trim();
+    if (!cleanId) return true;
+    if (this.endedGameIds.has(cleanId)) return true;
+    const saved = myPCService.load<string[]>('lichess_ended_game_ids', []);
+    if (Array.isArray(saved) && saved.includes(cleanId)) {
+      this.endedGameIds.add(cleanId);
+      return true;
+    }
+    return false;
   }
 
   /**
@@ -351,17 +380,96 @@ class LichessService {
       if (!res.ok) return [];
       const data = await res.json();
       const nowPlaying = Array.isArray(data?.nowPlaying) ? data.nowPlaying : [];
-      return nowPlaying.map((g: any) => {
+      const now = Date.now();
+      const activityMap =
+        myPCService.load<Record<string, { lastMove: string; updatedAt: number }>>(
+          'lichess_ongoing_activity',
+          {}
+        ) || {};
+      let activityDirty = false;
+      const defaultStartFen = new Chess().fen();
+
+      const activeGames: OngoingLichessGame[] = [];
+
+      for (const g of nowPlaying) {
+        const gameId: string = (g.gameId || g.fullId?.slice(0, 8) || '').trim();
+        if (!gameId) continue;
+
+        // 1. Exclude games that were resigned, aborted, finished, or dismissed
+        if (this.isGameMarkedEnded(gameId)) continue;
+        if (g.winner) {
+          this.markGameEnded(gameId);
+          continue;
+        }
+
+        // 2. Check Lichess status field (if present as string or object)
+        const statusName =
+          typeof g.status === 'string'
+            ? g.status
+            : typeof g.status?.name === 'string'
+            ? g.status.name
+            : '';
+        if (
+          statusName &&
+          statusName !== 'started' &&
+          statusName !== 'created'
+        ) {
+          this.markGameEnded(gameId);
+          continue;
+        }
+
+        // 3. Exclude games where clock has already expired
+        if (typeof g.secondsLeft === 'number' && g.secondsLeft <= 0) {
+          this.markGameEnded(gameId);
+          continue;
+        }
+
+        // 4. Validate board FEN and ensure game is genuinely in progress (has started and is not game over)
+        const fenStr: string = g.fen && g.fen !== 'startpos' ? g.fen : defaultStartFen;
+        const lastMoveStr: string = (g.lastMove || '').trim();
+        // Require at least 1 move played so unstarted/aborted-at-move-0 seeks don't linger
+        if (!lastMoveStr && fenStr === defaultStartFen) {
+          continue;
+        }
+        try {
+          const checkBoard = new Chess(fenStr);
+          if (checkBoard.isGameOver()) {
+            this.markGameEnded(gameId);
+            continue;
+          }
+        } catch {
+          continue;
+        }
+
+        // 5. Strict TTL check (2 hours): check server timestamp if provided + local move activity tracker
+        const rawTs = g.lastMoveAt || g.createdAt || g.movedAt;
+        if (typeof rawTs === 'number' && rawTs > 0) {
+          const tsMs = rawTs < 1e12 ? rawTs * 1000 : rawTs;
+          if (now - tsMs > LICHESS_ONGOING_TTL_MS) {
+            continue;
+          }
+        }
+
+        const prevActivity = activityMap[gameId];
+        if (!prevActivity || prevActivity.lastMove !== lastMoveStr) {
+          activityMap[gameId] = { lastMove: lastMoveStr, updatedAt: now };
+          activityDirty = true;
+        } else if (now - prevActivity.updatedAt > LICHESS_ONGOING_TTL_MS) {
+          // Game has had zero move activity for longer than the TTL
+          continue;
+        }
+
         const oppName =
           g.opponent?.username ||
           (g.opponent?.ai ? `Stockfish Lv.${g.opponent.ai}` : 'Opponent');
-        return {
-          gameId: g.gameId || g.fullId?.slice(0, 8) || '',
+
+        activeGames.push({
+          gameId,
           fullId: g.fullId,
           color: g.color === 'black' ? 'black' : 'white',
           myColor: g.color === 'black' ? 'b' : 'w',
-          fen: g.fen || 'startpos',
-          lastMove: g.lastMove,
+          fen: fenStr,
+          lastMove: lastMoveStr || undefined,
           opponentName: oppName,
           opponentRating: g.opponent?.rating,
           opponent: {
@@ -374,8 +482,14 @@ class LichessService {
           secondsLeft: g.secondsLeft,
           speed: g.speed || g.perf || 'rapid',
           rated: !!g.rated,
-        };
-      });
+        });
+      }
+
+      if (activityDirty) {
+        myPCService.save('lichess_ongoing_activity', activityMap);
+      }
+
+      return activeGames;
     } catch {
       return [];
     }
@@ -1011,6 +1125,12 @@ class LichessService {
                   bdraw: !!(msg.state?.bdraw || msg.state?.btie),
                   opponentGone: false,
                 };
+                if (
+                  currentState.status !== 'started' &&
+                  currentState.status !== 'created'
+                ) {
+                  this.markGameEnded(currentState.gameId);
+                }
                 onUpdate({ ...currentState });
               } else if (msg.type === 'gameState') {
                 const movesChanged =
@@ -1040,6 +1160,12 @@ class LichessService {
                       : currentState.bdraw,
                   opponentGone: movesChanged ? false : currentState.opponentGone,
                 };
+                if (
+                  currentState.status !== 'started' &&
+                  currentState.status !== 'created'
+                ) {
+                  this.markGameEnded(currentState.gameId);
+                }
                 onUpdate({ ...currentState });
               } else if (msg.type === 'opponentGone') {
                 currentState = {
@@ -1174,6 +1300,7 @@ class LichessService {
    * Abort an active Lichess Board game
    */
   public async abortBoardGame(gameId: string): Promise<boolean> {
+    this.markGameEnded(gameId);
     const res = await myPCService.proxyFetch(
       `${LICHESS_BASE}/api/board/game/${encodeURIComponent(gameId)}/abort`,
       {
@@ -1188,6 +1315,7 @@ class LichessService {
    * Resign an active Lichess Board game
    */
   public async resignBoardGame(gameId: string): Promise<boolean> {
+    this.markGameEnded(gameId);
     const res = await myPCService.proxyFetch(
       `${LICHESS_BASE}/api/board/game/${encodeURIComponent(gameId)}/resign`,
       {
