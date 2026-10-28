@@ -1,7 +1,7 @@
 var __defProp = Object.defineProperty;
 var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
 var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "symbol" ? key + "" : key, value);
-/*! MyPC Chess Build v4.2.0 */
+/*! MyPC Chess Build v4.3.4 */
 function getDefaultExportFromCjs(x2) {
   return x2 && x2.__esModule && Object.prototype.hasOwnProperty.call(x2, "default") ? x2["default"] : x2;
 }
@@ -11416,7 +11416,7 @@ const __iconNode = [
 ];
 const Zap = createLucideIcon("Zap", __iconNode);
 export {
-  CircleAlert as $,
+  LoaderCircle as $,
   ArrowLeft as A,
   Bot as B,
   ChevronsLeft as C,
@@ -11443,18 +11443,18 @@ export {
   X,
   Gamepad2 as Y,
   Zap as Z,
-  LoaderCircle as _,
+  RefreshCw as _,
   RotateCcw as a,
-  History as a0,
-  FileText as a1,
-  Trash2 as a2,
-  Award as a3,
-  Calendar as a4,
-  BookOpen as a5,
-  CircleCheck as a6,
-  Key as a7,
-  Puzzle as a8,
-  RefreshCw as a9,
+  CircleAlert as a0,
+  History as a1,
+  FileText as a2,
+  Trash2 as a3,
+  Award as a4,
+  Calendar as a5,
+  BookOpen as a6,
+  CircleCheck as a7,
+  Key as a8,
+  Puzzle as a9,
   LayoutGrid as aa,
   Lock as ab,
   Lightbulb as ac,

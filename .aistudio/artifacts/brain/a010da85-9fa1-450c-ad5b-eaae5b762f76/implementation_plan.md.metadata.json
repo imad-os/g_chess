@@ -1,6 +1,6 @@
 {
-  "summary":  "Implementation plan to scale Checko's Chess Academy curriculum to 80 multi-step lessons (20 lessons per tier across Beginner, Novice, Intermediate, and 1500 Elo) with 2–3 progressive steps per lesson, multilingual instructions (EN, FR, ES, AR), explanatory arrows, and 100% automated chess.js move legality verification.",
-  "updatedAt":  "2026-10-27T09:39:19.594472145Z",
+  "summary":  "Implementation plan for v4.3.0 addressing: (1) Learn mode board-first focus matching regular play with auto-focus on Next Step upon completion and Zone Switch for side controls, (2) fixing the '+' button rapid open/close double-trigger bug, (3) Lichess matchmaking blurred board + live matchmaking modal that waits until opponent & color are confirmed plus server clock sync on every move and freezing clocks on the first move, and (4) fixing Checko TTS on MyPC with multi-provider fallback and a new Settings section showing the active MyPC TTS AI model and voice tester.",
+  "updatedAt":  "2026-10-28T09:37:32.015009276Z",
   "requestFeedback":  true,
   "userFacing":  true
 }

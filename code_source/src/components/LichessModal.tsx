@@ -43,6 +43,15 @@ interface LichessModalProps {
   savedLocalMatch?: ActiveMatchSnapshot | null;
   onResumeSavedLocalMatch?: () => void;
   onStartTimedLocalAIMatch?: (minutes: number, increment: number) => void;
+  onStartLichessMatchmaking?: (opts: {
+    minutes: number;
+    increment: number;
+    rated: boolean;
+    opponentType: 'human' | 'lichess_ai';
+    aiLevel?: number;
+    myUsername?: string;
+    myRating?: number;
+  }) => void;
   onStartLiveLichessGame: (gameId: string, myUsername: string) => void;
   onAnalyzeLichessGame: (moves: MoveRecord[], myColor: 'w' | 'b') => void;
   onUsernameChange?: (username: string) => void;
@@ -65,12 +74,12 @@ const LICHESS_GRID_PRESETS: TimePreset[] = [
   { label: '3+2', sub: 'Blitz', minutes: 3, increment: 2 },
   { label: '5+0', sub: 'Blitz', minutes: 5, increment: 0 },
   { label: '5+3', sub: 'Blitz', minutes: 5, increment: 3 },
+  { label: '5+5', sub: 'Rapid', minutes: 5, increment: 5 },
   { label: '10+0', sub: 'Rapid', minutes: 10, increment: 0 },
   { label: '10+5', sub: 'Rapid', minutes: 10, increment: 5 },
   { label: '15+10', sub: 'Rapid', minutes: 15, increment: 10 },
   { label: '30+0', sub: 'Classical', minutes: 30, increment: 0 },
-  { label: '30+20', sub: 'Classical', minutes: 30, increment: 20 },
-  { label: 'Custom', sub: 'Any / 5+5', minutes: 10, increment: 0, isCustom: true },
+  { label: 'Custom', sub: 'Any / 30+20', minutes: 10, increment: 0, isCustom: true },
 ];
 
 export const LichessModal: React.FC<LichessModalProps> = ({
@@ -78,6 +87,7 @@ export const LichessModal: React.FC<LichessModalProps> = ({
   savedLocalMatch,
   onResumeSavedLocalMatch,
   onStartTimedLocalAIMatch,
+  onStartLichessMatchmaking,
   onStartLiveLichessGame,
   onAnalyzeLichessGame,
   onUsernameChange,
@@ -86,7 +96,7 @@ export const LichessModal: React.FC<LichessModalProps> = ({
 }) => {
   const [activeTab, setActiveTab] = useState<'play' | 'puzzles' | 'games' | 'stats'>('play');
 
-  // Read Lichess matchmaking preferences from Settings (defaults: Human + Rated)
+  // Read Lichess matchmaking preferences from Mode Settings (defaults: Human + Rated)
   const selectedOpponentType: LichessOpponentType = settings.lichess_opponent_type || 'human';
   const isRated: boolean = settings.lichess_rated !== false;
   const configuredAiLevel: number = settings.lichess_ai_level || 4;
@@ -244,7 +254,6 @@ export const LichessModal: React.FC<LichessModalProps> = ({
     return () => {
       rootStyle.webkitUserSelect = prevRootSelect;
       rootStyle.webkitTouchCallout = prevRootCallout;
-      lichessService.cancelSeek();
     };
   }, [loadAccountAndGames]);
 
@@ -325,12 +334,29 @@ export const LichessModal: React.FC<LichessModalProps> = ({
       setSeekError('Please save your Lichess Personal API Token above first.');
       return;
     }
+
+    if (onStartLichessMatchmaking) {
+      onStartLichessMatchmaking({
+        minutes,
+        increment,
+        rated: false,
+        opponentType: 'lichess_ai',
+        aiLevel: level,
+        myUsername: account?.username || lichessService.getUsername() || '',
+        myRating:
+          account?.perfs?.rapid?.rating ||
+          account?.perfs?.blitz?.rating ||
+          account?.perfs?.classical?.rating,
+      });
+      return;
+    }
+
     setSeeking(true);
     setSeekStatus(`Starting ${minutes}+${increment} match vs Lichess Stockfish Level ${level}...`);
     try {
       const gameId = await lichessService.createAIChallenge(level, minutes, increment, 'random');
       setSeeking(false);
-      onStartLiveLichessGame(gameId, account?.username || 'Me');
+      onStartLiveLichessGame(gameId, account?.username || lichessService.getUsername() || '');
     } catch (err: any) {
       setSeeking(false);
       const msg = err?.message || 'Failed to create Lichess AI match.';
@@ -354,6 +380,15 @@ export const LichessModal: React.FC<LichessModalProps> = ({
     }
 
     if (!isPresetValidForSelectedType(preset, selectedOpponentType)) {
+      if (selectedOpponentType === 'human') {
+        setSeekError(
+          `Lichess's external Board API requires Rapid or Classical time controls (≥ 5+5 or 10+0) for human matchmaking. Switch to Cloud AI or Local AI in Mode Settings for ${preset.minutes}+${preset.increment}, or choose 5+5 / 10+0 Rapid vs a human!`
+        );
+      } else {
+        setSeekError(
+          `Lichess Cloud AI requires at least 3 minutes on the clock. Switch to Local AI in Mode Settings to play ${preset.minutes}+${preset.increment} Bullet!`
+        );
+      }
       return;
     }
 
@@ -375,7 +410,22 @@ export const LichessModal: React.FC<LichessModalProps> = ({
       return;
     }
 
-    // 3. Human Matchmaking (/api/board/seek, Rated by default)
+    // 3. Human Matchmaking (/api/board/seek, Rated by default) — transitions immediately to Blurred Board + Matchmaking Modal!
+    if (onStartLichessMatchmaking) {
+      onStartLichessMatchmaking({
+        minutes: preset.minutes,
+        increment: preset.increment,
+        rated: isRated,
+        opponentType: 'human',
+        myUsername: account?.username || lichessService.getUsername() || '',
+        myRating:
+          account?.perfs?.rapid?.rating ||
+          account?.perfs?.blitz?.rating ||
+          account?.perfs?.classical?.rating,
+      });
+      return;
+    }
+
     setSeeking(true);
     try {
       const gameId = await lichessService.seekHumanMatch(
@@ -385,7 +435,7 @@ export const LichessModal: React.FC<LichessModalProps> = ({
         (status) => setSeekStatus(status)
       );
       setSeeking(false);
-      onStartLiveLichessGame(gameId, account?.username || 'Me');
+      onStartLiveLichessGame(gameId, account?.username || lichessService.getUsername() || '');
     } catch (err: any) {
       setSeeking(false);
       const msg = err?.message || 'Could not pair this time control via Board API.';
@@ -808,58 +858,80 @@ export const LichessModal: React.FC<LichessModalProps> = ({
                   ) : (
                     <div className="flex flex-col gap-2.5 max-h-[62vh] overflow-y-auto pr-0.5">
                       {ongoingGames.map((g) => (
-                        <button
+                        <div
                           key={g.gameId}
-                          type="button"
-                          onClick={() => {
-                            soundManager.playSound('click');
-                            onStartLiveLichessGame(
-                              g.gameId,
-                              account?.username || lookupUsername || 'Me'
-                            );
-                          }}
-                          className="w-full flex items-center gap-3 p-2.5 rounded-xl bg-slate-900/90 hover:bg-slate-800 border border-emerald-500/40 hover:border-emerald-400 text-left transition-colors cursor-pointer"
+                          className="relative w-full flex items-center gap-3 p-2.5 rounded-xl bg-slate-900/90 hover:bg-slate-800 border border-emerald-500/40 hover:border-emerald-400 text-left transition-colors"
                         >
-                          {/* Small Chessboard Preview */}
-                          <MiniBoardPreview
-                            fen={g.fen}
-                            myColor={g.myColor}
-                            lastMoveUci={g.lastMove}
-                            sizeClass="w-20 h-20 sm:w-24 sm:h-24"
-                          />
+                          <button
+                            type="button"
+                            onClick={() => {
+                              soundManager.playSound('click');
+                              onStartLiveLichessGame(
+                                g.gameId,
+                                account?.username || lookupUsername || 'Me'
+                              );
+                            }}
+                            className="flex-1 min-w-0 flex items-center gap-3 text-left cursor-pointer"
+                          >
+                            {/* Small Chessboard Preview */}
+                            <MiniBoardPreview
+                              fen={g.fen}
+                              myColor={g.myColor}
+                              lastMoveUci={g.lastMove}
+                              sizeClass="w-20 h-20 sm:w-24 sm:h-24"
+                            />
 
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-1.5 text-xs sm:text-sm font-extrabold text-white truncate">
-                              <span className="truncate">vs {g.opponentName}</span>
-                              {g.opponentRating && (
-                                <span className="text-emerald-400 font-mono text-xs shrink-0">
-                                  ({g.opponentRating})
+                            <div className="flex-1 min-w-0 pr-5">
+                              <div className="flex items-center gap-1.5 text-xs sm:text-sm font-extrabold text-white truncate">
+                                <span className="truncate">vs {g.opponentName}</span>
+                                {g.opponentRating && (
+                                  <span className="text-emerald-400 font-mono text-xs shrink-0">
+                                    ({g.opponentRating})
+                                  </span>
+                                )}
+                              </div>
+                              <div className="text-[11px] text-slate-300 mt-1 flex flex-wrap items-center gap-1.5">
+                                <span className="px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 uppercase font-bold text-[10px]">
+                                  {g.speed}
                                 </span>
-                              )}
+                                <span className="text-slate-400">
+                                  {g.myColor === 'w' ? 'White' : 'Black'}
+                                </span>
+                              </div>
+                              <div className="mt-2 flex items-center justify-between gap-2">
+                                <span
+                                  className={`text-[11px] font-bold ${
+                                    g.isMyTurn ? 'text-emerald-400' : 'text-slate-400'
+                                  }`}
+                                >
+                                  {g.isMyTurn ? '● Your Turn' : 'Waiting...'}
+                                </span>
+                                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-500 text-slate-950 font-black text-[11px]">
+                                  <Play size={11} className="fill-current" />
+                                  Continue
+                                </span>
+                              </div>
                             </div>
-                            <div className="text-[11px] text-slate-300 mt-1 flex flex-wrap items-center gap-1.5">
-                              <span className="px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 uppercase font-bold text-[10px]">
-                                {g.speed}
-                              </span>
-                              <span className="text-slate-400">
-                                {g.myColor === 'w' ? 'White' : 'Black'}
-                              </span>
-                            </div>
-                            <div className="mt-2 flex items-center justify-between gap-2">
-                              <span
-                                className={`text-[11px] font-bold ${
-                                  g.isMyTurn ? 'text-emerald-400' : 'text-slate-400'
-                                }`}
-                              >
-                                {g.isMyTurn ? '● Your Turn' : 'Waiting...'}
-                              </span>
-                              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-500 text-slate-950 font-black text-[11px]">
-                                <Play size={11} className="fill-current" />
-                                Continue
-                              </span>
-                            </div>
-                          </div>
-                        </button>
+                          </button>
+                          <button
+                            type="button"
+                            title="Dismiss / Abort Game"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              soundManager.playSound('select');
+                              lichessService.markGameEnded(g.gameId);
+                              if (!g.lastMove) {
+                                lichessService.abortBoardGame(g.gameId).catch(() => {});
+                              }
+                              setOngoingGames((prev) =>
+                                prev.filter((item) => item.gameId !== g.gameId)
+                              );
+                            }}
+                            className="absolute top-2 right-2 p-1 rounded-lg bg-slate-950/80 hover:bg-red-950/90 text-slate-400 hover:text-red-300 border border-slate-700/60 transition-colors cursor-pointer"
+                          >
+                            <X size={13} />
+                          </button>
+                        </div>
                       ))}
 
                       {savedLocalMatch && onResumeSavedLocalMatch && (

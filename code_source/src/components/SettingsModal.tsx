@@ -1,10 +1,12 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   GameSettings,
   FontScale,
   KeyboardShortcuts,
   SoundPack,
   PerformanceMode,
+  MyPCAIProviderInfo,
+  MyPCTTSStatus,
   getNumericFontSize,
   getFontScaleCategory,
   MIN_FONT_SIZE,
@@ -27,8 +29,10 @@ import {
   Zap,
   Minus,
   Plus,
+  RefreshCw,
 } from 'lucide-react';
 import { soundManager } from '../services/sound';
+import { myPCService } from '../services/mypc';
 import { ensureSpatialFocus } from '../services/spatialInput';
 
 interface SettingsModalProps {
@@ -54,6 +58,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     lichess_opponent_type: settings.lichess_opponent_type || 'human',
     lichess_rated: settings.lichess_rated !== false,
     lichess_ai_level: settings.lichess_ai_level || 4,
+    tts_provider_id: settings.tts_provider_id || 'auto',
     shortcuts: {
       flip: settings.shortcuts?.flip || 'f',
       pause: settings.shortcuts?.pause || 'p',
@@ -64,6 +69,66 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     },
   });
   const [listeningKey, setListeningKey] = useState<keyof KeyboardShortcuts | null>(null);
+
+  // MyPC AI TTS Providers & Active Model Inspector state
+  const [aiProviders, setAiProviders] = useState<MyPCAIProviderInfo[]>([]);
+  const [ttsStatus, setTtsStatus] = useState<MyPCTTSStatus>(() => myPCService.getLastTTSStatus());
+  const [loadingProviders, setLoadingProviders] = useState<boolean>(false);
+  const [testingVoice, setTestingVoice] = useState<boolean>(false);
+
+  const refreshTTSInspector = useCallback(async (prefId?: string) => {
+    setLoadingProviders(true);
+    try {
+      const [provs, status] = await Promise.all([
+        myPCService.getAIProviders(),
+        myPCService.resolveTTSStatus(prefId),
+      ]);
+      setAiProviders(provs);
+      setTtsStatus(status);
+    } finally {
+      setLoadingProviders(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    refreshTTSInspector(current.tts_provider_id || 'auto');
+  }, [current.tts_provider_id, refreshTTSInspector]);
+
+  const handleSelectTTSProvider = (providerId: string) => {
+    soundManager.playSound('select');
+    const updated: GameSettings = {
+      ...current,
+      tts_provider_id: providerId,
+    };
+    setCurrent(updated);
+    onSave(updated);
+    refreshTTSInspector(providerId);
+  };
+
+  const handleTestCheckoVoice = async () => {
+    soundManager.playSound('click');
+    setTestingVoice(true);
+    const lang = myPCService.getLanguage();
+    const sampleMap: Record<'en' | 'fr' | 'es' | 'ar', string> = {
+      en: 'Cock-a-doodle-doo! Hi, I am Checko! Your MyPC AI voice is ready for chess lessons.',
+      fr: 'Cocorico ! Bonjour, je suis Checko ! Votre voix IA MyPC est prête pour les leçons.',
+      es: '¡Quiquiriquí! ¡Hola, soy Checko! Tu voz de IA en MyPC está lista para el ajedrez.',
+      ar: 'كوكو ريكو! مرحباً، أنا تشيكو! صوت الذكاء الاصطناعي جاهز لدروس الشطرنج.',
+    };
+    await myPCService.speakText(
+      sampleMap[lang] || sampleMap.en,
+      lang,
+      {
+        onStart: () => setTestingVoice(true),
+        onEnd: () => {
+          setTestingVoice(false);
+          setTtsStatus(myPCService.getLastTTSStatus());
+        },
+      },
+      current.tts_provider_id || 'auto'
+    );
+    setTtsStatus(myPCService.getLastTTSStatus());
+  };
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -602,6 +667,38 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   <div className="bg-white w-4 h-4 rounded-full shadow-md" />
                 </button>
               </div>
+
+              {/* Quick Summary of Selected MyPC TTS AI Model in Display & Audio Tab */}
+              <div className="p-3 rounded-2xl bg-slate-950/80 border border-amber-500/40 flex items-center justify-between gap-2">
+                <div className="min-w-0">
+                  <span className="text-xs font-extrabold text-amber-300 flex items-center gap-1.5">
+                    <Sparkles size={13} className="text-amber-400 shrink-0" />
+                    Checko TTS AI Model: <span className="font-mono text-white">{ttsStatus.modelName}</span>
+                  </span>
+                  <span className="text-[10px] text-slate-400 block truncate mt-0.5">
+                    Provider: {ttsStatus.providerName}
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <button
+                    type="button"
+                    onClick={handleTestCheckoVoice}
+                    className="px-2.5 py-1.5 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 font-black text-[11px] transition-colors cursor-pointer"
+                  >
+                    {testingVoice ? 'Speaking...' : 'Test TTS'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      soundManager.playSound('select');
+                      setActiveTab('ai');
+                    }}
+                    className="px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-[11px] border border-slate-700 transition-colors cursor-pointer"
+                  >
+                    Configure
+                  </button>
+                </div>
+              </div>
             </div>
           )}
 
@@ -829,9 +926,155 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             </div>
           )}
 
-          {/* TAB 4: AI Engine & Lichess Matchmaking Preferences */}
+          {/* TAB 4: AI Engine, MyPC TTS AI Model & Lichess Matchmaking Preferences */}
           {activeTab === 'ai' && (
             <div className="flex flex-col gap-3">
+              {/* MyPC TTS AI Model & Checko Voice Inspector */}
+              <div className="p-3.5 rounded-2xl bg-slate-950/85 border border-amber-500/40 space-y-3">
+                <div className="flex items-center justify-between gap-2">
+                  <div>
+                    <label className="text-xs uppercase font-bold tracking-wider text-amber-300 flex items-center gap-1.5">
+                      <Volume2 size={15} className="text-amber-400" />
+                      MyPC TTS AI Model (Checko Voice)
+                    </label>
+                    <p className="text-[11px] text-slate-400 mt-0.5">
+                      Shows the selected MyPC AI provider and neural TTS model used when Checko speaks.
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => refreshTTSInspector(current.tts_provider_id || 'auto')}
+                      className="p-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition-colors cursor-pointer"
+                      title="Refresh MyPC AI Providers"
+                    >
+                      <RefreshCw size={13} className={loadingProviders ? 'animate-spin' : ''} />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleTestCheckoVoice}
+                      className="px-3 py-1.5 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 font-black text-xs transition-colors cursor-pointer shadow"
+                    >
+                      {testingVoice ? 'Speaking...' : '🔊 Test Voice'}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Active Model & Provider Status Readout */}
+                <div className="p-2.5 rounded-xl bg-slate-900 border border-slate-800 grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <div>
+                    <span className="text-[10px] uppercase font-bold text-slate-400 block">
+                      Selected MyPC Provider
+                    </span>
+                    <span className="text-xs font-extrabold text-white truncate block mt-0.5">
+                      {ttsStatus.providerName}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-[10px] uppercase font-bold text-slate-400 block">
+                      Selected TTS AI Model
+                    </span>
+                    <span className="text-xs font-mono font-black text-emerald-400 truncate block mt-0.5">
+                      {ttsStatus.modelName}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Provider Selection Buttons */}
+                <div className="space-y-1.5">
+                  <span className="text-[10px] uppercase font-bold text-slate-400 block">
+                    Choose TTS Engine / MyPC Provider ({aiProviders.length} detected in MyPC)
+                  </span>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => handleSelectTTSProvider('auto')}
+                      className={`flex items-center justify-between p-2 rounded-xl border text-left transition-colors cursor-pointer ${
+                        (current.tts_provider_id || 'auto') === 'auto'
+                          ? 'bg-amber-500/20 border-amber-400 text-white'
+                          : 'bg-slate-900 border-slate-800 text-slate-300 hover:border-slate-700'
+                      }`}
+                    >
+                      <div className="min-w-0">
+                        <div className="text-xs font-extrabold truncate">Auto (Best MyPC TTS)</div>
+                        <div className="text-[10px] text-slate-400 truncate">
+                          Uses MyPC speech provider + Web Speech fallback
+                        </div>
+                      </div>
+                      {(current.tts_provider_id || 'auto') === 'auto' && (
+                        <Check size={14} className="text-amber-400 shrink-0 ml-1" />
+                      )}
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => handleSelectTTSProvider('web_speech')}
+                      className={`flex items-center justify-between p-2 rounded-xl border text-left transition-colors cursor-pointer ${
+                        current.tts_provider_id === 'web_speech'
+                          ? 'bg-amber-500/20 border-amber-400 text-white'
+                          : 'bg-slate-900 border-slate-800 text-slate-300 hover:border-slate-700'
+                      }`}
+                    >
+                      <div className="min-w-0">
+                        <div className="text-xs font-extrabold truncate">Browser Web Speech</div>
+                        <div className="text-[10px] text-slate-400 truncate">
+                          Offline device synthesizer (en/fr/es/ar)
+                        </div>
+                      </div>
+                      {current.tts_provider_id === 'web_speech' && (
+                        <Check size={14} className="text-amber-400 shrink-0 ml-1" />
+                      )}
+                    </button>
+
+                    {aiProviders.map((prov) => {
+                      const isSelected = current.tts_provider_id === prov.id;
+                      return (
+                        <button
+                          key={prov.id}
+                          type="button"
+                          onClick={() => handleSelectTTSProvider(prov.id)}
+                          className={`flex items-center justify-between p-2 rounded-xl border text-left transition-colors cursor-pointer ${
+                            isSelected
+                              ? 'bg-amber-500/20 border-amber-400 text-white'
+                              : 'bg-slate-900 border-slate-800 text-slate-300 hover:border-slate-700'
+                          }`}
+                        >
+                          <div className="min-w-0 pr-1">
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-xs font-extrabold truncate">{prov.name}</span>
+                              {prov.isDefault && (
+                                <span className="px-1.5 py-0.2 rounded bg-blue-500/20 text-blue-300 text-[9px] font-bold uppercase shrink-0">
+                                  Default
+                                </span>
+                              )}
+                              <span
+                                className={`px-1.5 py-0.2 rounded text-[9px] font-bold uppercase shrink-0 ${
+                                  prov.tasks.speech
+                                    ? 'bg-emerald-500/20 text-emerald-300'
+                                    : 'bg-slate-800 text-slate-400'
+                                }`}
+                              >
+                                {prov.tasks.speech ? 'TTS Ready' : 'Chat Only'}
+                              </span>
+                            </div>
+                            <div className="text-[10px] font-mono text-amber-300/90 truncate mt-0.5">
+                              Model: {prov.resolvedSpeechModel}
+                            </div>
+                          </div>
+                          {isSelected && <Check size={14} className="text-amber-400 shrink-0" />}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {ttsStatus.lastError && (
+                  <div className="px-2.5 py-1.5 rounded-lg bg-amber-950/60 border border-amber-500/30 text-[10px] text-amber-200">
+                    Note: {ttsStatus.lastError}
+                  </div>
+                )}
+              </div>
+
               {/* Lichess Matchmaking Preferences */}
               <div className="p-3.5 rounded-2xl bg-slate-950/70 border border-slate-800/80 space-y-3">
                 <div>

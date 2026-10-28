@@ -234,6 +234,7 @@ export const App: React.FC = () => {
 
   // Guard ref to avoid duplicate saving of the same finished game
   const currentMatchSavedRef = useRef<boolean>(false);
+  const lastLocalLichessMoveTimeRef = useRef<number>(0);
   const gameHistoryRef = useRef<MoveRecord[]>([]);
   useEffect(() => {
     gameHistoryRef.current = gameHistory;
@@ -260,6 +261,31 @@ export const App: React.FC = () => {
     'connecting' | 'connected' | 'reconnecting' | 'offline'
   >('connected');
   const [reconnectRetrySec, setReconnectRetrySec] = useState<number>(10);
+
+  // Lichess Matchmaking Blurred-Board & Modal State (keeps board blurred until opponent & true side are confirmed)
+  const [lichessMatchmaking, setLichessMatchmaking] = useState<{
+    active: boolean;
+    phase: 'seeking' | 'connecting' | 'error';
+    timeControl: string;
+    speed: string;
+    rated: boolean;
+    opponentType: 'human' | 'lichess_ai';
+    aiLevel?: number;
+    elapsedSec: number;
+    statusMessage: string;
+    poolInfo: string;
+    errorMessage?: string;
+  }>({
+    active: false,
+    phase: 'seeking',
+    timeControl: '10+0',
+    speed: 'Rapid',
+    rated: true,
+    opponentType: 'human',
+    elapsedSec: 0,
+    statusMessage: '',
+    poolInfo: '',
+  });
 
   // Ongoing games state (Resume Lichess cloud game started on phone/TV or unfinished local/AI match)
   const [ongoingLichessGames, setOngoingLichessGames] = useState<OngoingLichessGame[]>([]);
@@ -346,7 +372,21 @@ export const App: React.FC = () => {
     time: number;
   } | null>(null);
   const lastModalTransitionRef = useRef<number>(0);
+  const lastPauseToggleRef = useRef<number>(0);
   const lastLowTimeBeepSecRef = useRef<number | null>(null);
+
+  // Live elapsed timer for Lichess Matchmaking Modal
+  useEffect(() => {
+    if (!lichessMatchmaking.active || lichessMatchmaking.phase === 'error') return;
+    const t = setInterval(() => {
+      setLichessMatchmaking((prev) =>
+        prev.active && prev.phase !== 'error'
+          ? { ...prev, elapsedSec: prev.elapsedSec + 1 }
+          : prev
+      );
+    }, 1000);
+    return () => clearInterval(t);
+  }, [lichessMatchmaking.active, lichessMatchmaking.phase]);
 
   // Initialize MyPC SDK and load saved ratings, config, Lichess API token, and match history
   useEffect(() => {
@@ -750,7 +790,16 @@ export const App: React.FC = () => {
       // If Lichess live game and this is a local player move, send to Lichess Board API
       if (gameMode === 'lichess' && activeLichessGameId && !isRemoteSync) {
         const uci = `${from}${to}${promotion || ''}`;
-        lichessService.sendBoardMove(activeLichessGameId, uci);
+        lastLocalLichessMoveTimeRef.current = Date.now();
+        lichessService.sendBoardMove(activeLichessGameId, uci).then((ok) => {
+          if (!ok) {
+            appendChatMessage(
+              'System',
+              'Lichess did not accept that move — resynchronizing board with server...',
+              true
+            );
+          }
+        });
       }
 
       setChess((prevChess) => {
@@ -872,11 +921,21 @@ export const App: React.FC = () => {
     ]
   );
 
+  // Cancel Lichess Matchmaking Modal & return cleanly to Lichess Hub
+  const handleCancelLichessMatchmaking = useCallback(() => {
+    soundManager.stopSearchPulse();
+    soundManager.playSound('select');
+    lichessService.cancelSeek();
+    lichessService.stopGameStream();
+    setActiveLichessGameId(null);
+    setLichessMatchmaking((prev) => ({ ...prev, active: false }));
+    setAppState('lichess_hub');
+  }, []);
+
   // Start & stream a live Lichess game on the main board
+  // Keeps the board blurred with the Matchmaking Modal until gameFull confirms our true color & opponent!
   const handleStartLiveLichessGame = useCallback(
-    (gameId: string, myUsername: string) => {
-      soundManager.stopSearchPulse();
-      soundManager.playSound('game_start');
+    (gameId: string, myUsername: string, keepMatchmakingOverlay: boolean = false) => {
       currentMatchSavedRef.current = false;
       setActiveLichessGameId(gameId);
       setGameMode('lichess');
@@ -898,22 +957,89 @@ export const App: React.FC = () => {
       setValidMoves([]);
       setLastMove(null);
       lastPlayerMoveSquareRef.current = { w: 'e2', b: 'e7' };
+      setRemotePlayerName('Matching Opponent...');
       setChatMessages([
         {
           id: `sys_${Date.now()}`,
           sender: 'System',
-          text: `Connected to Lichess game #${gameId}.`,
+          text: `Connecting to Lichess match #${gameId}...`,
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
           isSystem: true,
         },
       ]);
+
+      if (!keepMatchmakingOverlay) {
+        setLichessMatchmaking({
+          active: true,
+          phase: 'connecting',
+          timeControl: timeControlLabel || '10+0',
+          speed: speedLabel || 'Rapid',
+          rated: ratedMatch,
+          opponentType: 'human',
+          elapsedSec: 0,
+          statusMessage: `Synchronizing Lichess game #${gameId} (sides, ratings & server clocks)...`,
+          poolInfo: 'Lichess Live Board Stream • Verifying assigned side (White / Black)',
+        });
+      } else {
+        setLichessMatchmaking((prev) => ({
+          ...prev,
+          active: true,
+          phase: 'connecting',
+          statusMessage: `Opponent matched! Synchronizing board, assigned side & Lichess clocks...`,
+        }));
+      }
+
       setAppState('playing');
 
-      if (myUsername) {
+      if (myUsername && myUsername.toLowerCase() !== 'me') {
         setLichessUsername(myUsername);
       }
 
       let initialCursorInitialized = false;
+      let matchRevealed = false;
+      let lastKnownAssignedColor: Color | null = null;
+
+      // Safety watchdog: if both stream & fast-sync are delayed >2.5s after gameId is matched,
+      // query /api/account/playing and unlock the board so it never hangs on "Opponent Found! Syncing Board..."
+      const unlockWatchdog = window.setTimeout(async () => {
+        if (matchRevealed) return;
+        try {
+          const ongoing = await lichessService.fetchOngoingGames(undefined, true);
+          const found = ongoing.find((g) => g.gameId === gameId);
+          if (found) {
+            setPlayerColor(found.myColor);
+            setFlipped(found.myColor === 'b');
+            setRemotePlayerName(found.opponentName || 'Lichess Opponent');
+            if (found.opponentRating) setOpponentElo(found.opponentRating);
+            setRatedMatch(found.rated);
+            if (found.speed) {
+              setSpeedLabel(found.speed.charAt(0).toUpperCase() + found.speed.slice(1));
+            }
+            if (typeof found.secondsLeft === 'number' && found.secondsLeft > 0) {
+              const ms = found.secondsLeft * 1000;
+              setMatchClocks({ wtime: ms, btime: ms });
+            }
+            if (
+              gameHistoryRef.current.length === 0 &&
+              found.fen &&
+              found.fen !== 'startpos' &&
+              found.fen !== new Chess().fen()
+            ) {
+              try {
+                setInitialFen(found.fen);
+                setChess(new Chess(found.fen));
+              } catch {}
+            }
+            setCursorSquare(found.myColor === 'b' ? 'e7' : 'e2');
+          }
+        } catch {}
+        if (!matchRevealed) {
+          matchRevealed = true;
+          soundManager.stopSearchPulse();
+          soundManager.playSound('game_start');
+          setLichessMatchmaking((prev) => ({ ...prev, active: false }));
+        }
+      }, 2500);
 
       lichessService.streamBoardGame(
         gameId,
@@ -928,6 +1054,7 @@ export const App: React.FC = () => {
           if (state.opponentGone !== undefined) {
             setIsOpponentOnline(!state.opponentGone);
           }
+          // Always sync timers directly from Lichess server on every gameFull & gameState event!
           setMatchClocks({ wtime: state.wtime, btime: state.btime });
           setRatedMatch(state.rated);
           if (state.speed) {
@@ -941,6 +1068,15 @@ export const App: React.FC = () => {
           }
           if (state.initialFen) {
             setInitialFen(state.initialFen);
+          }
+
+          // Once opponent & true side ('w' or 'b') are confirmed, unblur the board and hide Matchmaking Modal immediately!
+          if (state.opponentConfirmed && !matchRevealed) {
+            matchRevealed = true;
+            clearTimeout(unlockWatchdog);
+            soundManager.stopSearchPulse();
+            soundManager.playSound('game_start');
+            setLichessMatchmaking((prev) => ({ ...prev, active: false }));
           }
 
           // Reconstruct board from UCI moves string
@@ -972,8 +1108,9 @@ export const App: React.FC = () => {
           }
 
           lastPlayerMoveSquareRef.current = { w: wLastSq, b: bLastSq };
-          if (!initialCursorInitialized) {
+          if (!initialCursorInitialized || lastKnownAssignedColor !== state.myColor) {
             initialCursorInitialized = true;
+            lastKnownAssignedColor = state.myColor;
             setCursorSquare(lastPlayerMoveSquareRef.current[state.myColor]);
           }
 
@@ -993,10 +1130,17 @@ export const App: React.FC = () => {
             }
           }
 
-          gameHistoryRef.current = rebuiltMoves;
-          setGameHistory(rebuiltMoves);
-          setChess(rebChess);
-          setLastMove(lastFromTo);
+          // Prevent piece flicker if a local move was just sent <1.5s ago and a slightly older poll snapshot arrived
+          const isStalePollDuringLocalMove =
+            rebuiltMoves.length === gameHistoryRef.current.length - 1 &&
+            Date.now() - lastLocalLichessMoveTimeRef.current < 1500;
+
+          if (!isStalePollDuringLocalMove) {
+            gameHistoryRef.current = rebuiltMoves;
+            setGameHistory(rebuiltMoves);
+            setChess(rebChess);
+            setLastMove(lastFromTo);
+          }
 
           // Synchronize Lichess draw offer status (wdraw / bdraw)
           const oppOffered = state.myColor === 'w' ? !!state.bdraw : !!state.wdraw;
@@ -1040,10 +1184,31 @@ export const App: React.FC = () => {
             setAppState('game_over');
           }
         },
-        () => {
+        (errMsg) => {
           // Stream closed or errored
+          soundManager.stopSearchPulse();
+          setLichessMatchmaking((prev) =>
+            prev.active
+              ? {
+                  ...prev,
+                  phase: 'error',
+                  errorMessage: errMsg || 'Could not open Lichess game stream.',
+                }
+              : prev
+          );
         },
         (sender, text) => {
+          const myKnownUser = (
+            lichessUsername ||
+            lichessService.getUsername() ||
+            ''
+          )
+            .trim()
+            .toLowerCase();
+          if (myKnownUser && sender.trim().toLowerCase() === myKnownUser) {
+            // Avoid echoing our own chat message a second time when Lichess broadcasts chatLine
+            return;
+          }
           appendChatMessage(sender, text);
         },
         (status, retryInSec) => {
@@ -1054,7 +1219,124 @@ export const App: React.FC = () => {
         }
       );
     },
-    [archiveCompletedGame, appendChatMessage]
+    [archiveCompletedGame, appendChatMessage, timeControlLabel, speedLabel, ratedMatch]
+  );
+
+  // Start Lichess Matchmaking on the Blurred Playing Board with a live Matchmaking Modal on top
+  const handleStartLichessMatchmaking = useCallback(
+    async (opts: {
+      minutes: number;
+      increment: number;
+      rated: boolean;
+      opponentType: 'human' | 'lichess_ai';
+      aiLevel?: number;
+      myUsername?: string;
+      myRating?: number;
+    }) => {
+      const startMs = Math.max(30000, Math.round(opts.minutes * 60 * 1000));
+      const incMs = Math.max(0, Math.round(opts.increment * 1000));
+      const estSec = opts.minutes * 60 + opts.increment * 40;
+      const computedSpeed =
+        estSec < 180
+          ? 'Bullet'
+          : estSec < 480
+          ? 'Blitz'
+          : estSec < 1500
+          ? 'Rapid'
+          : 'Classical';
+      const tcLabel = `${opts.minutes}+${opts.increment}`;
+
+      // Prepare clean blurred board background (never show "Player 2" as opponent)
+      lichessService.stopGameStream();
+      setActiveLichessGameId(null);
+      setGameMode('lichess');
+      setChess(new Chess());
+      setInitialFen('startpos');
+      setGameHistory([]);
+      gameHistoryRef.current = [];
+      setSelectedSquare(null);
+      setValidMoves([]);
+      setLastMove(null);
+      setMatchClocks({ wtime: startMs, btime: startMs });
+      setInitialClockMs(startMs);
+      setMatchIncrementMs(incMs);
+      setTimeControlLabel(tcLabel);
+      setSpeedLabel(computedSpeed);
+      setRatedMatch(opts.rated);
+      setRemotePlayerName('Searching Opponent...');
+      if (opts.myUsername) setLichessUsername(opts.myUsername);
+      if (opts.myRating) setMyLichessRating(opts.myRating);
+
+      const poolDescription =
+        opts.opponentType === 'lichess_ai'
+          ? `Lichess Cloud Stockfish Level ${opts.aiLevel || 4} • ${tcLabel} ${computedSpeed}`
+          : `Lichess ${computedSpeed} Lobby (${tcLabel} • ${
+              opts.rated ? 'Rated Pool' : 'Casual Pool'
+            }) • Random Color Assignment`;
+
+      setLichessMatchmaking({
+        active: true,
+        phase: 'seeking',
+        timeControl: tcLabel,
+        speed: computedSpeed,
+        rated: opts.rated,
+        opponentType: opts.opponentType,
+        aiLevel: opts.aiLevel,
+        elapsedSec: 0,
+        statusMessage:
+          opts.opponentType === 'lichess_ai'
+            ? `Creating ${tcLabel} match vs Lichess Stockfish Level ${opts.aiLevel || 4}...`
+            : `Seeking opponent in Lichess ${tcLabel} ${computedSpeed} (${
+                opts.rated ? 'Rated' : 'Casual'
+              }) pool...`,
+        poolInfo: poolDescription,
+      });
+
+      setAppState('playing');
+      soundManager.startSearchPulse();
+
+      try {
+        let gameId: string;
+        if (opts.opponentType === 'lichess_ai') {
+          gameId = await lichessService.createAIChallenge(
+            opts.aiLevel || 4,
+            opts.minutes,
+            opts.increment,
+            'random'
+          );
+        } else {
+          gameId = await lichessService.seekHumanMatch(
+            opts.minutes,
+            opts.increment,
+            opts.rated,
+            (statusText) => {
+              setLichessMatchmaking((prev) =>
+                prev.active ? { ...prev, statusMessage: statusText } : prev
+              );
+            }
+          );
+        }
+
+        handleStartLiveLichessGame(
+          gameId,
+          opts.myUsername || lichessUsername || lichessService.getUsername() || '',
+          true
+        );
+      } catch (err: any) {
+        soundManager.stopSearchPulse();
+        const msg = err?.message || 'Could not pair match on Lichess.';
+        setLichessMatchmaking((prev) =>
+          prev.active
+            ? {
+                ...prev,
+                phase: 'error',
+                errorMessage: msg,
+              }
+            : prev
+        );
+      }
+    },
+    [handleStartLiveLichessGame, lichessUsername]
   );
 
   // Persist active unfinished local/AI match snapshot (only when genuinely started by human player & active)
@@ -1198,8 +1480,14 @@ export const App: React.FC = () => {
   ]);
 
   // Live clock countdown ticker + Last 10 Seconds Audio Alert
+  // Crucial rule: The first move (gameHistory.length < 2) NEVER counts for the timer!
+  // Also never count down while Lichess matchmaking modal is active or game is over.
   useEffect(() => {
     if (appState !== 'playing') return;
+    if (lichessMatchmaking.active) return;
+    if (gameHistory.length < 2) return;
+    if (chess.isGameOver()) return;
+
     const timer = setInterval(() => {
       const turn = chess.turn();
       setMatchClocks((prev) => {
@@ -1221,7 +1509,7 @@ export const App: React.FC = () => {
       });
     }, 1000);
     return () => clearInterval(timer);
-  }, [appState, chess]);
+  }, [appState, chess, lichessMatchmaking.active, gameHistory.length]);
 
   // Compute displayed board when inspecting historical moves (viewPly) vs live game
   const displayedBoardState = useMemo(() => {
@@ -1400,9 +1688,28 @@ export const App: React.FC = () => {
 
   // Resign match (synchronizes across Multiplayer so both Host and Guest save the game!)
   const handleResign = useCallback(() => {
-    soundManager.playSound('lose');
     // Immediately clear any saved ongoing local match so a resigned game never appears on Home Menu
     clearActiveLocalMatch();
+
+    // On Lichess, if fewer than 2 plies (< 2 half-moves) have been played, abort cleanly via /abort instead of /resign!
+    if (gameMode === 'lichess' && activeLichessGameId && gameHistoryRef.current.length < 2) {
+      soundManager.playSound('select');
+      lichessService.markGameEnded(activeLichessGameId);
+      setOngoingLichessGames((prev) =>
+        prev.filter((item) => item.gameId !== activeLichessGameId)
+      );
+      lichessService.abortBoardGame(activeLichessGameId);
+      lichessService.stopGameStream();
+      setInitialConfirmResign(false);
+      setGameOverInfo({
+        winner: 'draw',
+        reason: 'Lichess Match Aborted (Move 1)',
+      });
+      setAppState('game_over');
+      return;
+    }
+
+    soundManager.playSound('lose');
 
     const winner: Color = playerColor === 'w' ? 'b' : 'w';
     const eloChange = gameMode === 'ai' ? -15 : 0;
@@ -1419,6 +1726,7 @@ export const App: React.FC = () => {
         prev.filter((item) => item.gameId !== activeLichessGameId)
       );
       lichessService.resignBoardGame(activeLichessGameId);
+      lichessService.stopGameStream();
     }
 
     if (gameMode === 'online' && onlineSession) {
@@ -1636,16 +1944,19 @@ export const App: React.FC = () => {
     clearActiveLocalMatch,
   ]);
 
-  // Add +15 seconds to opponent clock
+  // Add +15 seconds to opponent clock (including Lichess Board API /moretime endpoint)
   const handleGiveMoreTime = useCallback(() => {
     soundManager.playSound('click');
+    if (gameMode === 'lichess' && activeLichessGameId) {
+      lichessService.giveMoreTime(activeLichessGameId, 15);
+    }
     const oppColor: Color = playerColor === 'w' ? 'b' : 'w';
     setMatchClocks((prev) => ({
       wtime: oppColor === 'w' ? prev.wtime + 15000 : prev.wtime,
       btime: oppColor === 'b' ? prev.btime + 15000 : prev.btime,
     }));
     appendChatMessage('System', '+15 seconds added to opponent clock.', true);
-  }, [playerColor, appendChatMessage]);
+  }, [gameMode, activeLichessGameId, playerColor, appendChatMessage]);
 
   // Send Chat Message across Lichess, Online P2P, or AI/Local modes
   const handleSendChat = useCallback(
@@ -1742,28 +2053,55 @@ export const App: React.FC = () => {
     }, 20);
   }, []);
 
+  // Debounced Pause Menu toggle to prevent '+' button / multi-event double-triggering
+  const triggerPauseMenuTransition = useCallback((target: 'paused' | 'playing') => {
+    const now = performance.now();
+    if (now - lastPauseToggleRef.current < 550) {
+      return;
+    }
+    lastPauseToggleRef.current = now;
+    lastModalTransitionRef.current = now;
+    soundManager.playSound('click');
+    setInitialConfirmResign(false);
+    setAppState(target);
+  }, []);
+
   // Unified Action Router for Keyboard, Smart TV Remote, and Gamepad Controller
   const handleUnifiedAction = useCallback(
     (action: UnifiedAction) => {
       const isDirection =
         action === 'up' || action === 'down' || action === 'left' || action === 'right';
 
-      // 1. Check if any modal or sub-screen is currently active
+      // 0. If in Checko Learn Academy, let LearnModal's board-locked focus handler process 8x8 board moves & zone switches first!
+      if (appState === 'learn' && typeof (window as any).__mypcLearnInputHandler === 'function') {
+        const handledByLearn = (window as any).__mypcLearnInputHandler(action);
+        if (handledByLearn) {
+          return;
+        }
+      }
+
+      // 1. Check if any modal or sub-screen is currently active (including Lichess Matchmaking Modal)
       const isModalOrSubScreen =
         pendingPromotion !== null ||
         mobileChatOpen ||
+        lichessMatchmaking.active ||
         (appState !== 'menu' && appState !== 'playing');
 
       if (isModalOrSubScreen) {
         const modals = document.querySelectorAll<HTMLElement>('[data-tv-modal="true"]');
         const activeModal = modals.length > 0 ? modals[modals.length - 1] : document;
 
-        // Play/Pause toggles Match Menu open/closed when in 'paused' state
-        if (action === 'pause' && appState === 'paused') {
-          lastModalTransitionRef.current = performance.now();
-          soundManager.playSound('click');
-          setInitialConfirmResign(false);
-          setAppState('playing');
+        // If Lichess Matchmaking Modal is active, Cancel/Back aborts matchmaking cleanly
+        if (lichessMatchmaking.active) {
+          if (action === 'cancel' || action === 'mypc_menu' || action === 'pause') {
+            handleCancelLichessMatchmaking();
+            return;
+          }
+        }
+
+        // Play/Pause toggles Match Menu open/closed when in 'paused' state (with 550ms debounce)
+        if ((action === 'pause' || action === 'zone_switch') && appState === 'paused') {
+          triggerPauseMenuTransition('playing');
           return;
         }
 
@@ -1774,14 +2112,16 @@ export const App: React.FC = () => {
             soundManager.playSound('select');
             return;
           }
+          if (appState === 'paused') {
+            triggerPauseMenuTransition('playing');
+            return;
+          }
           lastModalTransitionRef.current = performance.now();
           soundManager.playSound('click');
           if (pendingPromotion) {
             setPendingPromotion(null);
           } else if (mobileChatOpen) {
             setMobileChatOpen(false);
-          } else if (appState === 'paused') {
-            setAppState('playing');
           } else if (appState === 'settings') {
             setAppState(settingsReturnState);
           } else if (
@@ -1917,11 +2257,9 @@ export const App: React.FC = () => {
 
       // 3. Playing Screen State (3-Zone Focus: Left Panel ↔ Board ↔ Right Panel)
       if (appState === 'playing') {
-        // TV Remote Play/Pause (or + / P / Start) shows/hides the Match Action Menu
+        // TV Remote Play/Pause (or + / P / Start) shows/hides the Match Action Menu (with 550ms debounce)
         if (action === 'pause' || action === 'zone_switch') {
-          soundManager.playSound('click');
-          setInitialConfirmResign(false);
-          setAppState('paused');
+          triggerPauseMenuTransition('paused');
           return;
         }
 
@@ -1940,9 +2278,7 @@ export const App: React.FC = () => {
           }
           const handledByMyPC = myPCService.triggerSystemPause();
           if (!handledByMyPC) {
-            soundManager.playSound('click');
-            setInitialConfirmResign(false);
-            setAppState('paused');
+            triggerPauseMenuTransition('paused');
           }
           return;
         }
@@ -2111,6 +2447,7 @@ export const App: React.FC = () => {
       appState,
       pendingPromotion,
       mobileChatOpen,
+      lichessMatchmaking.active,
       settingsReturnState,
       analysisReturnState,
       menuIndex,
@@ -2126,6 +2463,8 @@ export const App: React.FC = () => {
       gameHistory.length,
       startNewGame,
       handleContinueOngoingGame,
+      handleCancelLichessMatchmaking,
+      triggerPauseMenuTransition,
       openSettings,
       handleUndo,
       handleRequestResignConfirm,
@@ -2150,7 +2489,7 @@ export const App: React.FC = () => {
           action === 'pause' ||
           action === 'zone_switch' ||
           action === 'resign') &&
-        now - lastModalTransitionRef.current < 260
+        now - lastModalTransitionRef.current < 420
       ) {
         return;
       }
@@ -2163,8 +2502,8 @@ export const App: React.FC = () => {
           last.action === action || (isCancelOrPause(last.action) && isCancelOrPause(action));
 
         if (!isDirection) {
-          // Block duplicate non-directional presses within 280ms regardless of source
-          if (sameSemanticAction && now - last.time < 280) {
+          // Block duplicate non-directional presses within 420ms regardless of source (fixes '+' double-click)
+          if (sameSemanticAction && now - last.time < 420) {
             return;
           }
         } else {
@@ -2185,6 +2524,9 @@ export const App: React.FC = () => {
   useEffect(() => {
     myPCService.setInputHandler((rawAction, pressed, repeat, dev) => {
       if (!pressed) return;
+      // Ignore keyboard-synthesized MyPC SDK events because window 'keydown' already handles all keyboard/remote keys!
+      if (dev === 'keys') return;
+
       // Yield completely while SettingsModal is capturing a custom shortcut key
       if (document.querySelector('[data-listening-shortcut="true"]')) {
         return;
@@ -2194,8 +2536,6 @@ export const App: React.FC = () => {
       const isTextInput = isTextInputElement(activeEl);
 
       if (isTextInput && activeEl) {
-        // When typing on a keyboard in standalone mode, ignore MyPC key-mapped actions
-        if (dev === 'keys') return;
         const mapped = mapMyPCAction(rawAction);
         if (mapped === 'cancel' || mapped === 'mypc_menu') {
           activeEl.blur();
@@ -2226,13 +2566,14 @@ export const App: React.FC = () => {
   // Record modal state transitions to prevent button press bleed-through when opening/closing menus
   useEffect(() => {
     lastModalTransitionRef.current = performance.now();
-  }, [appState, pendingPromotion, mobileChatOpen]);
+  }, [appState, pendingPromotion, mobileChatOpen, lichessMatchmaking.active]);
 
   // Automatically highlight default focusable element when a modal opens or changes state
   useEffect(() => {
     const isModalOrSubScreen =
       pendingPromotion !== null ||
       mobileChatOpen ||
+      lichessMatchmaking.active ||
       (appState !== 'menu' && appState !== 'playing');
     if (!isModalOrSubScreen) {
       if (playFocusZone === 'board') {
@@ -2248,7 +2589,7 @@ export const App: React.FC = () => {
       }
     }, 40);
     return () => clearTimeout(timer);
-  }, [appState, pendingPromotion, mobileChatOpen, playFocusZone, analyzing]);
+  }, [appState, pendingPromotion, mobileChatOpen, lichessMatchmaking.active, playFocusZone, analyzing]);
 
   // Global Keyboard & Smart TV Remote listener + document.body shield for text inputs
   useEffect(() => {
@@ -2323,8 +2664,8 @@ export const App: React.FC = () => {
         return;
       }
 
-      // Check custom match hotkeys first when playing (including Focus Left Side & Focus Right Side)
-      if (appState === 'playing' && !pendingPromotion && !mobileChatOpen) {
+      // Check custom match hotkeys first when playing or in Learn Mode (including Focus Left Side & Focus Right Side)
+      if ((appState === 'playing' || appState === 'learn') && !pendingPromotion && !mobileChatOpen) {
         const k = (e.key === ' ' ? 'space' : e.key).toLowerCase();
         const focusLeftKey = (settings.shortcuts.focus_left || 'q').toLowerCase();
         const focusRightKey = (settings.shortcuts.focus_right || 'e').toLowerCase();
@@ -2333,14 +2674,23 @@ export const App: React.FC = () => {
         const resignKey = (settings.shortcuts.resign || 'r').toLowerCase();
         const undoKey = (settings.shortcuts.undo || 'u').toLowerCase();
 
+        if (appState === 'learn' && (k === focusLeftKey || k === focusRightKey)) {
+          e.preventDefault();
+          e.stopPropagation();
+          if (e.repeat) return;
+          dispatchUnifiedAction(k === focusLeftKey ? 'focus_left' : 'focus_right', 'keyboard');
+          return;
+        }
+
         if (
-          k === 'm' ||
-          k === flipKey ||
-          k === pauseKey ||
-          k === resignKey ||
-          k === undoKey ||
-          k === focusLeftKey ||
-          k === focusRightKey
+          appState === 'playing' &&
+          (k === 'm' ||
+            k === flipKey ||
+            k === pauseKey ||
+            k === resignKey ||
+            k === undoKey ||
+            k === focusLeftKey ||
+            k === focusRightKey)
         ) {
           e.preventDefault();
           e.stopPropagation();
@@ -2906,11 +3256,7 @@ export const App: React.FC = () => {
     onCycleFontScale: handleCycleFontScale,
     onFlipBoard: () => setFlipped((prev) => !prev),
     onOpenSettings: () => openSettings('playing'),
-    onPause: () => {
-      soundManager.playSound('click');
-      setInitialConfirmResign(false);
-      setAppState('paused');
-    },
+    onPause: () => triggerPauseMenuTransition('paused'),
     onResign: handleResign,
     chatInputRef,
   };
@@ -3308,17 +3654,21 @@ export const App: React.FC = () => {
               </button>
               <span>•</span>
               <span className="px-2 py-0.5 rounded-lg bg-slate-900 border border-amber-500/40 text-amber-400 font-mono font-bold text-[11px]">
-                Build v4.2.0
+                Build v4.3.4
               </span>
             </div>
           </div>
         </div>
       )}
 
-      {/* Playing Board State - Kept visible behind Pause and Game Over modals so Checkmate animations shine */}
+      {/* Playing Board State - Blurred while Lichess Matchmaking Modal is seeking/connecting opponent */}
       {(appState === 'playing' || appState === 'paused' || appState === 'game_over') &&
         (isVerticalScreen ? (
-          <div className="w-full h-full max-w-[540px] mx-auto flex flex-col justify-between gap-1.5 px-1 py-0.5 overflow-hidden">
+          <div
+            className={`w-full h-full max-w-[540px] mx-auto flex flex-col justify-between gap-1.5 px-1 py-0.5 overflow-hidden transition-all duration-300 ${
+              lichessMatchmaking.active ? 'blur-[6px] opacity-75 pointer-events-none select-none' : ''
+            }`}
+          >
             {/* TOP SPACE: Match Info & Utilities + Opponent Info & Opponent Digital Clock */}
             <VerticalTopSection {...sharedArenaProps} />
 
@@ -3330,7 +3680,9 @@ export const App: React.FC = () => {
                 selectedSquare={displayedBoardState.isInspectingHistory ? null : selectedSquare}
                 validMoves={displayedBoardState.isInspectingHistory ? [] : validMoves}
                 lastMove={displayedBoardState.boardLastMove}
-                cursorSquare={playFocusZone === 'board' ? cursorSquare : null}
+                cursorSquare={
+                  playFocusZone === 'board' && !lichessMatchmaking.active ? cursorSquare : null
+                }
                 settings={settings}
                 sizeVariant="vertical"
                 onSquareClick={handleSquareClick}
@@ -3358,7 +3710,11 @@ export const App: React.FC = () => {
             />
           </div>
         ) : (
-          <div className="w-full h-full max-w-[1920px] mx-auto grid grid-cols-[minmax(280px,1fr)_auto_minmax(320px,380px)] xl:grid-cols-[minmax(340px,1fr)_auto_minmax(350px,410px)] items-center justify-center gap-3 xl:gap-5 px-3 overflow-hidden">
+          <div
+            className={`w-full h-full max-w-[1920px] mx-auto grid grid-cols-[minmax(280px,1fr)_auto_minmax(320px,380px)] xl:grid-cols-[minmax(340px,1fr)_auto_minmax(350px,410px)] items-center justify-center gap-3 xl:gap-5 px-3 overflow-hidden transition-all duration-300 ${
+              lichessMatchmaking.active ? 'blur-[6px] opacity-75 pointer-events-none select-none' : ''
+            }`}
+          >
             {/* LEFT COLUMN: Expanded to fill remaining widescreen width for Match Details + Chat Room & Notes */}
             <div className="flex flex-col w-full h-full max-h-[90vh] py-1">
               <LeftArenaPanel {...sharedArenaProps} />
@@ -3372,7 +3728,9 @@ export const App: React.FC = () => {
                 selectedSquare={displayedBoardState.isInspectingHistory ? null : selectedSquare}
                 validMoves={displayedBoardState.isInspectingHistory ? [] : validMoves}
                 lastMove={displayedBoardState.boardLastMove}
-                cursorSquare={playFocusZone === 'board' ? cursorSquare : null}
+                cursorSquare={
+                  playFocusZone === 'board' && !lichessMatchmaking.active ? cursorSquare : null
+                }
                 settings={settings}
                 sizeVariant="arena"
                 onSquareClick={handleSquareClick}
@@ -3394,6 +3752,75 @@ export const App: React.FC = () => {
             </div>
           </div>
         ))}
+
+      {/* Lichess Matchmaking Modal Overlay on Top of Blurred Board */}
+      {appState === 'playing' && lichessMatchmaking.active && (
+        <div
+          data-tv-modal="true"
+          className="fixed inset-0 z-50 bg-black/45 flex items-center justify-center p-4 select-none"
+        >
+          <div className="bg-slate-900/95 border-2 border-amber-400/70 rounded-3xl p-6 sm:p-7 max-w-md w-full shadow-[0_0_50px_rgba(251,191,36,0.2)] flex flex-col items-center text-center gap-4">
+            {/* Animated Knight & Radar Ring */}
+            <div className="relative flex items-center justify-center w-20 h-20">
+              {lichessMatchmaking.phase !== 'error' && (
+                <>
+                  <span className="absolute inset-0 rounded-full border-2 border-amber-400/40 animate-ping" />
+                  <span className="absolute inset-1.5 rounded-full border-2 border-emerald-400/40 animate-pulse" />
+                </>
+              )}
+              <div className="relative w-16 h-16 rounded-2xl bg-white text-slate-950 flex items-center justify-center text-4xl font-black shadow-xl">
+                ♞
+              </div>
+            </div>
+
+            {/* Time Control & Mode Badges */}
+            <div className="flex items-center justify-center gap-2 flex-wrap">
+              <span className="px-3 py-1 rounded-full bg-amber-400 text-slate-950 font-mono font-black text-xs sm:text-sm uppercase shadow">
+                {lichessMatchmaking.timeControl} • {lichessMatchmaking.speed}
+              </span>
+              <span className="px-2.5 py-1 rounded-full bg-slate-800 border border-slate-700 text-emerald-300 font-bold text-xs uppercase">
+                {lichessMatchmaking.opponentType === 'lichess_ai'
+                  ? `Stockfish Lv.${lichessMatchmaking.aiLevel || 4}`
+                  : lichessMatchmaking.rated
+                  ? 'Rated Match'
+                  : 'Casual Match'}
+              </span>
+              {lichessMatchmaking.phase !== 'error' && (
+                <span className="px-2.5 py-1 rounded-full bg-slate-950 border border-amber-500/40 text-amber-300 font-mono font-bold text-xs">
+                  {Math.floor(lichessMatchmaking.elapsedSec / 60)}:
+                  {String(lichessMatchmaking.elapsedSec % 60).padStart(2, '0')}
+                </span>
+              )}
+            </div>
+
+            {/* Title & Live Status */}
+            <div>
+              <h2 className="text-xl sm:text-2xl font-black text-white">
+                {lichessMatchmaking.phase === 'error'
+                  ? 'Matchmaking Stopped'
+                  : lichessMatchmaking.phase === 'connecting'
+                  ? 'Opponent Found! Syncing Board...'
+                  : 'Finding Opponent on Lichess...'}
+              </h2>
+              <p className="text-xs sm:text-sm text-slate-300 font-medium mt-1">
+                {lichessMatchmaking.phase === 'error'
+                  ? lichessMatchmaking.errorMessage
+                  : lichessMatchmaking.statusMessage}
+              </p>
+            </div>
+
+            {/* Cancel / Return Button */}
+            <button
+              type="button"
+              data-tv-autofocus="true"
+              onClick={handleCancelLichessMatchmaking}
+              className="w-full py-3 px-5 rounded-2xl bg-slate-800 hover:bg-red-950/80 border-2 border-slate-600 hover:border-red-400 text-white font-black text-sm transition-all cursor-pointer shadow-lg"
+            >
+              {lichessMatchmaking.phase === 'error' ? 'Back to Lichess Hub' : 'Cancel Matchmaking'}
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Promotion Choice Modal */}
       {pendingPromotion && (
@@ -3421,12 +3848,12 @@ export const App: React.FC = () => {
           onAcceptDraw={handleAcceptDraw}
           onDeclineDraw={handleDeclineDraw}
           onConfirmResign={handleResign}
-          onResume={() => {
-            soundManager.playSound('click');
-            setInitialConfirmResign(false);
-            setAppState('playing');
-          }}
-          onRestart={() => startNewGame(gameMode, playerColor)}
+          onResume={() => triggerPauseMenuTransition('playing')}
+          onRestart={() =>
+            gameMode === 'lichess'
+              ? handleAbortOrRestart()
+              : startNewGame(gameMode, playerColor)
+          }
           onOpenSettings={() => openSettings('paused')}
           onQuitToMenu={() => {
             soundManager.playSound('click');
@@ -3537,6 +3964,7 @@ export const App: React.FC = () => {
           savedLocalMatch={savedLocalMatch}
           onResumeSavedLocalMatch={handleContinueOngoingGame}
           onStartTimedLocalAIMatch={(mins, inc) => startNewGame('ai', 'w', mins, inc)}
+          onStartLichessMatchmaking={handleStartLichessMatchmaking}
           onStartLiveLichessGame={handleStartLiveLichessGame}
           onAnalyzeLichessGame={(moves, color) => startAnalysisForMoves(moves, 'lichess_hub', color)}
           onUsernameChange={(uname) => setLichessUsername(uname)}

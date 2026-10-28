@@ -17,7 +17,12 @@ import {
 } from '../services/learnLessons';
 import { myPCService } from '../services/mypc';
 import { soundManager } from '../services/sound';
-import { setSpatialFocus } from '../services/spatialInput';
+import {
+  UnifiedAction,
+  setSpatialFocus,
+  ensureSpatialFocus,
+  clearAllSpatialFocus,
+} from '../services/spatialInput';
 import {
   Volume2,
   VolumeX,
@@ -348,11 +353,16 @@ export const LearnModal: React.FC<LearnModalProps> = ({ settings, onClose }) => 
   const [checkoMood, setCheckoMood] = useState<CheckoMood>('idle');
   const [customNotice, setCustomNotice] = useState<string | null>(null);
 
+  // Board-First Focus State (matches normal playing board: locked on 8x8 board unless Zone Switch or step solved)
+  const [learnFocusZone, setLearnFocusZone] = useState<'board' | 'panel'>('board');
+  const [learnCursorSquare, setLearnCursorSquare] = useState<Square>('e2');
+
   // Refs for TV remote auto-focus
   const continueBtnRef = useRef<HTMLButtonElement | null>(null);
   const nextBtnRef = useRef<HTMLButtonElement | null>(null);
   const activeLessonBtnRef = useRef<HTMLButtonElement | null>(null);
   const categoryNextLessonBtnRef = useRef<HTMLButtonElement | null>(null);
+  const lessonRightPanelRef = useRef<HTMLDivElement | null>(null);
 
   /**
    * Sequential Unlocking Rule:
@@ -441,12 +451,17 @@ export const LearnModal: React.FC<LearnModalProps> = ({ settings, onClose }) => 
   const triggerCheckoSpeech = useCallback(
     (text: string, forceSpeak: boolean = false) => {
       if (!autoVoice && !forceSpeak) return;
-      myPCService.speakText(text, lang, {
-        onStart: () => setIsSpeaking(true),
-        onEnd: () => setIsSpeaking(false),
-      });
+      myPCService.speakText(
+        text,
+        lang,
+        {
+          onStart: () => setIsSpeaking(true),
+          onEnd: () => setIsSpeaking(false),
+        },
+        settings.tts_provider_id
+      );
     },
-    [autoVoice, lang]
+    [autoVoice, lang, settings.tts_provider_id]
   );
 
   // Play Checko's little chick peep greeting on initial mount and stop TTS on unmount
@@ -484,9 +499,10 @@ export const LearnModal: React.FC<LearnModalProps> = ({ settings, onClose }) => 
   // Load step FEN whenever activeLessonId or activeStepIdx changes in 'lesson' view
   useEffect(() => {
     if (viewMode !== 'lesson' || !activeStep) return;
+    let loadedChess = new Chess();
     try {
-      const c = new Chess(activeStep.fen);
-      setChess(c);
+      loadedChess = new Chess(activeStep.fen);
+      setChess(loadedChess);
     } catch {
       setChess(new Chess());
     }
@@ -496,6 +512,17 @@ export const LearnModal: React.FC<LearnModalProps> = ({ settings, onClose }) => 
     setStepStatus('prompt');
     setCheckoMood('idle');
     setCustomNotice(null);
+
+    // Lock focus onto the 8x8 board by default when a lesson step starts,
+    // positioning cursorSquare on the starting square of the expected move (or first player piece)
+    setLearnFocusZone('board');
+    clearAllSpatialFocus();
+    const expectedFrom = activeStep.expectedMoves?.[0]?.slice(0, 2) as Square | undefined;
+    if (expectedFrom && /^[a-h][1-8]$/.test(expectedFrom)) {
+      setLearnCursorSquare(expectedFrom);
+    } else {
+      setLearnCursorSquare(activeStep.playerColor === 'b' ? 'e7' : 'e2');
+    }
 
     const promptText = activeStep.bubble[lang] || activeStep.bubble.en;
     triggerCheckoSpeech(promptText);
@@ -515,12 +542,13 @@ export const LearnModal: React.FC<LearnModalProps> = ({ settings, onClose }) => 
   // Auto-focus the "Next Lesson / Next Step" button as soon as the user plays the correct move!
   useEffect(() => {
     if (stepStatus === 'correct') {
+      setLearnFocusZone('panel');
       const timer = setTimeout(() => {
         if (nextBtnRef.current) {
           setSpatialFocus(nextBtnRef.current);
           nextBtnRef.current.focus();
         }
-      }, 40);
+      }, 35);
       return () => clearTimeout(timer);
     }
   }, [stepStatus]);
@@ -653,6 +681,8 @@ export const LearnModal: React.FC<LearnModalProps> = ({ settings, onClose }) => 
     setStepStatus('prompt');
     setCheckoMood('idle');
     setCustomNotice(null);
+    setLearnFocusZone('board');
+    clearAllSpatialFocus();
     triggerCheckoSpeech(activeStep.bubble[lang]);
   };
 
@@ -661,6 +691,8 @@ export const LearnModal: React.FC<LearnModalProps> = ({ settings, onClose }) => 
     setStepStatus('wrong');
     setCheckoMood('wrong');
     setCustomNotice(null);
+    setLearnFocusZone('board');
+    clearAllSpatialFocus();
     triggerCheckoSpeech(activeStep.hint[lang], true);
   };
 
@@ -719,6 +751,10 @@ export const LearnModal: React.FC<LearnModalProps> = ({ settings, onClose }) => 
   const handleBoardSquareClick = (sq: Square) => {
     if (stepStatus === 'correct') return;
 
+    setLearnFocusZone('board');
+    clearAllSpatialFocus();
+    setLearnCursorSquare(sq);
+
     const piece = chess.get(sq);
     if (selectedSquare) {
       if (selectedSquare === sq) {
@@ -762,6 +798,8 @@ export const LearnModal: React.FC<LearnModalProps> = ({ settings, onClose }) => 
   };
 
   const handleAdvanceNext = () => {
+    setLearnFocusZone('board');
+    clearAllSpatialFocus();
     if (activeStepIdx + 1 < activeLesson.steps.length) {
       soundManager.playSound('click');
       setActiveStepIdx((prev) => prev + 1);
@@ -784,6 +822,139 @@ export const LearnModal: React.FC<LearnModalProps> = ({ settings, onClose }) => 
       setViewMode('levels');
     }
   };
+
+  // Switch between 8x8 Board Zone and Right Side Panel Zone in Lesson view
+  const switchLearnFocusZone = useCallback((targetZone: 'board' | 'panel') => {
+    soundManager.playSound('select');
+    setLearnFocusZone(targetZone);
+    if (targetZone === 'board') {
+      clearAllSpatialFocus();
+    } else {
+      setTimeout(() => {
+        if (lessonRightPanelRef.current) {
+          ensureSpatialFocus(lessonRightPanelRef.current);
+        }
+      }, 20);
+    }
+  }, []);
+
+  // Register unified input bridge so App.tsx routes 8x8 board navigation & zone switching in Learn Mode
+  useEffect(() => {
+    const handler = (action: UnifiedAction): boolean => {
+      if (viewMode !== 'lesson' || !activeStep) {
+        // In 'levels' or 'categories' screens, let Back return up the hierarchy before closing
+        if (action === 'cancel' || action === 'mypc_menu' || action === 'pause') {
+          if (viewMode === 'categories') {
+            soundManager.playSound('click');
+            setCustomNotice(null);
+            setViewMode('levels');
+            return true;
+          }
+        }
+        return false;
+      }
+
+      // Zone Switch buttons (Q, E, Channel Up/Down, Gamepad X, or Play/Pause) toggle between Board & Side Panel
+      if (
+        action === 'focus_left' ||
+        action === 'focus_right' ||
+        action === 'cycle_zone_prev' ||
+        action === 'cycle_zone_next' ||
+        action === 'zone_switch'
+      ) {
+        switchLearnFocusZone(learnFocusZone === 'board' ? 'panel' : 'board');
+        return true;
+      }
+
+      // When step is solved, Next button is auto-focused; pressing Confirm advances immediately
+      if (stepStatus === 'correct') {
+        if (action === 'confirm') {
+          handleAdvanceNext();
+          return true;
+        }
+        if (action === 'cancel' || action === 'mypc_menu') {
+          soundManager.playSound('click');
+          setCustomNotice(null);
+          setViewMode('categories');
+          return true;
+        }
+        return false;
+      }
+
+      // If user switched to the Side Panel (Hint, Reset, Speak, Lesson Switcher, Back)
+      if (learnFocusZone === 'panel') {
+        if (action === 'cancel') {
+          switchLearnFocusZone('board');
+          return true;
+        }
+        // Let App.tsx's spatial navigation move between buttons in the panel/header
+        return false;
+      }
+
+      // Default in Lesson Mode: Focus is locked on the 8x8 ChessBoard (identical to normal match play!)
+      if (action === 'cancel' || action === 'mypc_menu' || action === 'pause') {
+        if (selectedSquare !== null) {
+          setSelectedSquare(null);
+          setValidMoves([]);
+          soundManager.playSound('select');
+          return true;
+        }
+        soundManager.playSound('click');
+        setCustomNotice(null);
+        setViewMode('categories');
+        return true;
+      }
+
+      const flipped = activeStep.playerColor === 'b';
+      const files = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
+      const ranks = ['8', '7', '6', '5', '4', '3', '2', '1'];
+      const displayFiles = flipped ? [...files].reverse() : files;
+      const displayRanks = flipped ? [...ranks].reverse() : ranks;
+
+      const current = learnCursorSquare || (activeStep.playerColor === 'b' ? 'e7' : 'e2');
+      const col = Math.max(0, displayFiles.indexOf(current[0]));
+      const row = Math.max(0, displayRanks.indexOf(current[1]));
+
+      if (action === 'confirm') {
+        handleBoardSquareClick(current);
+        return true;
+      }
+
+      if (action === 'left') {
+        const nextCol = col > 0 ? col - 1 : 7;
+        setLearnCursorSquare(`${displayFiles[nextCol]}${displayRanks[row]}` as Square);
+        soundManager.playSound('select');
+        return true;
+      }
+      if (action === 'right') {
+        const nextCol = col < 7 ? col + 1 : 0;
+        setLearnCursorSquare(`${displayFiles[nextCol]}${displayRanks[row]}` as Square);
+        soundManager.playSound('select');
+        return true;
+      }
+      if (action === 'up') {
+        const nextRow = row > 0 ? row - 1 : 7;
+        setLearnCursorSquare(`${displayFiles[col]}${displayRanks[nextRow]}` as Square);
+        soundManager.playSound('select');
+        return true;
+      }
+      if (action === 'down') {
+        const nextRow = row < 7 ? row + 1 : 0;
+        setLearnCursorSquare(`${displayFiles[col]}${displayRanks[nextRow]}` as Square);
+        soundManager.playSound('select');
+        return true;
+      }
+
+      return false;
+    };
+
+    (window as any).__mypcLearnInputHandler = handler;
+    return () => {
+      if ((window as any).__mypcLearnInputHandler === handler) {
+        delete (window as any).__mypcLearnInputHandler;
+      }
+    };
+  });
 
   const currentBubbleText = customNotice
     ? customNotice
@@ -1210,28 +1381,67 @@ export const LearnModal: React.FC<LearnModalProps> = ({ settings, onClose }) => 
         {/* =================================================================== */}
         {viewMode === 'lesson' && activeStep && (
           <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-[auto_1fr] items-center gap-4 overflow-y-auto lg:overflow-hidden px-1">
-            {/* LEFT / CENTER: Interactive ChessBoard */}
-            <div className="flex flex-col items-center justify-center">
+            {/* LEFT / CENTER: Interactive ChessBoard (Focus locked on 8x8 board by default, just like normal playing board!) */}
+            <div className="flex flex-col items-center justify-center gap-1.5">
               <ChessBoard
                 chess={chess}
                 flipped={activeStep.playerColor === 'b'}
                 selectedSquare={selectedSquare}
                 validMoves={validMoves}
                 lastMove={lastMove}
-                cursorSquare={null}
+                cursorSquare={
+                  learnFocusZone === 'board' && stepStatus !== 'correct'
+                    ? learnCursorSquare
+                    : null
+                }
                 settings={{ ...settings, show_legal_moves: true }}
                 arrows={displayedArrows}
                 highlightSquares={displayedHighlights}
                 sizeVariant="puzzle"
-                enableDomFocus={true}
+                enableDomFocus={false}
                 onSquareClick={handleBoardSquareClick}
               />
+
+              {/* Focus Zone Indicator & Toggle Pill */}
+              <div className="flex items-center justify-between gap-2 w-full max-w-[380px] px-2.5 py-1 rounded-xl bg-slate-900/90 border border-slate-800 text-[11px]">
+                <span className="flex items-center gap-1.5 font-bold text-slate-300">
+                  <span
+                    className={`w-2 h-2 rounded-full ${
+                      learnFocusZone === 'board' && stepStatus !== 'correct'
+                        ? 'bg-emerald-400 shadow-[0_0_6px_#34d399]'
+                        : 'bg-amber-400'
+                    }`}
+                  />
+                  Focus:{' '}
+                  <strong className="text-white">
+                    {stepStatus === 'correct'
+                      ? 'Next Button'
+                      : learnFocusZone === 'board'
+                      ? `Board (${learnCursorSquare.toUpperCase()})`
+                      : 'Side Controls'}
+                  </strong>
+                </span>
+                <button
+                  type="button"
+                  onClick={() =>
+                    switchLearnFocusZone(learnFocusZone === 'board' ? 'panel' : 'board')
+                  }
+                  className="px-2 py-0.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-amber-300 font-mono font-bold text-[10px] cursor-pointer"
+                >
+                  Switch Focus ({(settings.shortcuts?.focus_right || 'E').toUpperCase()} / CH)
+                </button>
+              </div>
             </div>
 
             {/* RIGHT SIDE: Checko Cartoon Teacher + Speech Bubble + Lesson Controls */}
             <div
+              ref={lessonRightPanelRef}
               dir={isRtl ? 'rtl' : 'ltr'}
-              className="flex flex-col justify-between h-full max-h-[80vh] bg-[#1e1c19] border border-slate-800 rounded-3xl p-4 sm:p-5 gap-3 shadow-2xl"
+              className={`flex flex-col justify-between h-full max-h-[80vh] bg-[#1e1c19] border rounded-3xl p-4 sm:p-5 gap-3 shadow-2xl transition-colors ${
+                learnFocusZone === 'panel'
+                  ? 'border-amber-400/80 ring-2 ring-amber-400/30'
+                  : 'border-slate-800'
+              }`}
             >
               {/* Compact Category Lesson Switcher Bar & Title */}
               <div>

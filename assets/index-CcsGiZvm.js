@@ -1,8 +1,8 @@
 var __defProp = Object.defineProperty;
 var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
 var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "symbol" ? key + "" : key, value);
-/*! MyPC Chess Build v4.2.0 */
-import { R as React, j as jsxRuntimeExports, T as Type, a as RotateCcw, V as Volume2, b as VolumeX, M as Music, S as SlidersVertical, P as Pause, c as Plus, r as reactExports, C as ChevronsLeft, d as ChevronLeft, e as ChevronRight, f as ChevronsRight, X, U as Undo2, g as MessageSquare, h as Send, B as Bot, i as Users, W as Wifi, Z as Zap, F as Flame, k as Clock, l as Flag, H as Handshake, m as Check, n as Play, o as TriangleAlert, L as LogOut, E as Eye, p as Crown, q as ShieldAlert, s as Trophy, t as TrendingUp, u as TrendingDown, v as Swords, w as Sparkles, x as House, y as Chess, A as ArrowLeft, z as ChartColumn, D as EyeOff, G as GraduationCap, I as Compass, J as Monitor, K as Keyboard, N as Cpu, O as Minus, Q as Tv, Y as Gamepad2, _ as LoaderCircle, $ as CircleAlert, a0 as History, a1 as FileText, a2 as Trash2, a3 as Award, a4 as Calendar, a5 as BookOpen, a6 as CircleCheck, a7 as Key, a8 as Puzzle, a9 as RefreshCw, aa as LayoutGrid, ab as Lock, ac as Lightbulb, ad as client } from "./vendor.js";
+/*! MyPC Chess Build v4.3.4 */
+import { R as React, j as jsxRuntimeExports, T as Type, a as RotateCcw, V as Volume2, b as VolumeX, M as Music, S as SlidersVertical, P as Pause, c as Plus, r as reactExports, C as ChevronsLeft, d as ChevronLeft, e as ChevronRight, f as ChevronsRight, X, U as Undo2, g as MessageSquare, h as Send, B as Bot, i as Users, W as Wifi, Z as Zap, F as Flame, k as Clock, l as Flag, H as Handshake, m as Check, n as Play, o as TriangleAlert, L as LogOut, E as Eye, p as Crown, q as ShieldAlert, s as Trophy, t as TrendingUp, u as TrendingDown, v as Swords, w as Sparkles, x as House, y as Chess, A as ArrowLeft, z as ChartColumn, D as EyeOff, G as GraduationCap, I as Compass, J as Monitor, K as Keyboard, N as Cpu, O as Minus, Q as Tv, Y as Gamepad2, _ as RefreshCw, $ as LoaderCircle, a0 as CircleAlert, a1 as History, a2 as FileText, a3 as Trash2, a4 as Award, a5 as Calendar, a6 as BookOpen, a7 as CircleCheck, a8 as Key, a9 as Puzzle, aa as LayoutGrid, ab as Lock, ac as Lightbulb, ad as client } from "./vendor.js";
 (function polyfill() {
   const relList = document.createElement("link").relList;
   if (relList && relList.supports && relList.supports("modulepreload")) {
@@ -3687,6 +3687,777 @@ const AnalysisModal = ({
     }
   );
 };
+const DEFAULT_SPEECH_MODELS = {
+  gemini: "gemini-2.5-flash-preview-tts",
+  openai: "gpt-4o-mini-tts",
+  nvidia: "magpie-multilingual"
+};
+function resolveProviderSpeechModel(p) {
+  var _a;
+  const typeKey = String((p == null ? void 0 : p.type) || (p == null ? void 0 : p.preset) || "").toLowerCase();
+  const rawModel = String((p == null ? void 0 : p.model) || "").trim();
+  const isSpeechCapable = Boolean((_a = p == null ? void 0 : p.tasks) == null ? void 0 : _a.speech);
+  if (!isSpeechCapable) {
+    return rawModel ? `${rawModel} (No TTS)` : "Not supported";
+  }
+  if (rawModel && (rawModel.toLowerCase().includes("tts") || rawModel.toLowerCase().includes("magpie") || rawModel.toLowerCase().includes("speech"))) {
+    return rawModel;
+  }
+  if (DEFAULT_SPEECH_MODELS[typeKey]) {
+    return DEFAULT_SPEECH_MODELS[typeKey];
+  }
+  return rawModel || "default-tts";
+}
+function toUint8Array(data) {
+  if (!data) return null;
+  if (data instanceof Uint8Array) return data;
+  if (data instanceof ArrayBuffer) return new Uint8Array(data);
+  if (ArrayBuffer.isView(data)) {
+    return new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+  }
+  if (typeof data === "string") {
+    const clean = data.includes(",") ? data.split(",")[1] : data;
+    try {
+      const bin = atob(clean.trim());
+      const out = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) {
+        out[i] = bin.charCodeAt(i);
+      }
+      return out;
+    } catch {
+      return null;
+    }
+  }
+  if (Array.isArray(data)) {
+    return new Uint8Array(data);
+  }
+  return null;
+}
+class MyPCService {
+  constructor() {
+    __publicField(this, "isMyPCAvailable", false);
+    __publicField(this, "initialized", false);
+    __publicField(this, "isReady", false);
+    __publicField(this, "pendingSaves", /* @__PURE__ */ new Map());
+    __publicField(this, "profileName", "Player 1");
+    __publicField(this, "systemLang", null);
+    __publicField(this, "currentHandlers", {});
+    __publicField(this, "speechCtx", null);
+    __publicField(this, "activeSpeechSource", null);
+    __publicField(this, "activeAudioEl", null);
+    __publicField(this, "activeAudioUrl", null);
+    __publicField(this, "speechAbortId", 0);
+    __publicField(this, "lastTTSStatus", {
+      providerId: "auto",
+      providerName: "Detecting MyPC AI...",
+      modelName: "Auto",
+      engine: "mypc_ai",
+      speechSupported: true
+    });
+    this.checkAvailability();
+  }
+  checkAvailability() {
+    if (typeof window !== "undefined" && window.MyPC) {
+      this.isMyPCAvailable = true;
+    }
+  }
+  setInputHandler(handler) {
+    this.currentHandlers.onInput = handler;
+  }
+  flushPendingSaves() {
+    if (!this.isReady || this.pendingSaves.size === 0) return;
+    const MyPC = typeof window !== "undefined" ? window.MyPC : null;
+    if (MyPC && typeof MyPC.save === "function") {
+      this.pendingSaves.forEach((val, key) => {
+        try {
+          MyPC.save(key, val);
+        } catch {
+        }
+      });
+    }
+    this.pendingSaves.clear();
+  }
+  normalizeLang(raw) {
+    if (!raw || typeof raw !== "string") return null;
+    const prefix = raw.trim().slice(0, 2).toLowerCase();
+    if (prefix === "en" || prefix === "fr" || prefix === "es" || prefix === "ar") {
+      return prefix;
+    }
+    return null;
+  }
+  init(handlers) {
+    this.currentHandlers = { ...this.currentHandlers, ...handlers };
+    if (typeof window === "undefined") return;
+    if (this.initialized) return;
+    this.initialized = true;
+    const MyPC = window.MyPC;
+    if (MyPC && typeof MyPC.init === "function") {
+      this.isMyPCAvailable = true;
+      MyPC.init({
+        onInit: (info) => {
+          var _a, _b, _c, _d, _e;
+          this.isReady = true;
+          this.flushPendingSaves();
+          if ((_a = info == null ? void 0 : info.profile) == null ? void 0 : _a.name) {
+            this.profileName = info.profile.name;
+          }
+          const detectedLang = this.normalizeLang(info == null ? void 0 : info.lang) || this.normalizeLang(info == null ? void 0 : info.language) || this.normalizeLang((_b = info == null ? void 0 : info.profile) == null ? void 0 : _b.lang);
+          if (detectedLang) {
+            this.systemLang = detectedLang;
+          }
+          (_d = (_c = this.currentHandlers).onInit) == null ? void 0 : _d.call(_c, info);
+          (_e = MyPC.ready) == null ? void 0 : _e.call(MyPC);
+        },
+        onStart: () => {
+          var _a, _b;
+          (_b = (_a = this.currentHandlers).onStart) == null ? void 0 : _b.call(_a);
+        },
+        onPause: () => {
+          var _a, _b;
+          (_b = (_a = this.currentHandlers).onPause) == null ? void 0 : _b.call(_a);
+        },
+        onResume: () => {
+          var _a, _b;
+          (_b = (_a = this.currentHandlers).onResume) == null ? void 0 : _b.call(_a);
+        },
+        onDestroy: () => {
+          var _a, _b;
+          (_b = (_a = this.currentHandlers).onDestroy) == null ? void 0 : _b.call(_a);
+        },
+        onInput: (action, pressed, repeat, dev) => {
+          var _a, _b;
+          (_b = (_a = this.currentHandlers).onInput) == null ? void 0 : _b.call(_a, action, pressed, repeat, dev);
+        },
+        onMenu: (id) => {
+          var _a, _b;
+          (_b = (_a = this.currentHandlers).onMenu) == null ? void 0 : _b.call(_a, id);
+        },
+        ownMenu: true
+      });
+    } else {
+      setTimeout(() => {
+        var _a, _b, _c, _d;
+        this.isReady = true;
+        (_b = (_a = this.currentHandlers).onInit) == null ? void 0 : _b.call(_a, { standalone: true, profile: { name: "Player 1" } });
+        (_d = (_c = this.currentHandlers).onStart) == null ? void 0 : _d.call(_c);
+      }, 50);
+    }
+  }
+  getAppConfig() {
+    var _a;
+    if (typeof window !== "undefined" && ((_a = window.MyPC) == null ? void 0 : _a.app_config)) {
+      return window.MyPC.app_config;
+    }
+    return {};
+  }
+  getProfileName() {
+    return this.profileName;
+  }
+  setProfileName(name) {
+    this.profileName = name;
+  }
+  save(key, value) {
+    const MyPC = typeof window !== "undefined" ? window.MyPC : null;
+    if (MyPC && typeof MyPC.save === "function") {
+      if (this.isReady) {
+        try {
+          MyPC.save(key, value);
+        } catch {
+        }
+      } else {
+        this.pendingSaves.set(key, value);
+      }
+    }
+    try {
+      localStorage.setItem(`mypc_chess_${key}`, JSON.stringify(value));
+    } catch {
+    }
+  }
+  remove(key) {
+    this.pendingSaves.delete(key);
+    const MyPC = typeof window !== "undefined" ? window.MyPC : null;
+    if (MyPC && typeof MyPC.save === "function" && this.isReady) {
+      try {
+        MyPC.save(key, "");
+      } catch {
+      }
+    }
+    try {
+      localStorage.removeItem(`mypc_chess_${key}`);
+    } catch {
+    }
+  }
+  load(key, defaultValue) {
+    const MyPC = typeof window !== "undefined" ? window.MyPC : null;
+    if (this.isReady && MyPC && typeof MyPC.load === "function") {
+      try {
+        const loaded = MyPC.load(key, void 0);
+        if (loaded !== void 0 && loaded !== null && loaded !== "") {
+          try {
+            localStorage.setItem(`mypc_chess_${key}`, JSON.stringify(loaded));
+          } catch {
+          }
+          return loaded;
+        }
+      } catch {
+      }
+    }
+    try {
+      const stored = localStorage.getItem(`mypc_chess_${key}`);
+      if (stored !== null) {
+        const parsed = JSON.parse(stored);
+        if (parsed !== void 0 && parsed !== null && parsed !== "") {
+          if (this.isReady && MyPC && typeof MyPC.save === "function") {
+            try {
+              MyPC.save(key, parsed);
+            } catch {
+            }
+          }
+          return parsed;
+        }
+      }
+    } catch {
+    }
+    return defaultValue;
+  }
+  submitScore(score, meta) {
+    const MyPC = window.MyPC;
+    if (MyPC && typeof MyPC.submitScore === "function") {
+      try {
+        MyPC.submitScore(score, meta);
+      } catch {
+      }
+    }
+  }
+  triggerSystemPause() {
+    const MyPC = typeof window !== "undefined" ? window.MyPC : null;
+    if (MyPC && typeof MyPC.pause === "function") {
+      try {
+        MyPC.pause();
+        return true;
+      } catch {
+      }
+    }
+    return false;
+  }
+  isMultiplayerSupported() {
+    const MyPC = window.MyPC;
+    return !!((MyPC == null ? void 0 : MyPC.multiplayer) && MyPC.multiplayer.supported);
+  }
+  async hostOnlineGame() {
+    var _a;
+    const MyPC = window.MyPC;
+    if ((_a = MyPC == null ? void 0 : MyPC.multiplayer) == null ? void 0 : _a.host) {
+      return MyPC.multiplayer.host({ max: 1 });
+    }
+    throw new Error("MyPC Multiplayer not supported");
+  }
+  async joinOnlineGame() {
+    var _a;
+    const MyPC = window.MyPC;
+    if ((_a = MyPC == null ? void 0 : MyPC.multiplayer) == null ? void 0 : _a.join) {
+      return MyPC.multiplayer.join();
+    }
+    throw new Error("MyPC Multiplayer not supported");
+  }
+  /**
+   * Executes CORS-friendly fetch for Lichess API (which natively sends Access-Control-Allow-Origin: *
+   * and supports NDJSON ReadableStreams), with fallback to MyPC.net.fetch on restricted TV WebViews.
+   */
+  async proxyFetch(url, options = {}) {
+    try {
+      return await fetch(url, {
+        ...options,
+        mode: "cors",
+        credentials: "omit",
+        cache: "no-store"
+      });
+    } catch (fetchErr) {
+      if ((fetchErr == null ? void 0 : fetchErr.name) === "AbortError" || url.includes("/stream/")) {
+        throw fetchErr;
+      }
+      const MyPC = typeof window !== "undefined" ? window.MyPC : null;
+      if ((MyPC == null ? void 0 : MyPC.net) && typeof MyPC.net.fetch === "function") {
+        const r = await MyPC.net.fetch(url, {
+          method: options.method || "GET",
+          headers: options.headers || {},
+          body: options.body,
+          responseType: "text"
+        });
+        const bodyText = typeof r.text === "function" ? r.text() : String(r.body ?? "");
+        return new Response(bodyText, {
+          status: r.status || 200,
+          statusText: r.statusText || "",
+          headers: r.headers || {}
+        });
+      }
+      throw fetchErr;
+    }
+  }
+  /**
+   * Queries MyPC.ai.providers() to list all configured AI providers on the user's MyPC system
+   * along with their speech capability and resolved TTS model name.
+   */
+  async getAIProviders() {
+    const MyPC = typeof window !== "undefined" ? window.MyPC : null;
+    if (!(MyPC == null ? void 0 : MyPC.ai) || typeof MyPC.ai.providers !== "function") {
+      return [];
+    }
+    try {
+      const rawList = await MyPC.ai.providers();
+      if (!Array.isArray(rawList)) return [];
+      return rawList.map((p) => {
+        var _a, _b, _c, _d, _e, _f;
+        return {
+          id: String((p == null ? void 0 : p.id) || ""),
+          name: String((p == null ? void 0 : p.name) || (p == null ? void 0 : p.type) || "AI Provider"),
+          type: String((p == null ? void 0 : p.type) || ""),
+          preset: String((p == null ? void 0 : p.preset) || (p == null ? void 0 : p.type) || ""),
+          model: String((p == null ? void 0 : p.model) || ""),
+          isDefault: Boolean(p == null ? void 0 : p.isDefault),
+          tasks: {
+            chat: Boolean((_a = p == null ? void 0 : p.tasks) == null ? void 0 : _a.chat),
+            image: Boolean((_b = p == null ? void 0 : p.tasks) == null ? void 0 : _b.image),
+            speech: Boolean((_c = p == null ? void 0 : p.tasks) == null ? void 0 : _c.speech),
+            transcribe: Boolean((_d = p == null ? void 0 : p.tasks) == null ? void 0 : _d.transcribe),
+            video: Boolean((_e = p == null ? void 0 : p.tasks) == null ? void 0 : _e.video),
+            embed: Boolean((_f = p == null ? void 0 : p.tasks) == null ? void 0 : _f.embed)
+          },
+          resolvedSpeechModel: resolveProviderSpeechModel(p)
+        };
+      });
+    } catch {
+      return [];
+    }
+  }
+  /**
+   * Resolves which MyPC AI provider & TTS model is currently selected/active for Checko speech.
+   */
+  async resolveTTSStatus(preferredProviderId) {
+    const savedConfig = this.load("config", {});
+    const prefId = preferredProviderId || (savedConfig == null ? void 0 : savedConfig.tts_provider_id) || "auto";
+    if (prefId === "web_speech") {
+      const hasWebSpeech2 = typeof window !== "undefined" && "speechSynthesis" in window;
+      const status2 = {
+        providerId: "web_speech",
+        providerName: "Browser Web Speech API",
+        modelName: hasWebSpeech2 ? "System Voice Synthesizer" : "Unavailable",
+        engine: hasWebSpeech2 ? "web_speech" : "none",
+        speechSupported: hasWebSpeech2,
+        lastError: this.lastTTSStatus.lastError
+      };
+      this.lastTTSStatus = status2;
+      return status2;
+    }
+    const providers = await this.getAIProviders();
+    if (providers.length > 0) {
+      const explicit = prefId !== "auto" ? providers.find((p) => p.id === prefId) : void 0;
+      if (explicit) {
+        const status3 = {
+          providerId: explicit.id,
+          providerName: `${explicit.name}${explicit.isDefault ? " (MyPC Default)" : ""}`,
+          modelName: explicit.resolvedSpeechModel,
+          engine: explicit.tasks.speech ? "mypc_ai" : "web_speech",
+          speechSupported: explicit.tasks.speech,
+          lastError: explicit.tasks.speech ? this.lastTTSStatus.lastError : `${explicit.name} does not support TTS speech task; using Web Speech fallback.`
+        };
+        this.lastTTSStatus = status3;
+        return status3;
+      }
+      const defaultProv = providers.find((p) => p.isDefault);
+      if (defaultProv && defaultProv.tasks.speech) {
+        const status3 = {
+          providerId: defaultProv.id,
+          providerName: `${defaultProv.name} (MyPC Default)`,
+          modelName: defaultProv.resolvedSpeechModel,
+          engine: "mypc_ai",
+          speechSupported: true,
+          lastError: this.lastTTSStatus.lastError
+        };
+        this.lastTTSStatus = status3;
+        return status3;
+      }
+      const firstSpeechProv = providers.find((p) => p.tasks.speech);
+      if (firstSpeechProv) {
+        const status3 = {
+          providerId: firstSpeechProv.id,
+          providerName: `${firstSpeechProv.name} (Auto-selected for TTS)`,
+          modelName: firstSpeechProv.resolvedSpeechModel,
+          engine: "mypc_ai",
+          speechSupported: true,
+          lastError: defaultProv ? `Default provider (${defaultProv.name}) is chat-only; routed TTS to ${firstSpeechProv.name}.` : this.lastTTSStatus.lastError
+        };
+        this.lastTTSStatus = status3;
+        return status3;
+      }
+      const defLabel = defaultProv ? `${defaultProv.name} (${defaultProv.model || "chat-only"})` : providers[0].name;
+      const hasWebSpeech2 = typeof window !== "undefined" && "speechSynthesis" in window;
+      const status2 = {
+        providerId: (defaultProv == null ? void 0 : defaultProv.id) || providers[0].id,
+        providerName: `${defLabel} → Web Speech Fallback`,
+        modelName: hasWebSpeech2 ? "System Web Speech (No MyPC TTS Provider)" : "None",
+        engine: hasWebSpeech2 ? "web_speech" : "none",
+        speechSupported: false,
+        lastError: `Configured MyPC provider (${defLabel}) does not support TTS speech. Add a Gemini, OpenAI, or NVIDIA provider in MyPC AI settings for neural TTS.`
+      };
+      this.lastTTSStatus = status2;
+      return status2;
+    }
+    const hasWebSpeech = typeof window !== "undefined" && "speechSynthesis" in window;
+    const status = {
+      providerId: "web_speech",
+      providerName: hasWebSpeech ? "Browser Web Speech API" : "No TTS Engine Found",
+      modelName: hasWebSpeech ? "System Voice Synthesizer" : "None",
+      engine: hasWebSpeech ? "web_speech" : "none",
+      speechSupported: hasWebSpeech,
+      lastError: this.lastTTSStatus.lastError
+    };
+    this.lastTTSStatus = status;
+    return status;
+  }
+  getLastTTSStatus() {
+    return this.lastTTSStatus;
+  }
+  /**
+   * Detects current language directly from MyPC user basic configs (info.lang / MyPC.info().lang: 'en' | 'fr' | 'es' | 'ar'),
+   * with fallback to browser navigator.language.
+   */
+  getLanguage() {
+    var _a;
+    if (this.systemLang) {
+      return this.systemLang;
+    }
+    const MyPC = typeof window !== "undefined" ? window.MyPC : null;
+    try {
+      const infoObj = typeof (MyPC == null ? void 0 : MyPC.info) === "function" ? MyPC.info() : MyPC == null ? void 0 : MyPC.info;
+      const fromMyPC = this.normalizeLang(infoObj == null ? void 0 : infoObj.lang) || this.normalizeLang(infoObj == null ? void 0 : infoObj.language) || this.normalizeLang((_a = infoObj == null ? void 0 : infoObj.profile) == null ? void 0 : _a.lang) || this.normalizeLang(MyPC == null ? void 0 : MyPC.lang);
+      if (fromMyPC) {
+        this.systemLang = fromMyPC;
+        return fromMyPC;
+      }
+    } catch {
+    }
+    if (typeof navigator !== "undefined" && navigator.language) {
+      const fromNav = this.normalizeLang(navigator.language);
+      if (fromNav) {
+        return fromNav;
+      }
+    }
+    return "en";
+  }
+  stopSpeech() {
+    this.speechAbortId++;
+    if (this.activeAudioEl) {
+      try {
+        this.activeAudioEl.onended = null;
+        this.activeAudioEl.onerror = null;
+        this.activeAudioEl.pause();
+        this.activeAudioEl.src = "";
+      } catch {
+      }
+      this.activeAudioEl = null;
+    }
+    if (this.activeAudioUrl) {
+      try {
+        URL.revokeObjectURL(this.activeAudioUrl);
+      } catch {
+      }
+      this.activeAudioUrl = null;
+    }
+    if (this.activeSpeechSource) {
+      try {
+        this.activeSpeechSource.onended = null;
+        this.activeSpeechSource.stop();
+        this.activeSpeechSource.disconnect();
+      } catch {
+      }
+      this.activeSpeechSource = null;
+    }
+    if (typeof window !== "undefined" && "speechSynthesis" in window) {
+      try {
+        window.speechSynthesis.cancel();
+      } catch {
+      }
+    }
+  }
+  async playRawAudioBytes(bytes, mime, currentCallId, callbacks) {
+    var _a;
+    if (currentCallId !== this.speechAbortId) return false;
+    if (typeof window !== "undefined" && typeof Audio !== "undefined" && typeof (URL == null ? void 0 : URL.createObjectURL) === "function") {
+      try {
+        const blob = new Blob([bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)], {
+          type: mime || "audio/wav"
+        });
+        const url = URL.createObjectURL(blob);
+        this.activeAudioUrl = url;
+        const audio = new Audio(url);
+        this.activeAudioEl = audio;
+        const playedViaElement = await new Promise((resolve) => {
+          var _a2;
+          let started = false;
+          const cleanupUrl = () => {
+            if (this.activeAudioUrl === url) {
+              try {
+                URL.revokeObjectURL(url);
+              } catch {
+              }
+              this.activeAudioUrl = null;
+            }
+            if (this.activeAudioEl === audio) {
+              this.activeAudioEl = null;
+            }
+          };
+          audio.onended = () => {
+            var _a3;
+            cleanupUrl();
+            if (currentCallId === this.speechAbortId) {
+              (_a3 = callbacks == null ? void 0 : callbacks.onEnd) == null ? void 0 : _a3.call(callbacks);
+            }
+          };
+          audio.onerror = () => {
+            var _a3;
+            cleanupUrl();
+            if (!started) {
+              resolve(false);
+            } else if (currentCallId === this.speechAbortId) {
+              (_a3 = callbacks == null ? void 0 : callbacks.onEnd) == null ? void 0 : _a3.call(callbacks);
+            }
+          };
+          const playPromise = audio.play();
+          if (playPromise && typeof playPromise.then === "function") {
+            playPromise.then(() => {
+              var _a3;
+              if (currentCallId !== this.speechAbortId) {
+                cleanupUrl();
+                resolve(true);
+                return;
+              }
+              started = true;
+              (_a3 = callbacks == null ? void 0 : callbacks.onStart) == null ? void 0 : _a3.call(callbacks);
+              resolve(true);
+            }).catch(() => {
+              cleanupUrl();
+              resolve(false);
+            });
+          } else {
+            started = true;
+            (_a2 = callbacks == null ? void 0 : callbacks.onStart) == null ? void 0 : _a2.call(callbacks);
+            resolve(true);
+          }
+        });
+        if (playedViaElement) {
+          return true;
+        }
+      } catch {
+      }
+    }
+    const AudioCtxClass = typeof window !== "undefined" ? window.AudioContext || window.webkitAudioContext : null;
+    if (AudioCtxClass) {
+      try {
+        if (!this.speechCtx) {
+          this.speechCtx = new AudioCtxClass();
+        }
+        if (this.speechCtx.state === "suspended") {
+          await this.speechCtx.resume().catch(() => {
+          });
+        }
+        const bufferCopy = bytes.buffer.slice(
+          bytes.byteOffset,
+          bytes.byteOffset + bytes.byteLength
+        );
+        const decoded = await this.speechCtx.decodeAudioData(bufferCopy);
+        if (currentCallId !== this.speechAbortId) return true;
+        const src = this.speechCtx.createBufferSource();
+        src.buffer = decoded;
+        src.connect(this.speechCtx.destination);
+        this.activeSpeechSource = src;
+        (_a = callbacks == null ? void 0 : callbacks.onStart) == null ? void 0 : _a.call(callbacks);
+        src.onended = () => {
+          var _a2;
+          if (this.activeSpeechSource === src) {
+            this.activeSpeechSource = null;
+          }
+          if (currentCallId === this.speechAbortId) {
+            (_a2 = callbacks == null ? void 0 : callbacks.onEnd) == null ? void 0 : _a2.call(callbacks);
+          }
+        };
+        src.start(0);
+        return true;
+      } catch {
+      }
+    }
+    return false;
+  }
+  /**
+   * Speaks Checko's lesson text using MyPC.ai.generate({ provider, task: 'speech' }) as documented in MyPC SDK v2.8.0+,
+   * automatically routing to a speech-capable provider if the default provider is chat-only,
+   * and falling back to Web Speech API (speechSynthesis) if AI TTS is unavailable.
+   */
+  async speakText(text, lang = "en", callbacks, preferredProviderId) {
+    var _a, _b, _c, _d, _e, _f, _g;
+    this.stopSpeech();
+    const cleanText = text.trim();
+    if (!cleanText) {
+      (_a = callbacks == null ? void 0 : callbacks.onEnd) == null ? void 0 : _a.call(callbacks);
+      return;
+    }
+    const currentCallId = ++this.speechAbortId;
+    const localeMap = {
+      en: "en-US",
+      fr: "fr-FR",
+      es: "es-US",
+      ar: "ar-SA"
+    };
+    const locale = localeMap[lang] || "en-US";
+    const savedConfig = this.load("config", {});
+    const prefId = preferredProviderId || (savedConfig == null ? void 0 : savedConfig.tts_provider_id) || "auto";
+    const MyPC = typeof window !== "undefined" ? window.MyPC : null;
+    if (prefId !== "web_speech" && (MyPC == null ? void 0 : MyPC.ai) && typeof MyPC.ai.generate === "function") {
+      try {
+        const providers = await this.getAIProviders();
+        if (currentCallId !== this.speechAbortId) return;
+        const candidates = [];
+        if (prefId !== "auto") {
+          const chosen = providers.find((p) => p.id === prefId && p.tasks.speech);
+          if (chosen) candidates.push(chosen);
+        }
+        const defaultSpeech = providers.find((p) => p.isDefault && p.tasks.speech);
+        if (defaultSpeech && !candidates.some((c) => c.id === defaultSpeech.id)) {
+          candidates.push(defaultSpeech);
+        }
+        for (const p of providers) {
+          if (p.tasks.speech && !candidates.some((c) => c.id === p.id)) {
+            if (p.type === "nvidia" && lang === "ar" && providers.some((other) => other.tasks.speech && other.type !== "nvidia")) {
+              continue;
+            }
+            candidates.push(p);
+          }
+        }
+        const providerIdsToTry = candidates.length > 0 ? candidates.map((c) => c.id) : [void 0];
+        for (const candidateId of providerIdsToTry) {
+          const candidateInfo = candidates.find((c) => c.id === candidateId);
+          if ((candidateInfo == null ? void 0 : candidateInfo.type) === "nvidia" && lang === "ar") {
+            continue;
+          }
+          try {
+            const reqOpts = {
+              task: "speech",
+              output: "audio",
+              prompt: cleanText,
+              language: locale
+            };
+            if (candidateId) {
+              reqOpts.provider = candidateId;
+            }
+            const res = await MyPC.ai.generate(reqOpts);
+            if (currentCallId !== this.speechAbortId) return;
+            const audioPart = ((_b = res == null ? void 0 : res.parts) == null ? void 0 : _b.find((pt) => (pt == null ? void 0 : pt.type) === "audio" && (pt == null ? void 0 : pt.data))) || ((_c = res == null ? void 0 : res.parts) == null ? void 0 : _c[0]);
+            const rawBytes = toUint8Array(audioPart == null ? void 0 : audioPart.data);
+            if (rawBytes && rawBytes.byteLength > 0) {
+              const activeModel = (res == null ? void 0 : res.model) || (candidateInfo == null ? void 0 : candidateInfo.resolvedSpeechModel) || "MyPC Neural TTS";
+              const activeProvName = (candidateInfo == null ? void 0 : candidateInfo.name) || (res == null ? void 0 : res.provider) || "MyPC AI";
+              this.lastTTSStatus = {
+                providerId: candidateId || "auto",
+                providerName: activeProvName,
+                modelName: activeModel,
+                engine: "mypc_ai",
+                speechSupported: true,
+                lastError: void 0
+              };
+              const played = await this.playRawAudioBytes(
+                rawBytes,
+                (audioPart == null ? void 0 : audioPart.mime) || "audio/wav",
+                currentCallId,
+                callbacks
+              );
+              if (played) {
+                return;
+              }
+            }
+          } catch (genErr) {
+            const errMsg = (genErr == null ? void 0 : genErr.message) || String(genErr || "MyPC TTS error");
+            this.lastTTSStatus = {
+              ...this.lastTTSStatus,
+              lastError: errMsg
+            };
+          }
+        }
+      } catch (outerErr) {
+        if (currentCallId !== this.speechAbortId) return;
+        this.lastTTSStatus = {
+          ...this.lastTTSStatus,
+          lastError: (outerErr == null ? void 0 : outerErr.message) || String(outerErr || "MyPC AI unavailable")
+        };
+      }
+    }
+    try {
+      if (MyPC && typeof MyPC.announce === "function") {
+        MyPC.announce(cleanText);
+      }
+    } catch {
+    }
+    if (typeof window !== "undefined" && "speechSynthesis" in window) {
+      try {
+        window.speechSynthesis.cancel();
+        const utterance = new SpeechSynthesisUtterance(cleanText);
+        utterance.lang = locale;
+        utterance.rate = 0.98;
+        utterance.pitch = 1.08;
+        const voices = ((_e = (_d = window.speechSynthesis).getVoices) == null ? void 0 : _e.call(_d)) || [];
+        const matchingVoice = voices.find((v) => v.lang.toLowerCase().startsWith(lang)) || voices.find((v) => v.lang.toLowerCase().includes(lang));
+        if (matchingVoice) {
+          utterance.voice = matchingVoice;
+        }
+        this.lastTTSStatus = {
+          providerId: this.lastTTSStatus.providerId || "web_speech",
+          providerName: prefId === "web_speech" ? "Browser Web Speech API" : `${this.lastTTSStatus.providerName || "Web Speech"} (Fallback)`,
+          modelName: (matchingVoice == null ? void 0 : matchingVoice.name) || `Web Speech (${locale})`,
+          engine: "web_speech",
+          speechSupported: true,
+          lastError: this.lastTTSStatus.lastError
+        };
+        let started = false;
+        utterance.onstart = () => {
+          var _a2;
+          started = true;
+          if (currentCallId === this.speechAbortId) {
+            (_a2 = callbacks == null ? void 0 : callbacks.onStart) == null ? void 0 : _a2.call(callbacks);
+          }
+        };
+        utterance.onend = () => {
+          var _a2;
+          if (currentCallId === this.speechAbortId) {
+            (_a2 = callbacks == null ? void 0 : callbacks.onEnd) == null ? void 0 : _a2.call(callbacks);
+          }
+        };
+        utterance.onerror = () => {
+          var _a2;
+          if (currentCallId === this.speechAbortId) {
+            (_a2 = callbacks == null ? void 0 : callbacks.onEnd) == null ? void 0 : _a2.call(callbacks);
+          }
+        };
+        (_f = callbacks == null ? void 0 : callbacks.onStart) == null ? void 0 : _f.call(callbacks);
+        window.speechSynthesis.speak(utterance);
+        setTimeout(() => {
+          var _a2;
+          if (!started && currentCallId === this.speechAbortId) {
+            (_a2 = callbacks == null ? void 0 : callbacks.onEnd) == null ? void 0 : _a2.call(callbacks);
+          }
+        }, Math.min(5e3, Math.max(1800, cleanText.length * 55)));
+        return;
+      } catch {
+      }
+    }
+    (_g = callbacks == null ? void 0 : callbacks.onStart) == null ? void 0 : _g.call(callbacks);
+    setTimeout(() => {
+      var _a2;
+      if (currentCallId === this.speechAbortId) {
+        (_a2 = callbacks == null ? void 0 : callbacks.onEnd) == null ? void 0 : _a2.call(callbacks);
+      }
+    }, Math.min(4500, Math.max(1500, cleanText.length * 45)));
+  }
+}
+const myPCService = new MyPCService();
 const SettingsModal = ({
   settings,
   isIngame = false,
@@ -3703,6 +4474,7 @@ const SettingsModal = ({
     lichess_opponent_type: settings.lichess_opponent_type || "human",
     lichess_rated: settings.lichess_rated !== false,
     lichess_ai_level: settings.lichess_ai_level || 4,
+    tts_provider_id: settings.tts_provider_id || "auto",
     shortcuts: {
       flip: ((_a = settings.shortcuts) == null ? void 0 : _a.flip) || "f",
       pause: ((_b = settings.shortcuts) == null ? void 0 : _b.pause) || "p",
@@ -3713,6 +4485,60 @@ const SettingsModal = ({
     }
   });
   const [listeningKey, setListeningKey] = reactExports.useState(null);
+  const [aiProviders, setAiProviders] = reactExports.useState([]);
+  const [ttsStatus, setTtsStatus] = reactExports.useState(() => myPCService.getLastTTSStatus());
+  const [loadingProviders, setLoadingProviders] = reactExports.useState(false);
+  const [testingVoice, setTestingVoice] = reactExports.useState(false);
+  const refreshTTSInspector = reactExports.useCallback(async (prefId) => {
+    setLoadingProviders(true);
+    try {
+      const [provs, status] = await Promise.all([
+        myPCService.getAIProviders(),
+        myPCService.resolveTTSStatus(prefId)
+      ]);
+      setAiProviders(provs);
+      setTtsStatus(status);
+    } finally {
+      setLoadingProviders(false);
+    }
+  }, []);
+  reactExports.useEffect(() => {
+    refreshTTSInspector(current.tts_provider_id || "auto");
+  }, [current.tts_provider_id, refreshTTSInspector]);
+  const handleSelectTTSProvider = (providerId) => {
+    soundManager.playSound("select");
+    const updated = {
+      ...current,
+      tts_provider_id: providerId
+    };
+    setCurrent(updated);
+    onSave(updated);
+    refreshTTSInspector(providerId);
+  };
+  const handleTestCheckoVoice = async () => {
+    soundManager.playSound("click");
+    setTestingVoice(true);
+    const lang = myPCService.getLanguage();
+    const sampleMap = {
+      en: "Cock-a-doodle-doo! Hi, I am Checko! Your MyPC AI voice is ready for chess lessons.",
+      fr: "Cocorico ! Bonjour, je suis Checko ! Votre voix IA MyPC est prête pour les leçons.",
+      es: "¡Quiquiriquí! ¡Hola, soy Checko! Tu voz de IA en MyPC está lista para el ajedrez.",
+      ar: "كوكو ريكو! مرحباً، أنا تشيكو! صوت الذكاء الاصطناعي جاهز لدروس الشطرنج."
+    };
+    await myPCService.speakText(
+      sampleMap[lang] || sampleMap.en,
+      lang,
+      {
+        onStart: () => setTestingVoice(true),
+        onEnd: () => {
+          setTestingVoice(false);
+          setTtsStatus(myPCService.getLastTTSStatus());
+        }
+      },
+      current.tts_provider_id || "auto"
+    );
+    setTtsStatus(myPCService.getLastTTSStatus());
+  };
   reactExports.useEffect(() => {
     const timer = setTimeout(() => {
       const modal = document.querySelector('[data-tv-modal="true"]');
@@ -4179,6 +5005,42 @@ const SettingsModal = ({
                   children: /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "bg-white w-4 h-4 rounded-full shadow-md" })
                 }
               )
+            ] }),
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "p-3 rounded-2xl bg-slate-950/80 border border-amber-500/40 flex items-center justify-between gap-2", children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "min-w-0", children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "text-xs font-extrabold text-amber-300 flex items-center gap-1.5", children: [
+                  /* @__PURE__ */ jsxRuntimeExports.jsx(Sparkles, { size: 13, className: "text-amber-400 shrink-0" }),
+                  "Checko TTS AI Model: ",
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "font-mono text-white", children: ttsStatus.modelName })
+                ] }),
+                /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "text-[10px] text-slate-400 block truncate mt-0.5", children: [
+                  "Provider: ",
+                  ttsStatus.providerName
+                ] })
+              ] }),
+              /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center gap-1.5 shrink-0", children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsx(
+                  "button",
+                  {
+                    type: "button",
+                    onClick: handleTestCheckoVoice,
+                    className: "px-2.5 py-1.5 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 font-black text-[11px] transition-colors cursor-pointer",
+                    children: testingVoice ? "Speaking..." : "Test TTS"
+                  }
+                ),
+                /* @__PURE__ */ jsxRuntimeExports.jsx(
+                  "button",
+                  {
+                    type: "button",
+                    onClick: () => {
+                      soundManager.playSound("select");
+                      setActiveTab("ai");
+                    },
+                    className: "px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-[11px] border border-slate-700 transition-colors cursor-pointer",
+                    children: "Configure"
+                  }
+                )
+              ] })
             ] })
           ] }),
           activeTab === "scale" && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "flex flex-col gap-3", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "p-3 sm:p-4 rounded-2xl bg-slate-950/70 border border-slate-800/80", children: [
@@ -4392,6 +5254,123 @@ const SettingsModal = ({
             ] })
           ] }) }),
           activeTab === "ai" && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-col gap-3", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "p-3.5 rounded-2xl bg-slate-950/85 border border-amber-500/40 space-y-3", children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center justify-between gap-2", children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
+                  /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "text-xs uppercase font-bold tracking-wider text-amber-300 flex items-center gap-1.5", children: [
+                    /* @__PURE__ */ jsxRuntimeExports.jsx(Volume2, { size: 15, className: "text-amber-400" }),
+                    "MyPC TTS AI Model (Checko Voice)"
+                  ] }),
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-[11px] text-slate-400 mt-0.5", children: "Shows the selected MyPC AI provider and neural TTS model used when Checko speaks." })
+                ] }),
+                /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center gap-1.5 shrink-0", children: [
+                  /* @__PURE__ */ jsxRuntimeExports.jsx(
+                    "button",
+                    {
+                      type: "button",
+                      onClick: () => refreshTTSInspector(current.tts_provider_id || "auto"),
+                      className: "p-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition-colors cursor-pointer",
+                      title: "Refresh MyPC AI Providers",
+                      children: /* @__PURE__ */ jsxRuntimeExports.jsx(RefreshCw, { size: 13, className: loadingProviders ? "animate-spin" : "" })
+                    }
+                  ),
+                  /* @__PURE__ */ jsxRuntimeExports.jsx(
+                    "button",
+                    {
+                      type: "button",
+                      onClick: handleTestCheckoVoice,
+                      className: "px-3 py-1.5 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 font-black text-xs transition-colors cursor-pointer shadow",
+                      children: testingVoice ? "Speaking..." : "🔊 Test Voice"
+                    }
+                  )
+                ] })
+              ] }),
+              /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "p-2.5 rounded-xl bg-slate-900 border border-slate-800 grid grid-cols-1 sm:grid-cols-2 gap-2", children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-[10px] uppercase font-bold text-slate-400 block", children: "Selected MyPC Provider" }),
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-xs font-extrabold text-white truncate block mt-0.5", children: ttsStatus.providerName })
+                ] }),
+                /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-[10px] uppercase font-bold text-slate-400 block", children: "Selected TTS AI Model" }),
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-xs font-mono font-black text-emerald-400 truncate block mt-0.5", children: ttsStatus.modelName })
+                ] })
+              ] }),
+              /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "space-y-1.5", children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "text-[10px] uppercase font-bold text-slate-400 block", children: [
+                  "Choose TTS Engine / MyPC Provider (",
+                  aiProviders.length,
+                  " detected in MyPC)"
+                ] }),
+                /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "grid grid-cols-1 sm:grid-cols-2 gap-1.5", children: [
+                  /* @__PURE__ */ jsxRuntimeExports.jsxs(
+                    "button",
+                    {
+                      type: "button",
+                      onClick: () => handleSelectTTSProvider("auto"),
+                      className: `flex items-center justify-between p-2 rounded-xl border text-left transition-colors cursor-pointer ${(current.tts_provider_id || "auto") === "auto" ? "bg-amber-500/20 border-amber-400 text-white" : "bg-slate-900 border-slate-800 text-slate-300 hover:border-slate-700"}`,
+                      children: [
+                        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "min-w-0", children: [
+                          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "text-xs font-extrabold truncate", children: "Auto (Best MyPC TTS)" }),
+                          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "text-[10px] text-slate-400 truncate", children: "Uses MyPC speech provider + Web Speech fallback" })
+                        ] }),
+                        (current.tts_provider_id || "auto") === "auto" && /* @__PURE__ */ jsxRuntimeExports.jsx(Check, { size: 14, className: "text-amber-400 shrink-0 ml-1" })
+                      ]
+                    }
+                  ),
+                  /* @__PURE__ */ jsxRuntimeExports.jsxs(
+                    "button",
+                    {
+                      type: "button",
+                      onClick: () => handleSelectTTSProvider("web_speech"),
+                      className: `flex items-center justify-between p-2 rounded-xl border text-left transition-colors cursor-pointer ${current.tts_provider_id === "web_speech" ? "bg-amber-500/20 border-amber-400 text-white" : "bg-slate-900 border-slate-800 text-slate-300 hover:border-slate-700"}`,
+                      children: [
+                        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "min-w-0", children: [
+                          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "text-xs font-extrabold truncate", children: "Browser Web Speech" }),
+                          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "text-[10px] text-slate-400 truncate", children: "Offline device synthesizer (en/fr/es/ar)" })
+                        ] }),
+                        current.tts_provider_id === "web_speech" && /* @__PURE__ */ jsxRuntimeExports.jsx(Check, { size: 14, className: "text-amber-400 shrink-0 ml-1" })
+                      ]
+                    }
+                  ),
+                  aiProviders.map((prov) => {
+                    const isSelected = current.tts_provider_id === prov.id;
+                    return /* @__PURE__ */ jsxRuntimeExports.jsxs(
+                      "button",
+                      {
+                        type: "button",
+                        onClick: () => handleSelectTTSProvider(prov.id),
+                        className: `flex items-center justify-between p-2 rounded-xl border text-left transition-colors cursor-pointer ${isSelected ? "bg-amber-500/20 border-amber-400 text-white" : "bg-slate-900 border-slate-800 text-slate-300 hover:border-slate-700"}`,
+                        children: [
+                          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "min-w-0 pr-1", children: [
+                            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center gap-1.5", children: [
+                              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-xs font-extrabold truncate", children: prov.name }),
+                              prov.isDefault && /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "px-1.5 py-0.2 rounded bg-blue-500/20 text-blue-300 text-[9px] font-bold uppercase shrink-0", children: "Default" }),
+                              /* @__PURE__ */ jsxRuntimeExports.jsx(
+                                "span",
+                                {
+                                  className: `px-1.5 py-0.2 rounded text-[9px] font-bold uppercase shrink-0 ${prov.tasks.speech ? "bg-emerald-500/20 text-emerald-300" : "bg-slate-800 text-slate-400"}`,
+                                  children: prov.tasks.speech ? "TTS Ready" : "Chat Only"
+                                }
+                              )
+                            ] }),
+                            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "text-[10px] font-mono text-amber-300/90 truncate mt-0.5", children: [
+                              "Model: ",
+                              prov.resolvedSpeechModel
+                            ] })
+                          ] }),
+                          isSelected && /* @__PURE__ */ jsxRuntimeExports.jsx(Check, { size: 14, className: "text-amber-400 shrink-0" })
+                        ]
+                      },
+                      prov.id
+                    );
+                  })
+                ] })
+              ] }),
+              ttsStatus.lastError && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "px-2.5 py-1.5 rounded-lg bg-amber-950/60 border border-amber-500/30 text-[10px] text-amber-200", children: [
+                "Note: ",
+                ttsStatus.lastError
+              ] })
+            ] }),
             /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "p-3.5 rounded-2xl bg-slate-950/70 border border-slate-800/80 space-y-3", children: [
               /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
                 /* @__PURE__ */ jsxRuntimeExports.jsx("label", { className: "text-xs uppercase font-bold tracking-wider text-white flex items-center gap-1.5", children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "♞ Lichess Matchmaking Mode" }) }),
@@ -4567,418 +5546,6 @@ const SettingsModal = ({
     }
   );
 };
-class MyPCService {
-  constructor() {
-    __publicField(this, "isMyPCAvailable", false);
-    __publicField(this, "initialized", false);
-    __publicField(this, "isReady", false);
-    __publicField(this, "pendingSaves", /* @__PURE__ */ new Map());
-    __publicField(this, "profileName", "Player 1");
-    __publicField(this, "systemLang", null);
-    __publicField(this, "currentHandlers", {});
-    __publicField(this, "speechCtx", null);
-    __publicField(this, "activeSpeechSource", null);
-    __publicField(this, "speechAbortId", 0);
-    this.checkAvailability();
-  }
-  checkAvailability() {
-    if (typeof window !== "undefined" && window.MyPC) {
-      this.isMyPCAvailable = true;
-    }
-  }
-  setInputHandler(handler) {
-    this.currentHandlers.onInput = handler;
-  }
-  flushPendingSaves() {
-    if (!this.isReady || this.pendingSaves.size === 0) return;
-    const MyPC = typeof window !== "undefined" ? window.MyPC : null;
-    if (MyPC && typeof MyPC.save === "function") {
-      this.pendingSaves.forEach((val, key) => {
-        try {
-          MyPC.save(key, val);
-        } catch {
-        }
-      });
-    }
-    this.pendingSaves.clear();
-  }
-  normalizeLang(raw) {
-    if (!raw || typeof raw !== "string") return null;
-    const prefix = raw.trim().slice(0, 2).toLowerCase();
-    if (prefix === "en" || prefix === "fr" || prefix === "es" || prefix === "ar") {
-      return prefix;
-    }
-    return null;
-  }
-  init(handlers) {
-    this.currentHandlers = { ...this.currentHandlers, ...handlers };
-    if (typeof window === "undefined") return;
-    if (this.initialized) return;
-    this.initialized = true;
-    const MyPC = window.MyPC;
-    if (MyPC && typeof MyPC.init === "function") {
-      this.isMyPCAvailable = true;
-      MyPC.init({
-        onInit: (info) => {
-          var _a, _b, _c, _d, _e;
-          this.isReady = true;
-          this.flushPendingSaves();
-          if ((_a = info == null ? void 0 : info.profile) == null ? void 0 : _a.name) {
-            this.profileName = info.profile.name;
-          }
-          const detectedLang = this.normalizeLang(info == null ? void 0 : info.lang) || this.normalizeLang(info == null ? void 0 : info.language) || this.normalizeLang((_b = info == null ? void 0 : info.profile) == null ? void 0 : _b.lang);
-          if (detectedLang) {
-            this.systemLang = detectedLang;
-          }
-          (_d = (_c = this.currentHandlers).onInit) == null ? void 0 : _d.call(_c, info);
-          (_e = MyPC.ready) == null ? void 0 : _e.call(MyPC);
-        },
-        onStart: () => {
-          var _a, _b;
-          (_b = (_a = this.currentHandlers).onStart) == null ? void 0 : _b.call(_a);
-        },
-        onPause: () => {
-          var _a, _b;
-          (_b = (_a = this.currentHandlers).onPause) == null ? void 0 : _b.call(_a);
-        },
-        onResume: () => {
-          var _a, _b;
-          (_b = (_a = this.currentHandlers).onResume) == null ? void 0 : _b.call(_a);
-        },
-        onDestroy: () => {
-          var _a, _b;
-          (_b = (_a = this.currentHandlers).onDestroy) == null ? void 0 : _b.call(_a);
-        },
-        onInput: (action, pressed, repeat, dev) => {
-          var _a, _b;
-          (_b = (_a = this.currentHandlers).onInput) == null ? void 0 : _b.call(_a, action, pressed, repeat, dev);
-        },
-        onMenu: (id) => {
-          var _a, _b;
-          (_b = (_a = this.currentHandlers).onMenu) == null ? void 0 : _b.call(_a, id);
-        },
-        ownMenu: true
-      });
-    } else {
-      setTimeout(() => {
-        var _a, _b, _c, _d;
-        this.isReady = true;
-        (_b = (_a = this.currentHandlers).onInit) == null ? void 0 : _b.call(_a, { standalone: true, profile: { name: "Player 1" } });
-        (_d = (_c = this.currentHandlers).onStart) == null ? void 0 : _d.call(_c);
-      }, 50);
-    }
-  }
-  getAppConfig() {
-    var _a;
-    if (typeof window !== "undefined" && ((_a = window.MyPC) == null ? void 0 : _a.app_config)) {
-      return window.MyPC.app_config;
-    }
-    return {};
-  }
-  getProfileName() {
-    return this.profileName;
-  }
-  setProfileName(name) {
-    this.profileName = name;
-  }
-  save(key, value) {
-    const MyPC = typeof window !== "undefined" ? window.MyPC : null;
-    if (MyPC && typeof MyPC.save === "function") {
-      if (this.isReady) {
-        try {
-          MyPC.save(key, value);
-        } catch {
-        }
-      } else {
-        this.pendingSaves.set(key, value);
-      }
-    }
-    try {
-      localStorage.setItem(`mypc_chess_${key}`, JSON.stringify(value));
-    } catch {
-    }
-  }
-  remove(key) {
-    this.pendingSaves.delete(key);
-    const MyPC = typeof window !== "undefined" ? window.MyPC : null;
-    if (MyPC && typeof MyPC.save === "function" && this.isReady) {
-      try {
-        MyPC.save(key, "");
-      } catch {
-      }
-    }
-    try {
-      localStorage.removeItem(`mypc_chess_${key}`);
-    } catch {
-    }
-  }
-  load(key, defaultValue) {
-    const MyPC = typeof window !== "undefined" ? window.MyPC : null;
-    if (this.isReady && MyPC && typeof MyPC.load === "function") {
-      try {
-        const loaded = MyPC.load(key, void 0);
-        if (loaded !== void 0 && loaded !== null && loaded !== "") {
-          try {
-            localStorage.setItem(`mypc_chess_${key}`, JSON.stringify(loaded));
-          } catch {
-          }
-          return loaded;
-        }
-      } catch {
-      }
-    }
-    try {
-      const stored = localStorage.getItem(`mypc_chess_${key}`);
-      if (stored !== null) {
-        const parsed = JSON.parse(stored);
-        if (parsed !== void 0 && parsed !== null && parsed !== "") {
-          if (this.isReady && MyPC && typeof MyPC.save === "function") {
-            try {
-              MyPC.save(key, parsed);
-            } catch {
-            }
-          }
-          return parsed;
-        }
-      }
-    } catch {
-    }
-    return defaultValue;
-  }
-  submitScore(score, meta) {
-    const MyPC = window.MyPC;
-    if (MyPC && typeof MyPC.submitScore === "function") {
-      try {
-        MyPC.submitScore(score, meta);
-      } catch {
-      }
-    }
-  }
-  triggerSystemPause() {
-    const MyPC = typeof window !== "undefined" ? window.MyPC : null;
-    if (MyPC && typeof MyPC.pause === "function") {
-      try {
-        MyPC.pause();
-        return true;
-      } catch {
-      }
-    }
-    return false;
-  }
-  isMultiplayerSupported() {
-    const MyPC = window.MyPC;
-    return !!((MyPC == null ? void 0 : MyPC.multiplayer) && MyPC.multiplayer.supported);
-  }
-  async hostOnlineGame() {
-    var _a;
-    const MyPC = window.MyPC;
-    if ((_a = MyPC == null ? void 0 : MyPC.multiplayer) == null ? void 0 : _a.host) {
-      return MyPC.multiplayer.host({ max: 1 });
-    }
-    throw new Error("MyPC Multiplayer not supported");
-  }
-  async joinOnlineGame() {
-    var _a;
-    const MyPC = window.MyPC;
-    if ((_a = MyPC == null ? void 0 : MyPC.multiplayer) == null ? void 0 : _a.join) {
-      return MyPC.multiplayer.join();
-    }
-    throw new Error("MyPC Multiplayer not supported");
-  }
-  /**
-   * Executes CORS-friendly fetch for Lichess API (which natively sends Access-Control-Allow-Origin: *
-   * and supports NDJSON ReadableStreams), with fallback to MyPC.net.fetch on restricted TV WebViews.
-   */
-  async proxyFetch(url, options = {}) {
-    try {
-      return await fetch(url, {
-        ...options,
-        mode: "cors",
-        credentials: "omit"
-      });
-    } catch (fetchErr) {
-      if ((fetchErr == null ? void 0 : fetchErr.name) === "AbortError") {
-        throw fetchErr;
-      }
-      const MyPC = typeof window !== "undefined" ? window.MyPC : null;
-      if ((MyPC == null ? void 0 : MyPC.net) && typeof MyPC.net.fetch === "function") {
-        const r = await MyPC.net.fetch(url, {
-          method: options.method || "GET",
-          headers: options.headers || {},
-          body: options.body,
-          responseType: "text"
-        });
-        const bodyText = typeof r.text === "function" ? r.text() : String(r.body ?? "");
-        return new Response(bodyText, {
-          status: r.status || 200,
-          statusText: r.statusText || "",
-          headers: r.headers || {}
-        });
-      }
-      throw fetchErr;
-    }
-  }
-  /**
-   * Detects current language directly from MyPC user basic configs (info.lang / MyPC.info().lang: 'en' | 'fr' | 'es' | 'ar'),
-   * with fallback to browser navigator.language.
-   */
-  getLanguage() {
-    var _a;
-    if (this.systemLang) {
-      return this.systemLang;
-    }
-    const MyPC = typeof window !== "undefined" ? window.MyPC : null;
-    try {
-      const infoObj = typeof (MyPC == null ? void 0 : MyPC.info) === "function" ? MyPC.info() : MyPC == null ? void 0 : MyPC.info;
-      const fromMyPC = this.normalizeLang(infoObj == null ? void 0 : infoObj.lang) || this.normalizeLang(infoObj == null ? void 0 : infoObj.language) || this.normalizeLang((_a = infoObj == null ? void 0 : infoObj.profile) == null ? void 0 : _a.lang) || this.normalizeLang(MyPC == null ? void 0 : MyPC.lang);
-      if (fromMyPC) {
-        this.systemLang = fromMyPC;
-        return fromMyPC;
-      }
-    } catch {
-    }
-    if (typeof navigator !== "undefined" && navigator.language) {
-      const fromNav = this.normalizeLang(navigator.language);
-      if (fromNav) {
-        return fromNav;
-      }
-    }
-    return "en";
-  }
-  stopSpeech() {
-    this.speechAbortId++;
-    if (this.activeSpeechSource) {
-      try {
-        this.activeSpeechSource.onended = null;
-        this.activeSpeechSource.stop();
-        this.activeSpeechSource.disconnect();
-      } catch {
-      }
-      this.activeSpeechSource = null;
-    }
-    if (typeof window !== "undefined" && "speechSynthesis" in window) {
-      try {
-        window.speechSynthesis.cancel();
-      } catch {
-      }
-    }
-  }
-  /**
-   * Speaks Checko's lesson text using MyPC.ai.generate({ task: 'speech' }) as documented in MyPC SDK v2.8.0+,
-   * with automatic fallback to Web Speech API (speechSynthesis) and MyPC.announce() if AI TTS is unavailable.
-   */
-  async speakText(text, lang = "en", callbacks) {
-    var _a, _b, _c, _d, _e, _f, _g;
-    this.stopSpeech();
-    const cleanText = text.trim();
-    if (!cleanText) {
-      (_a = callbacks == null ? void 0 : callbacks.onEnd) == null ? void 0 : _a.call(callbacks);
-      return;
-    }
-    const currentCallId = ++this.speechAbortId;
-    const localeMap = {
-      en: "en-US",
-      fr: "fr-FR",
-      es: "es-US",
-      ar: "ar-SA"
-    };
-    const locale = localeMap[lang] || "en-US";
-    const MyPC = typeof window !== "undefined" ? window.MyPC : null;
-    if ((MyPC == null ? void 0 : MyPC.ai) && typeof MyPC.ai.generate === "function") {
-      try {
-        const res = await MyPC.ai.generate({
-          task: "speech",
-          prompt: cleanText,
-          language: locale
-        });
-        if (currentCallId !== this.speechAbortId) return;
-        const audioPart = (_b = res == null ? void 0 : res.parts) == null ? void 0 : _b[0];
-        if (audioPart && audioPart.data) {
-          const AudioCtxClass = window.AudioContext || window.webkitAudioContext;
-          if (AudioCtxClass) {
-            if (!this.speechCtx) {
-              this.speechCtx = new AudioCtxClass();
-            }
-            if (this.speechCtx.state === "suspended") {
-              await this.speechCtx.resume().catch(() => {
-              });
-            }
-            const bufferCopy = audioPart.data instanceof ArrayBuffer ? audioPart.data.slice(0) : new Uint8Array(audioPart.data).buffer.slice(0);
-            const decoded = await this.speechCtx.decodeAudioData(bufferCopy);
-            if (currentCallId !== this.speechAbortId) return;
-            const src = this.speechCtx.createBufferSource();
-            src.buffer = decoded;
-            src.connect(this.speechCtx.destination);
-            this.activeSpeechSource = src;
-            (_c = callbacks == null ? void 0 : callbacks.onStart) == null ? void 0 : _c.call(callbacks);
-            src.onended = () => {
-              var _a2;
-              if (this.activeSpeechSource === src) {
-                this.activeSpeechSource = null;
-              }
-              if (currentCallId === this.speechAbortId) {
-                (_a2 = callbacks == null ? void 0 : callbacks.onEnd) == null ? void 0 : _a2.call(callbacks);
-              }
-            };
-            src.start(0);
-            return;
-          }
-        }
-      } catch {
-        if (currentCallId !== this.speechAbortId) return;
-      }
-    }
-    try {
-      if (MyPC && typeof MyPC.announce === "function") {
-        MyPC.announce(cleanText);
-      }
-    } catch {
-    }
-    if (typeof window !== "undefined" && "speechSynthesis" in window) {
-      try {
-        const utterance = new SpeechSynthesisUtterance(cleanText);
-        utterance.lang = locale;
-        utterance.rate = 0.98;
-        utterance.pitch = 1.08;
-        const voices = ((_e = (_d = window.speechSynthesis).getVoices) == null ? void 0 : _e.call(_d)) || [];
-        const matchingVoice = voices.find((v) => v.lang.toLowerCase().startsWith(lang)) || voices.find((v) => v.lang.toLowerCase().includes(lang));
-        if (matchingVoice) {
-          utterance.voice = matchingVoice;
-        }
-        utterance.onstart = () => {
-          var _a2;
-          if (currentCallId === this.speechAbortId) {
-            (_a2 = callbacks == null ? void 0 : callbacks.onStart) == null ? void 0 : _a2.call(callbacks);
-          }
-        };
-        utterance.onend = () => {
-          var _a2;
-          if (currentCallId === this.speechAbortId) {
-            (_a2 = callbacks == null ? void 0 : callbacks.onEnd) == null ? void 0 : _a2.call(callbacks);
-          }
-        };
-        utterance.onerror = () => {
-          var _a2;
-          if (currentCallId === this.speechAbortId) {
-            (_a2 = callbacks == null ? void 0 : callbacks.onEnd) == null ? void 0 : _a2.call(callbacks);
-          }
-        };
-        (_f = callbacks == null ? void 0 : callbacks.onStart) == null ? void 0 : _f.call(callbacks);
-        window.speechSynthesis.speak(utterance);
-        return;
-      } catch {
-      }
-    }
-    (_g = callbacks == null ? void 0 : callbacks.onStart) == null ? void 0 : _g.call(callbacks);
-    setTimeout(() => {
-      var _a2;
-      if (currentCallId === this.speechAbortId) {
-        (_a2 = callbacks == null ? void 0 : callbacks.onEnd) == null ? void 0 : _a2.call(callbacks);
-      }
-    }, Math.min(4500, Math.max(1500, cleanText.length * 45)));
-  }
-}
-const myPCService = new MyPCService();
 const MultiplayerModal = ({
   onHost,
   onJoin,
@@ -5117,9 +5684,11 @@ class LichessService {
     __publicField(this, "streamManuallyStopped", false);
     __publicField(this, "reconnectTimeoutId", null);
     __publicField(this, "reconnectCountdownId", null);
+    __publicField(this, "gameFastSyncIntervalId", null);
     __publicField(this, "onlineReconnectListener", null);
     __publicField(this, "puzzleIndex", 0);
     __publicField(this, "endedGameIds", /* @__PURE__ */ new Set());
+    __publicField(this, "matchedGamePreviews", /* @__PURE__ */ new Map());
   }
   /**
    * Marks a Lichess game ID as ended/resigned/aborted/dismissed so it never reappears in ongoing games.
@@ -5320,11 +5889,11 @@ class LichessService {
     return false;
   }
   /**
-   * Fetch all ongoing games for the authenticated Lichess user (/api/account/playing)
-   * Allows continuing any game started on phone, PC, or TV.
+  /**
+   * Fetch raw nowPlaying entries directly from /api/account/playing without local TTL filtering.
+   * Used before starting a new seek so pre-existing stale games are always excluded.
    */
-  async fetchOngoingGames(explicitToken) {
-    var _a, _b, _c, _d, _e, _f, _g, _h;
+  async fetchRawNowPlaying(explicitToken) {
     if (explicitToken !== void 0 && explicitToken.trim()) {
       this.setToken(explicitToken);
     }
@@ -5341,7 +5910,20 @@ class LichessService {
       }
       if (!res.ok) return [];
       const data = await res.json();
-      const nowPlaying = Array.isArray(data == null ? void 0 : data.nowPlaying) ? data.nowPlaying : [];
+      return Array.isArray(data == null ? void 0 : data.nowPlaying) ? data.nowPlaying : [];
+    } catch {
+      return [];
+    }
+  }
+  /**
+   * Fetch all ongoing games for the authenticated Lichess user (/api/account/playing)
+   * Allows continuing any game started on phone, PC, or TV.
+   */
+  async fetchOngoingGames(explicitToken, includeFreshMoveZero = false) {
+    var _a, _b, _c, _d, _e, _f, _g, _h;
+    const nowPlaying = await this.fetchRawNowPlaying(explicitToken);
+    if (nowPlaying.length === 0) return [];
+    try {
       const now = Date.now();
       const activityMap = myPCService.load(
         "lichess_ongoing_activity",
@@ -5369,7 +5951,7 @@ class LichessService {
         }
         const fenStr = g.fen && g.fen !== "startpos" ? g.fen : defaultStartFen;
         const lastMoveStr = (g.lastMove || "").trim();
-        if (!lastMoveStr && fenStr === defaultStartFen) {
+        if (!includeFreshMoveZero && !lastMoveStr && fenStr === defaultStartFen) {
           continue;
         }
         try {
@@ -5665,6 +6247,7 @@ class LichessService {
    * Start a Lichess Game vs Lichess AI (Stockfish Level 1-8) with clock
    */
   async createAIChallenge(level, clockMinutes, clockIncrement, color = "random") {
+    var _a;
     const tok = this.getToken();
     if (!tok) {
       throw new Error("Please set your Lichess Personal API Token first.");
@@ -5712,13 +6295,32 @@ class LichessService {
     if (!(data == null ? void 0 : data.id)) {
       throw new Error("No game ID returned from Lichess.");
     }
+    const assignedColor = data.player === "black" || data.color === "black" ? "b" : "w";
+    const initMs = Math.max(3e4, Math.round(limitSec * 1e3));
+    const incMs = Math.max(0, Math.round(incSec * 1e3));
+    this.matchedGamePreviews.set(data.id, {
+      gameId: data.id,
+      myColor: assignedColor,
+      opponentName: `Lichess AI Lv.${Math.max(1, Math.min(8, level))}`,
+      wtime: initMs,
+      btime: initMs,
+      winc: incMs,
+      binc: incMs,
+      clockInitialSec: limitSec,
+      clockIncrementSec: incSec,
+      rated: false,
+      speed: data.speed || ((_a = data.perf) == null ? void 0 : _a.name) || "rapid",
+      opponentConfirmed: true
+    });
     return data.id;
   }
   /**
    * Seek a real-time human opponent on Lichess via Board API (/api/board/seek)
-   * Listen to /api/stream/event concurrently to capture the started gameId.
+   * Listen to /api/stream/event AND poll /api/account/playing (with includeFreshMoveZero = true)
+   * concurrently to capture the started gameId and opponent metadata immediately.
    */
   async seekHumanMatch(minutes, increment, rated, onStatus) {
+    var _a, _b, _c;
     const tok = this.getToken();
     if (!tok) {
       throw new Error("Please set your Lichess Personal API Token first.");
@@ -5731,9 +6333,115 @@ class LichessService {
     this.cancelSeek();
     const controller = new AbortController();
     this.seekAbortController = controller;
-    onStatus(`Opening Lichess event stream & seeking ${minutes}+${increment} (${rated ? "Rated" : "Casual"})...`);
+    const estSec = Math.round(minutes * 60 + increment * 40);
+    const expectedSpeed = estSec < 180 ? "bullet" : estSec < 480 ? "blitz" : estSec < 1500 ? "rapid" : "classical";
+    const existingIds = /* @__PURE__ */ new Set();
+    try {
+      const rawOngoing = await this.fetchRawNowPlaying(tok);
+      const defaultStartFen = new Chess().fen();
+      for (const g of rawOngoing) {
+        const rawId = String(g.gameId || ((_a = g.fullId) == null ? void 0 : _a.slice(0, 8)) || "").trim();
+        if (rawId) {
+          existingIds.add(rawId);
+          const isAi = g.source === "ai" || Boolean((_b = g.opponent) == null ? void 0 : _b.ai) || String(((_c = g.opponent) == null ? void 0 : _c.username) || "").toLowerCase().includes("stockfish");
+          const hasNoMoves = !g.lastMove && (!g.fen || g.fen === "startpos" || g.fen === defaultStartFen);
+          if (isAi && hasNoMoves) {
+            this.markGameEnded(rawId);
+            this.abortBoardGame(rawId).catch(() => {
+            });
+          }
+        }
+      }
+    } catch {
+    }
+    const isValidHumanSeekCandidate = (g, candidateId) => {
+      var _a2, _b2, _c2;
+      const cleanId = (candidateId || "").trim();
+      if (!cleanId) return false;
+      if (existingIds.has(cleanId) || this.isGameMarkedEnded(cleanId)) {
+        return false;
+      }
+      const oppNameLower = String(
+        ((_a2 = g.opponent) == null ? void 0 : _a2.username) || g.opponentName || ""
+      ).toLowerCase();
+      const isAiGame = g.source === "ai" || Boolean((_b2 = g.opponent) == null ? void 0 : _b2.ai) || oppNameLower.includes("stockfish") || oppNameLower.includes("lichess ai");
+      if (isAiGame) {
+        this.markGameEnded(cleanId);
+        return false;
+      }
+      const rawSpeed = String(
+        typeof g.speed === "string" ? g.speed : typeof g.perf === "string" ? g.perf : ((_c2 = g.perf) == null ? void 0 : _c2.name) || ""
+      ).toLowerCase();
+      if (rawSpeed && (rawSpeed === "bullet" || rawSpeed === "blitz" || rawSpeed !== expectedSpeed && rawSpeed !== "correspondence")) {
+        return false;
+      }
+      return true;
+    };
+    onStatus(
+      `Seeking opponent in Lichess ${minutes}+${increment} ${rated ? "Rated" : "Casual"} pool...`
+    );
+    let pollTimerId = null;
+    const clearPoll = () => {
+      if (pollTimerId !== null) {
+        clearInterval(pollTimerId);
+        pollTimerId = null;
+      }
+    };
+    controller.signal.addEventListener("abort", clearPoll, { once: true });
+    const defaultInitMs = Math.max(3e4, Math.round(minutes * 60 * 1e3));
+    const defaultIncMs = Math.max(0, Math.round(increment * 1e3));
     const gameIdPromise = new Promise(async (resolve, reject) => {
-      var _a;
+      let resolved = false;
+      const finishWithGameId = (id, preview) => {
+        if (resolved || !id) return;
+        resolved = true;
+        if (preview) {
+          this.matchedGamePreviews.set(id, preview);
+        }
+        clearPoll();
+        this.cancelSeek();
+        resolve(id);
+      };
+      pollTimerId = window.setInterval(async () => {
+        var _a2, _b2, _c2;
+        if (controller.signal.aborted || resolved) {
+          clearPoll();
+          return;
+        }
+        try {
+          const rawPlaying = await this.fetchRawNowPlaying(tok);
+          const newlyStarted = rawPlaying.find((g) => {
+            var _a3;
+            const gId = String(g.gameId || ((_a3 = g.fullId) == null ? void 0 : _a3.slice(0, 8)) || "").trim();
+            return isValidHumanSeekCandidate(g, gId);
+          });
+          if (newlyStarted) {
+            const matchedId = String(
+              newlyStarted.gameId || ((_a2 = newlyStarted.fullId) == null ? void 0 : _a2.slice(0, 8)) || ""
+            ).trim();
+            const assignedColor = newlyStarted.color === "black" ? "b" : "w";
+            const oppName = ((_b2 = newlyStarted.opponent) == null ? void 0 : _b2.username) || "Lichess Opponent";
+            const initClockMs = typeof newlyStarted.secondsLeft === "number" && newlyStarted.secondsLeft > 0 ? newlyStarted.secondsLeft * 1e3 : defaultInitMs;
+            finishWithGameId(matchedId, {
+              gameId: matchedId,
+              myColor: assignedColor,
+              opponentName: oppName,
+              opponentRating: (_c2 = newlyStarted.opponent) == null ? void 0 : _c2.rating,
+              wtime: initClockMs,
+              btime: initClockMs,
+              winc: defaultIncMs,
+              binc: defaultIncMs,
+              clockInitialSec: Math.round(minutes * 60),
+              clockIncrementSec: Math.round(increment),
+              rated: newlyStarted.rated ?? rated,
+              speed: newlyStarted.speed || newlyStarted.perf || expectedSpeed,
+              movesUci: newlyStarted.lastMove || "",
+              opponentConfirmed: true
+            });
+          }
+        } catch {
+        }
+      }, 1500);
       try {
         const eventRes = await myPCService.proxyFetch(`${LICHESS_BASE}/api/stream/event`, {
           method: "GET",
@@ -5741,6 +6449,7 @@ class LichessService {
           signal: controller.signal
         });
         if (eventRes.status === 401) {
+          clearPoll();
           this.clearInvalidToken();
           controller.abort();
           reject(
@@ -5751,35 +6460,67 @@ class LichessService {
           return;
         }
         if (!eventRes.ok || !eventRes.body) {
-          reject(new Error(`Event stream failed (${eventRes.status})`));
           return;
         }
         const reader = eventRes.body.getReader();
         const decoder = new TextDecoder();
         let buffer = "";
-        while (true) {
+        const parseEventLine = (trimmed) => {
+          var _a2, _b2, _c2, _d;
+          if (!trimmed) return false;
+          try {
+            const evt = JSON.parse(trimmed);
+            if (evt.type === "gameStart" && (((_a2 = evt.game) == null ? void 0 : _a2.id) || ((_b2 = evt.game) == null ? void 0 : _b2.gameId))) {
+              const g = evt.game;
+              const matchedId = String(g.id || g.gameId || "").trim();
+              if (!isValidHumanSeekCandidate(g, matchedId)) {
+                existingIds.add(matchedId);
+                return false;
+              }
+              const assignedColor = g.color === "black" ? "b" : "w";
+              const oppName = ((_c2 = g.opponent) == null ? void 0 : _c2.username) || "Lichess Opponent";
+              const initClockMs = typeof g.secondsLeft === "number" && g.secondsLeft > 0 ? g.secondsLeft * 1e3 : defaultInitMs;
+              finishWithGameId(matchedId, {
+                gameId: matchedId,
+                myColor: assignedColor,
+                opponentName: oppName,
+                opponentRating: (_d = g.opponent) == null ? void 0 : _d.rating,
+                wtime: initClockMs,
+                btime: initClockMs,
+                winc: defaultIncMs,
+                binc: defaultIncMs,
+                clockInitialSec: Math.round(minutes * 60),
+                clockIncrementSec: Math.round(increment),
+                rated: g.rated ?? rated,
+                speed: g.speed || g.perf || expectedSpeed,
+                movesUci: g.lastMove || "",
+                opponentConfirmed: true
+              });
+              return true;
+            }
+          } catch {
+          }
+          return false;
+        };
+        while (!resolved) {
           const { value, done } = await reader.read();
           if (done) break;
           buffer += decoder.decode(value, { stream: true });
           const lines = buffer.split("\n");
           buffer = lines.pop() || "";
           for (const line of lines) {
-            const trimmed = line.trim();
-            if (!trimmed) continue;
-            try {
-              const evt = JSON.parse(trimmed);
-              if (evt.type === "gameStart" && ((_a = evt.game) == null ? void 0 : _a.id)) {
-                resolve(evt.game.id);
-                return;
-              }
-            } catch {
+            if (parseEventLine(line.trim())) return;
+          }
+          const rem = buffer.trim();
+          if (rem.startsWith("{") && rem.endsWith("}")) {
+            if (parseEventLine(rem)) {
+              buffer = "";
+              return;
             }
           }
         }
       } catch (err) {
-        if ((err == null ? void 0 : err.name) !== "AbortError") {
-          reject(err);
-        }
+        if ((err == null ? void 0 : err.name) !== "AbortError" && !resolved) ;
       }
     });
     const body = new URLSearchParams();
@@ -5795,6 +6536,7 @@ class LichessService {
         signal: controller.signal
       });
       if (seekRes.status === 401) {
+        clearPoll();
         this.clearInvalidToken();
         controller.abort();
         throw new Error(
@@ -5802,6 +6544,7 @@ class LichessService {
         );
       }
       if (!seekRes.ok) {
+        clearPoll();
         let errDetail = "";
         try {
           const errJson = await seekRes.json();
@@ -5845,27 +6588,138 @@ class LichessService {
   }
   /**
    * Stream an active Lichess Board game (/api/board/game/stream/{gameId})
-   * Includes automatic 10-second reconnect loop and instant reconnection on Wi-Fi recovery.
+   * Immediately applies cached gameStart preview + parallel /api/account/playing fast JSON sync
+   * so the board never hangs on "Opponent Found! Syncing Board...", and includes automatic reconnect.
    */
   async streamBoardGame(gameId, myUserId, onUpdate, onError, onChatLine, onStreamStatus) {
+    this.cancelSeek();
     this.stopGameStream();
     this.streamManuallyStopped = false;
+    let resolvedAccountUser = myUserId && myUserId.toLowerCase() !== "me" && myUserId.toLowerCase() !== "player 1" && myUserId.toLowerCase() !== "lichess player" ? myUserId : this.getUsername();
+    const cachedPreview = this.matchedGamePreviews.get(gameId);
     let currentState = {
       gameId,
-      myColor: "w",
-      myUsername: myUserId || this.getUsername() || "Lichess Player",
-      opponentName: "Lichess Opponent",
-      initialFen: "startpos",
-      movesUci: "",
-      wtime: 6e5,
-      btime: 6e5,
-      winc: 0,
-      binc: 0,
+      myColor: (cachedPreview == null ? void 0 : cachedPreview.myColor) || "w",
+      myUsername: resolvedAccountUser || this.getUsername() || "Lichess Player",
+      opponentName: (cachedPreview == null ? void 0 : cachedPreview.opponentName) || "Matching Opponent...",
+      opponentRating: cachedPreview == null ? void 0 : cachedPreview.opponentRating,
+      initialFen: (cachedPreview == null ? void 0 : cachedPreview.initialFen) || "startpos",
+      movesUci: (cachedPreview == null ? void 0 : cachedPreview.movesUci) || "",
+      wtime: (cachedPreview == null ? void 0 : cachedPreview.wtime) ?? 6e5,
+      btime: (cachedPreview == null ? void 0 : cachedPreview.btime) ?? 6e5,
+      winc: (cachedPreview == null ? void 0 : cachedPreview.winc) ?? 0,
+      binc: (cachedPreview == null ? void 0 : cachedPreview.binc) ?? 0,
+      clockInitialSec: cachedPreview == null ? void 0 : cachedPreview.clockInitialSec,
+      clockIncrementSec: cachedPreview == null ? void 0 : cachedPreview.clockIncrementSec,
       status: "started",
-      rated: false,
-      opponentGone: false
+      rated: (cachedPreview == null ? void 0 : cachedPreview.rated) ?? false,
+      speed: (cachedPreview == null ? void 0 : cachedPreview.speed) || "rapid",
+      opponentGone: false,
+      opponentConfirmed: !!(cachedPreview == null ? void 0 : cachedPreview.opponentConfirmed)
     };
+    if (currentState.opponentConfirmed) {
+      onUpdate({ ...currentState });
+    }
+    if (!resolvedAccountUser) {
+      this.fetchAccount().then((acc) => {
+        if (acc == null ? void 0 : acc.username) {
+          resolvedAccountUser = acc.username;
+          if (currentState.myUsername === "Lichess Player") {
+            currentState = { ...currentState, myUsername: acc.username };
+          }
+        }
+      }).catch(() => {
+      });
+    }
     const isGameStillActive = () => currentState.status === "started" || currentState.status === "created";
+    let receivedFullStream = false;
+    const syncFromAccountPlaying = async () => {
+      if (this.streamManuallyStopped || !isGameStillActive()) return;
+      try {
+        const list = await this.fetchOngoingGames(void 0, true);
+        if (this.streamManuallyStopped || !isGameStillActive()) return;
+        const g = list.find((item) => item.gameId === gameId);
+        if (!g) return;
+        let changed = false;
+        if (!currentState.opponentConfirmed || currentState.myColor !== g.myColor || currentState.opponentName === "Matching Opponent..." || currentState.opponentName === "Lichess Opponent") {
+          currentState = {
+            ...currentState,
+            myColor: g.myColor,
+            opponentName: g.opponentName || currentState.opponentName,
+            opponentRating: g.opponentRating ?? currentState.opponentRating,
+            rated: g.rated ?? currentState.rated,
+            speed: g.speed || currentState.speed,
+            opponentConfirmed: true
+          };
+          if (!receivedFullStream && typeof g.secondsLeft === "number" && g.secondsLeft > 0) {
+            const ms = g.secondsLeft * 1e3;
+            currentState.wtime = ms;
+            currentState.btime = ms;
+          }
+          changed = true;
+        }
+        if (g.lastMove) {
+          const existingMoves = currentState.movesUci.trim();
+          const tokens = existingMoves ? existingMoves.split(/\s+/) : [];
+          const lastKnownUci = tokens.length > 0 ? tokens[tokens.length - 1] : "";
+          if (g.lastMove !== lastKnownUci) {
+            try {
+              const testChess = currentState.initialFen && currentState.initialFen !== "startpos" ? new Chess(currentState.initialFen) : new Chess();
+              let allValid = true;
+              for (const uci of tokens) {
+                const mv = testChess.move({
+                  from: uci.slice(0, 2),
+                  to: uci.slice(2, 4),
+                  promotion: uci[4] || "q"
+                });
+                if (!mv) {
+                  allValid = false;
+                  break;
+                }
+              }
+              if (allValid) {
+                const nextMv = testChess.move({
+                  from: g.lastMove.slice(0, 2),
+                  to: g.lastMove.slice(2, 4),
+                  promotion: g.lastMove[4] || "q"
+                });
+                if (nextMv) {
+                  const updatedMovesUci = [...tokens, g.lastMove].join(" ");
+                  currentState = {
+                    ...currentState,
+                    movesUci: updatedMovesUci
+                  };
+                  if (typeof g.secondsLeft === "number" && g.secondsLeft > 0) {
+                    if (g.isMyTurn) {
+                      if (currentState.myColor === "w") currentState.wtime = g.secondsLeft * 1e3;
+                      else currentState.btime = g.secondsLeft * 1e3;
+                    } else {
+                      if (currentState.myColor === "w") currentState.btime = g.secondsLeft * 1e3;
+                      else currentState.wtime = g.secondsLeft * 1e3;
+                    }
+                  }
+                  changed = true;
+                } else if (!receivedFullStream && tokens.length === 0 && g.fen && g.fen !== "startpos" && g.fen !== new Chess().fen()) {
+                  currentState = {
+                    ...currentState,
+                    initialFen: g.fen
+                  };
+                  changed = true;
+                }
+              }
+            } catch {
+            }
+          }
+        }
+        if (changed) {
+          onStreamStatus == null ? void 0 : onStreamStatus("connected");
+          onUpdate({ ...currentState });
+        }
+      } catch {
+      }
+    };
+    syncFromAccountPlaying();
+    this.gameFastSyncIntervalId = window.setInterval(syncFromAccountPlaying, 1800);
     const clearReconnectTimers = () => {
       if (this.reconnectTimeoutId !== null) {
         clearTimeout(this.reconnectTimeoutId);
@@ -5908,8 +6762,116 @@ class LichessService {
         window.addEventListener("online", this.onlineReconnectListener, { once: true });
       }
     };
+    const processStreamLine = (trimmed) => {
+      var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _A, _B, _C, _D;
+      if (!trimmed) return false;
+      try {
+        const msg = JSON.parse(trimmed);
+        if (msg.type === "gameFull") {
+          receivedFullStream = true;
+          const knownMe = (resolvedAccountUser || this.getUsername() || "").trim().toLowerCase();
+          const whiteId = String(((_a = msg.white) == null ? void 0 : _a.id) || "").toLowerCase();
+          const whiteName = String(((_b = msg.white) == null ? void 0 : _b.name) || ((_d = (_c = msg.white) == null ? void 0 : _c.user) == null ? void 0 : _d.name) || "").toLowerCase();
+          const blackId = String(((_e = msg.black) == null ? void 0 : _e.id) || "").toLowerCase();
+          const blackName = String(((_f = msg.black) == null ? void 0 : _f.name) || ((_h = (_g = msg.black) == null ? void 0 : _g.user) == null ? void 0 : _h.name) || "").toLowerCase();
+          let isWhite = currentState.myColor === "w";
+          if (knownMe && (blackId === knownMe || blackName === knownMe)) {
+            isWhite = false;
+          } else if (knownMe && (whiteId === knownMe || whiteName === knownMe)) {
+            isWhite = true;
+          } else if (((_i = msg.white) == null ? void 0 : _i.aiLevel) && !((_j = msg.black) == null ? void 0 : _j.aiLevel)) {
+            isWhite = false;
+          } else if (((_k = msg.black) == null ? void 0 : _k.aiLevel) && !((_l = msg.white) == null ? void 0 : _l.aiLevel)) {
+            isWhite = true;
+          }
+          const myColor = isWhite ? "w" : "b";
+          const opp = isWhite ? msg.black : msg.white;
+          const me = isWhite ? msg.white : msg.black;
+          const resolvedMyName = (me == null ? void 0 : me.name) || ((_m = me == null ? void 0 : me.user) == null ? void 0 : _m.name) || (me == null ? void 0 : me.id) || resolvedAccountUser || this.getUsername() || "Lichess Player";
+          if ((me == null ? void 0 : me.name) || ((_n = me == null ? void 0 : me.user) == null ? void 0 : _n.name)) {
+            this.setUsername((me == null ? void 0 : me.name) || ((_o = me == null ? void 0 : me.user) == null ? void 0 : _o.name));
+          }
+          const resolvedOppName = (opp == null ? void 0 : opp.name) || ((_p = opp == null ? void 0 : opp.user) == null ? void 0 : _p.name) || (opp == null ? void 0 : opp.id) || ((opp == null ? void 0 : opp.aiLevel) ? `Lichess AI Lv.${opp.aiLevel}` : currentState.opponentName || "Lichess Opponent");
+          currentState = {
+            gameId: msg.id || gameId,
+            myColor,
+            myUsername: resolvedMyName,
+            opponentName: resolvedOppName,
+            opponentRating: (opp == null ? void 0 : opp.rating) ?? currentState.opponentRating,
+            myRating: (me == null ? void 0 : me.rating) ?? currentState.myRating,
+            initialFen: msg.initialFen || "startpos",
+            movesUci: ((_q = msg.state) == null ? void 0 : _q.moves) ?? currentState.movesUci ?? "",
+            wtime: ((_r = msg.state) == null ? void 0 : _r.wtime) ?? currentState.wtime ?? 6e5,
+            btime: ((_s = msg.state) == null ? void 0 : _s.btime) ?? currentState.btime ?? 6e5,
+            winc: ((_t = msg.state) == null ? void 0 : _t.winc) ?? currentState.winc ?? 0,
+            binc: ((_u = msg.state) == null ? void 0 : _u.binc) ?? currentState.binc ?? 0,
+            status: ((_v = msg.state) == null ? void 0 : _v.status) || "started",
+            winner: (_w = msg.state) == null ? void 0 : _w.winner,
+            rated: msg.rated !== void 0 ? !!msg.rated : currentState.rated,
+            speed: msg.speed || ((_x = msg.perf) == null ? void 0 : _x.name) || currentState.speed || "rapid",
+            clockInitialSec: ((_y = msg.clock) == null ? void 0 : _y.initial) ? Math.round(msg.clock.initial / 1e3) : currentState.clockInitialSec,
+            clockIncrementSec: ((_z = msg.clock) == null ? void 0 : _z.increment) ? Math.round(msg.clock.increment / 1e3) : currentState.clockIncrementSec,
+            wdraw: !!(((_A = msg.state) == null ? void 0 : _A.wdraw) || ((_B = msg.state) == null ? void 0 : _B.wtie)),
+            bdraw: !!(((_C = msg.state) == null ? void 0 : _C.bdraw) || ((_D = msg.state) == null ? void 0 : _D.btie)),
+            opponentGone: false,
+            opponentConfirmed: true
+          };
+          if (currentState.status !== "started" && currentState.status !== "created") {
+            this.markGameEnded(currentState.gameId);
+          }
+          onUpdate({ ...currentState });
+          return true;
+        } else if (msg.type === "gameState") {
+          const movesChanged = msg.moves !== void 0 && msg.moves !== currentState.movesUci;
+          currentState = {
+            ...currentState,
+            movesUci: msg.moves ?? currentState.movesUci,
+            wtime: msg.wtime ?? currentState.wtime,
+            btime: msg.btime ?? currentState.btime,
+            status: msg.status || currentState.status,
+            winner: msg.winner ?? currentState.winner,
+            wdraw: msg.wdraw !== void 0 ? !!msg.wdraw : msg.wtie !== void 0 ? !!msg.wtie : movesChanged ? false : currentState.wdraw,
+            bdraw: msg.bdraw !== void 0 ? !!msg.bdraw : msg.btie !== void 0 ? !!msg.btie : movesChanged ? false : currentState.bdraw,
+            opponentGone: movesChanged ? false : currentState.opponentGone,
+            opponentConfirmed: true
+          };
+          if (currentState.status !== "started" && currentState.status !== "created") {
+            this.markGameEnded(currentState.gameId);
+          }
+          onUpdate({ ...currentState });
+          return true;
+        } else if (msg.type === "opponentGone") {
+          currentState = {
+            ...currentState,
+            opponentGone: !!msg.gone
+          };
+          onUpdate({ ...currentState });
+          return true;
+        } else if (msg.type === "chatLine") {
+          const lowerText = String(msg.text || "").toLowerCase();
+          const isSystemUser = String(msg.username || "").toLowerCase() === "lichess";
+          if (isSystemUser && lowerText.includes("offers draw")) {
+            if (lowerText.includes("white")) {
+              currentState = { ...currentState, wdraw: true };
+              onUpdate({ ...currentState });
+            } else if (lowerText.includes("black")) {
+              currentState = { ...currentState, bdraw: true };
+              onUpdate({ ...currentState });
+            }
+          } else if (isSystemUser && lowerText.includes("declines draw")) {
+            currentState = { ...currentState, wdraw: false, bdraw: false };
+            onUpdate({ ...currentState });
+          }
+          if (onChatLine && msg.username && msg.text) {
+            onChatLine(msg.username, msg.text);
+          }
+          return true;
+        }
+      } catch {
+      }
+      return false;
+    };
     const connectAttempt = async () => {
-      var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p;
       if (this.streamManuallyStopped) return;
       clearReconnectTimers();
       if (typeof navigator !== "undefined" && !navigator.onLine) {
@@ -5918,7 +6880,9 @@ class LichessService {
       }
       const controller = new AbortController();
       this.gameStreamAbortController = controller;
-      onStreamStatus == null ? void 0 : onStreamStatus("connecting");
+      if (!currentState.opponentConfirmed) {
+        onStreamStatus == null ? void 0 : onStreamStatus("connecting");
+      }
       try {
         const res = await myPCService.proxyFetch(
           `${LICHESS_BASE}/api/board/game/stream/${encodeURIComponent(gameId)}`,
@@ -5948,90 +6912,12 @@ class LichessService {
           const lines = buffer.split("\n");
           buffer = lines.pop() || "";
           for (const line of lines) {
-            const trimmed = line.trim();
-            if (!trimmed) continue;
-            try {
-              const msg = JSON.parse(trimmed);
-              if (msg.type === "gameFull") {
-                const whiteId = (((_a = msg.white) == null ? void 0 : _a.id) || ((_b = msg.white) == null ? void 0 : _b.name) || "").toLowerCase();
-                const isWhite = whiteId === myUserId.toLowerCase();
-                const myColor = isWhite ? "w" : "b";
-                const opp = isWhite ? msg.black : msg.white;
-                const me = isWhite ? msg.white : msg.black;
-                const resolvedMyName = (me == null ? void 0 : me.name) || (me == null ? void 0 : me.id) || myUserId || this.getUsername() || "Lichess Player";
-                if (me == null ? void 0 : me.name) {
-                  this.setUsername(me.name);
-                }
-                currentState = {
-                  gameId: msg.id || gameId,
-                  myColor,
-                  myUsername: resolvedMyName,
-                  opponentName: (opp == null ? void 0 : opp.name) || ((opp == null ? void 0 : opp.aiLevel) ? `Lichess AI Lv.${opp.aiLevel}` : "Opponent"),
-                  opponentRating: opp == null ? void 0 : opp.rating,
-                  myRating: me == null ? void 0 : me.rating,
-                  initialFen: msg.initialFen || "startpos",
-                  movesUci: ((_c = msg.state) == null ? void 0 : _c.moves) || "",
-                  wtime: ((_d = msg.state) == null ? void 0 : _d.wtime) ?? 6e5,
-                  btime: ((_e = msg.state) == null ? void 0 : _e.btime) ?? 6e5,
-                  winc: ((_f = msg.state) == null ? void 0 : _f.winc) ?? 0,
-                  binc: ((_g = msg.state) == null ? void 0 : _g.binc) ?? 0,
-                  status: ((_h = msg.state) == null ? void 0 : _h.status) || "started",
-                  winner: (_i = msg.state) == null ? void 0 : _i.winner,
-                  rated: !!msg.rated,
-                  speed: msg.speed || ((_j = msg.perf) == null ? void 0 : _j.name) || "rapid",
-                  clockInitialSec: ((_k = msg.clock) == null ? void 0 : _k.initial) ? Math.round(msg.clock.initial / 1e3) : void 0,
-                  clockIncrementSec: ((_l = msg.clock) == null ? void 0 : _l.increment) ? Math.round(msg.clock.increment / 1e3) : void 0,
-                  wdraw: !!(((_m = msg.state) == null ? void 0 : _m.wdraw) || ((_n = msg.state) == null ? void 0 : _n.wtie)),
-                  bdraw: !!(((_o = msg.state) == null ? void 0 : _o.bdraw) || ((_p = msg.state) == null ? void 0 : _p.btie)),
-                  opponentGone: false
-                };
-                if (currentState.status !== "started" && currentState.status !== "created") {
-                  this.markGameEnded(currentState.gameId);
-                }
-                onUpdate({ ...currentState });
-              } else if (msg.type === "gameState") {
-                const movesChanged = msg.moves !== void 0 && msg.moves !== currentState.movesUci;
-                currentState = {
-                  ...currentState,
-                  movesUci: msg.moves ?? currentState.movesUci,
-                  wtime: msg.wtime ?? currentState.wtime,
-                  btime: msg.btime ?? currentState.btime,
-                  status: msg.status || currentState.status,
-                  winner: msg.winner ?? currentState.winner,
-                  wdraw: msg.wdraw !== void 0 ? !!msg.wdraw : msg.wtie !== void 0 ? !!msg.wtie : movesChanged ? false : currentState.wdraw,
-                  bdraw: msg.bdraw !== void 0 ? !!msg.bdraw : msg.btie !== void 0 ? !!msg.btie : movesChanged ? false : currentState.bdraw,
-                  opponentGone: movesChanged ? false : currentState.opponentGone
-                };
-                if (currentState.status !== "started" && currentState.status !== "created") {
-                  this.markGameEnded(currentState.gameId);
-                }
-                onUpdate({ ...currentState });
-              } else if (msg.type === "opponentGone") {
-                currentState = {
-                  ...currentState,
-                  opponentGone: !!msg.gone
-                };
-                onUpdate({ ...currentState });
-              } else if (msg.type === "chatLine") {
-                const lowerText = String(msg.text || "").toLowerCase();
-                const isSystemUser = String(msg.username || "").toLowerCase() === "lichess";
-                if (isSystemUser && lowerText.includes("offers draw")) {
-                  if (lowerText.includes("white")) {
-                    currentState = { ...currentState, wdraw: true };
-                    onUpdate({ ...currentState });
-                  } else if (lowerText.includes("black")) {
-                    currentState = { ...currentState, bdraw: true };
-                    onUpdate({ ...currentState });
-                  }
-                } else if (isSystemUser && lowerText.includes("declines draw")) {
-                  currentState = { ...currentState, wdraw: false, bdraw: false };
-                  onUpdate({ ...currentState });
-                }
-                if (onChatLine && msg.username && msg.text) {
-                  onChatLine(msg.username, msg.text);
-                }
-              }
-            } catch {
+            processStreamLine(line.trim());
+          }
+          const rem = buffer.trim();
+          if (rem.startsWith("{") && rem.endsWith("}")) {
+            if (processStreamLine(rem)) {
+              buffer = "";
             }
           }
         }
@@ -6052,6 +6938,10 @@ class LichessService {
   }
   stopGameStream() {
     this.streamManuallyStopped = true;
+    if (this.gameFastSyncIntervalId !== null) {
+      clearInterval(this.gameFastSyncIntervalId);
+      this.gameFastSyncIntervalId = null;
+    }
     if (this.reconnectTimeoutId !== null) {
       clearTimeout(this.reconnectTimeoutId);
       this.reconnectTimeoutId = null;
@@ -6129,32 +7019,81 @@ class LichessService {
     return res.ok;
   }
   /**
-   * Abort an active Lichess Board game
+   * Abort an active Lichess Board game (with automatic fallback to resign if >= 2 plies were played)
    */
   async abortBoardGame(gameId) {
     this.markGameEnded(gameId);
-    const res = await myPCService.proxyFetch(
-      `${LICHESS_BASE}/api/board/game/${encodeURIComponent(gameId)}/abort`,
-      {
-        method: "POST",
-        headers: this.getHeaders("application/json")
+    try {
+      const res = await myPCService.proxyFetch(
+        `${LICHESS_BASE}/api/board/game/${encodeURIComponent(gameId)}/abort`,
+        {
+          method: "POST",
+          headers: this.getHeaders("application/json")
+        }
+      );
+      if (res.ok) return true;
+      if (res.status === 400) {
+        const fallbackRes = await myPCService.proxyFetch(
+          `${LICHESS_BASE}/api/board/game/${encodeURIComponent(gameId)}/resign`,
+          {
+            method: "POST",
+            headers: this.getHeaders("application/json")
+          }
+        );
+        return fallbackRes.ok;
       }
-    );
-    return res.ok;
+      return false;
+    } catch {
+      return false;
+    }
   }
   /**
-   * Resign an active Lichess Board game
+   * Resign an active Lichess Board game (with automatic fallback to abort if < 2 plies were played,
+   * preventing Lichess playbans from un-aborted move-0/move-1 games!)
    */
   async resignBoardGame(gameId) {
     this.markGameEnded(gameId);
-    const res = await myPCService.proxyFetch(
-      `${LICHESS_BASE}/api/board/game/${encodeURIComponent(gameId)}/resign`,
-      {
-        method: "POST",
-        headers: this.getHeaders("application/json")
+    try {
+      const res = await myPCService.proxyFetch(
+        `${LICHESS_BASE}/api/board/game/${encodeURIComponent(gameId)}/resign`,
+        {
+          method: "POST",
+          headers: this.getHeaders("application/json")
+        }
+      );
+      if (res.ok) return true;
+      if (res.status === 400) {
+        const abortRes = await myPCService.proxyFetch(
+          `${LICHESS_BASE}/api/board/game/${encodeURIComponent(gameId)}/abort`,
+          {
+            method: "POST",
+            headers: this.getHeaders("application/json")
+          }
+        );
+        return abortRes.ok;
       }
-    );
-    return res.ok;
+      return false;
+    } catch {
+      return false;
+    }
+  }
+  /**
+   * Give more time (+15 seconds) to the opponent in an active Lichess Board game
+   */
+  async giveMoreTime(gameId, seconds = 15) {
+    try {
+      const cleanSec = Math.max(1, Math.min(120, Math.round(seconds)));
+      const res = await myPCService.proxyFetch(
+        `${LICHESS_BASE}/api/board/game/${encodeURIComponent(gameId)}/moretime/${cleanSec}`,
+        {
+          method: "POST",
+          headers: this.getHeaders("application/json")
+        }
+      );
+      return res.ok;
+    } catch {
+      return false;
+    }
   }
 }
 const lichessService = new LichessService();
@@ -6603,18 +7542,19 @@ const LICHESS_GRID_PRESETS = [
   { label: "3+2", sub: "Blitz", minutes: 3, increment: 2 },
   { label: "5+0", sub: "Blitz", minutes: 5, increment: 0 },
   { label: "5+3", sub: "Blitz", minutes: 5, increment: 3 },
+  { label: "5+5", sub: "Rapid", minutes: 5, increment: 5 },
   { label: "10+0", sub: "Rapid", minutes: 10, increment: 0 },
   { label: "10+5", sub: "Rapid", minutes: 10, increment: 5 },
   { label: "15+10", sub: "Rapid", minutes: 15, increment: 10 },
   { label: "30+0", sub: "Classical", minutes: 30, increment: 0 },
-  { label: "30+20", sub: "Classical", minutes: 30, increment: 20 },
-  { label: "Custom", sub: "Any / 5+5", minutes: 10, increment: 0, isCustom: true }
+  { label: "Custom", sub: "Any / 30+20", minutes: 10, increment: 0, isCustom: true }
 ];
 const LichessModal = ({
   settings,
   savedLocalMatch,
   onResumeSavedLocalMatch,
   onStartTimedLocalAIMatch,
+  onStartLichessMatchmaking,
   onStartLiveLichessGame,
   onAnalyzeLichessGame,
   onUsernameChange,
@@ -6750,7 +7690,6 @@ const LichessModal = ({
     return () => {
       rootStyle.webkitUserSelect = prevRootSelect;
       rootStyle.webkitTouchCallout = prevRootCallout;
-      lichessService.cancelSeek();
     };
   }, [loadAccountAndGames]);
   const handleSaveToken = async () => {
@@ -6810,6 +7749,7 @@ const LichessModal = ({
     [selectedOpponentType]
   );
   const handleStartLichessAI = async (minutes, increment, level) => {
+    var _a, _b, _c, _d, _e, _f;
     soundManager.playSound("click");
     setSeekError(null);
     if (!lichessService.getToken()) {
@@ -6817,12 +7757,24 @@ const LichessModal = ({
       setSeekError("Please save your Lichess Personal API Token above first.");
       return;
     }
+    if (onStartLichessMatchmaking) {
+      onStartLichessMatchmaking({
+        minutes,
+        increment,
+        rated: false,
+        opponentType: "lichess_ai",
+        aiLevel: level,
+        myUsername: (account == null ? void 0 : account.username) || lichessService.getUsername() || "",
+        myRating: ((_b = (_a = account == null ? void 0 : account.perfs) == null ? void 0 : _a.rapid) == null ? void 0 : _b.rating) || ((_d = (_c = account == null ? void 0 : account.perfs) == null ? void 0 : _c.blitz) == null ? void 0 : _d.rating) || ((_f = (_e = account == null ? void 0 : account.perfs) == null ? void 0 : _e.classical) == null ? void 0 : _f.rating)
+      });
+      return;
+    }
     setSeeking(true);
     setSeekStatus(`Starting ${minutes}+${increment} match vs Lichess Stockfish Level ${level}...`);
     try {
       const gameId = await lichessService.createAIChallenge(level, minutes, increment, "random");
       setSeeking(false);
-      onStartLiveLichessGame(gameId, (account == null ? void 0 : account.username) || "Me");
+      onStartLiveLichessGame(gameId, (account == null ? void 0 : account.username) || lichessService.getUsername() || "");
     } catch (err) {
       setSeeking(false);
       const msg = (err == null ? void 0 : err.message) || "Failed to create Lichess AI match.";
@@ -6835,6 +7787,7 @@ const LichessModal = ({
     }
   };
   const handleSelectTimePreset = async (preset) => {
+    var _a, _b, _c, _d, _e, _f;
     soundManager.playSound("click");
     setSeekError(null);
     if (preset.isCustom) {
@@ -6842,6 +7795,15 @@ const LichessModal = ({
       return;
     }
     if (!isPresetValidForSelectedType(preset, selectedOpponentType)) {
+      if (selectedOpponentType === "human") {
+        setSeekError(
+          `Lichess's external Board API requires Rapid or Classical time controls (≥ 5+5 or 10+0) for human matchmaking. Switch to Cloud AI or Local AI in Mode Settings for ${preset.minutes}+${preset.increment}, or choose 5+5 / 10+0 Rapid vs a human!`
+        );
+      } else {
+        setSeekError(
+          `Lichess Cloud AI requires at least 3 minutes on the clock. Switch to Local AI in Mode Settings to play ${preset.minutes}+${preset.increment} Bullet!`
+        );
+      }
       return;
     }
     if (selectedOpponentType === "local_ai" && onStartTimedLocalAIMatch) {
@@ -6857,6 +7819,17 @@ const LichessModal = ({
       await handleStartLichessAI(preset.minutes, preset.increment, configuredAiLevel);
       return;
     }
+    if (onStartLichessMatchmaking) {
+      onStartLichessMatchmaking({
+        minutes: preset.minutes,
+        increment: preset.increment,
+        rated: isRated,
+        opponentType: "human",
+        myUsername: (account == null ? void 0 : account.username) || lichessService.getUsername() || "",
+        myRating: ((_b = (_a = account == null ? void 0 : account.perfs) == null ? void 0 : _a.rapid) == null ? void 0 : _b.rating) || ((_d = (_c = account == null ? void 0 : account.perfs) == null ? void 0 : _c.blitz) == null ? void 0 : _d.rating) || ((_f = (_e = account == null ? void 0 : account.perfs) == null ? void 0 : _e.classical) == null ? void 0 : _f.rating)
+      });
+      return;
+    }
     setSeeking(true);
     try {
       const gameId = await lichessService.seekHumanMatch(
@@ -6866,7 +7839,7 @@ const LichessModal = ({
         (status) => setSeekStatus(status)
       );
       setSeeking(false);
-      onStartLiveLichessGame(gameId, (account == null ? void 0 : account.username) || "Me");
+      onStartLiveLichessGame(gameId, (account == null ? void 0 : account.username) || lichessService.getUsername() || "");
     } catch (err) {
       setSeeking(false);
       const msg = (err == null ? void 0 : err.message) || "Could not pair this time control via Board API.";
@@ -7260,57 +8233,86 @@ const LichessModal = ({
                   ] }),
                   ongoingGames.length === 0 && !savedLocalMatch ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "text-xs text-slate-400 py-6 text-center", children: loadingOngoing ? "Checking your Lichess account for active games..." : "No ongoing games right now. Start a match on the right or on your phone to continue here with a live mini-board!" }) : /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-col gap-2.5 max-h-[62vh] overflow-y-auto pr-0.5", children: [
                     ongoingGames.map((g) => /* @__PURE__ */ jsxRuntimeExports.jsxs(
-                      "button",
+                      "div",
                       {
-                        type: "button",
-                        onClick: () => {
-                          soundManager.playSound("click");
-                          onStartLiveLichessGame(
-                            g.gameId,
-                            (account == null ? void 0 : account.username) || lookupUsername || "Me"
-                          );
-                        },
-                        className: "w-full flex items-center gap-3 p-2.5 rounded-xl bg-slate-900/90 hover:bg-slate-800 border border-emerald-500/40 hover:border-emerald-400 text-left transition-colors cursor-pointer",
+                        className: "relative w-full flex items-center gap-3 p-2.5 rounded-xl bg-slate-900/90 hover:bg-slate-800 border border-emerald-500/40 hover:border-emerald-400 text-left transition-colors",
                         children: [
-                          /* @__PURE__ */ jsxRuntimeExports.jsx(
-                            MiniBoardPreview,
+                          /* @__PURE__ */ jsxRuntimeExports.jsxs(
+                            "button",
                             {
-                              fen: g.fen,
-                              myColor: g.myColor,
-                              lastMoveUci: g.lastMove,
-                              sizeClass: "w-20 h-20 sm:w-24 sm:h-24"
+                              type: "button",
+                              onClick: () => {
+                                soundManager.playSound("click");
+                                onStartLiveLichessGame(
+                                  g.gameId,
+                                  (account == null ? void 0 : account.username) || lookupUsername || "Me"
+                                );
+                              },
+                              className: "flex-1 min-w-0 flex items-center gap-3 text-left cursor-pointer",
+                              children: [
+                                /* @__PURE__ */ jsxRuntimeExports.jsx(
+                                  MiniBoardPreview,
+                                  {
+                                    fen: g.fen,
+                                    myColor: g.myColor,
+                                    lastMoveUci: g.lastMove,
+                                    sizeClass: "w-20 h-20 sm:w-24 sm:h-24"
+                                  }
+                                ),
+                                /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex-1 min-w-0 pr-5", children: [
+                                  /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center gap-1.5 text-xs sm:text-sm font-extrabold text-white truncate", children: [
+                                    /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "truncate", children: [
+                                      "vs ",
+                                      g.opponentName
+                                    ] }),
+                                    g.opponentRating && /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "text-emerald-400 font-mono text-xs shrink-0", children: [
+                                      "(",
+                                      g.opponentRating,
+                                      ")"
+                                    ] })
+                                  ] }),
+                                  /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "text-[11px] text-slate-300 mt-1 flex flex-wrap items-center gap-1.5", children: [
+                                    /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 uppercase font-bold text-[10px]", children: g.speed }),
+                                    /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-slate-400", children: g.myColor === "w" ? "White" : "Black" })
+                                  ] }),
+                                  /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-2 flex items-center justify-between gap-2", children: [
+                                    /* @__PURE__ */ jsxRuntimeExports.jsx(
+                                      "span",
+                                      {
+                                        className: `text-[11px] font-bold ${g.isMyTurn ? "text-emerald-400" : "text-slate-400"}`,
+                                        children: g.isMyTurn ? "● Your Turn" : "Waiting..."
+                                      }
+                                    ),
+                                    /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-500 text-slate-950 font-black text-[11px]", children: [
+                                      /* @__PURE__ */ jsxRuntimeExports.jsx(Play, { size: 11, className: "fill-current" }),
+                                      "Continue"
+                                    ] })
+                                  ] })
+                                ] })
+                              ]
                             }
                           ),
-                          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex-1 min-w-0", children: [
-                            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center gap-1.5 text-xs sm:text-sm font-extrabold text-white truncate", children: [
-                              /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "truncate", children: [
-                                "vs ",
-                                g.opponentName
-                              ] }),
-                              g.opponentRating && /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "text-emerald-400 font-mono text-xs shrink-0", children: [
-                                "(",
-                                g.opponentRating,
-                                ")"
-                              ] })
-                            ] }),
-                            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "text-[11px] text-slate-300 mt-1 flex flex-wrap items-center gap-1.5", children: [
-                              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 uppercase font-bold text-[10px]", children: g.speed }),
-                              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-slate-400", children: g.myColor === "w" ? "White" : "Black" })
-                            ] }),
-                            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-2 flex items-center justify-between gap-2", children: [
-                              /* @__PURE__ */ jsxRuntimeExports.jsx(
-                                "span",
-                                {
-                                  className: `text-[11px] font-bold ${g.isMyTurn ? "text-emerald-400" : "text-slate-400"}`,
-                                  children: g.isMyTurn ? "● Your Turn" : "Waiting..."
+                          /* @__PURE__ */ jsxRuntimeExports.jsx(
+                            "button",
+                            {
+                              type: "button",
+                              title: "Dismiss / Abort Game",
+                              onClick: (e) => {
+                                e.stopPropagation();
+                                soundManager.playSound("select");
+                                lichessService.markGameEnded(g.gameId);
+                                if (!g.lastMove) {
+                                  lichessService.abortBoardGame(g.gameId).catch(() => {
+                                  });
                                 }
-                              ),
-                              /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-500 text-slate-950 font-black text-[11px]", children: [
-                                /* @__PURE__ */ jsxRuntimeExports.jsx(Play, { size: 11, className: "fill-current" }),
-                                "Continue"
-                              ] })
-                            ] })
-                          ] })
+                                setOngoingGames(
+                                  (prev) => prev.filter((item) => item.gameId !== g.gameId)
+                                );
+                              },
+                              className: "absolute top-2 right-2 p-1 rounded-lg bg-slate-950/80 hover:bg-red-950/90 text-slate-400 hover:text-red-300 border border-slate-700/60 transition-colors cursor-pointer",
+                              children: /* @__PURE__ */ jsxRuntimeExports.jsx(X, { size: 13 })
+                            }
+                          )
                         ]
                       },
                       g.gameId
@@ -8712,6 +9714,7 @@ const CheckoMascot = ({ mood, isSpeaking, size = "md", onClick }) => {
   );
 };
 const LearnModal = ({ settings, onClose }) => {
+  var _a;
   const lang = myPCService.getLanguage();
   const ui = LEARN_UI_TEXT[lang] || LEARN_UI_TEXT.en;
   const isRtl = lang === "ar";
@@ -8721,9 +9724,9 @@ const LearnModal = ({ settings, onClose }) => {
   reactExports.useEffect(() => {
     let mounted = true;
     loadRuntimeLessonsData().then((payload) => {
-      var _a, _b, _c;
+      var _a2, _b, _c;
       if (!mounted) return;
-      if ((_a = payload.tiers) == null ? void 0 : _a.length) setTiers(payload.tiers);
+      if ((_a2 = payload.tiers) == null ? void 0 : _a2.length) setTiers(payload.tiers);
       if ((_b = payload.categories) == null ? void 0 : _b.length) setCategories(payload.categories);
       if ((_c = payload.lessons) == null ? void 0 : _c.length) setLessons(payload.lessons);
     });
@@ -8756,10 +9759,13 @@ const LearnModal = ({ settings, onClose }) => {
   const [stepStatus, setStepStatus] = reactExports.useState("prompt");
   const [checkoMood, setCheckoMood] = reactExports.useState("idle");
   const [customNotice, setCustomNotice] = reactExports.useState(null);
+  const [learnFocusZone, setLearnFocusZone] = reactExports.useState("board");
+  const [learnCursorSquare, setLearnCursorSquare] = reactExports.useState("e2");
   const continueBtnRef = reactExports.useRef(null);
   const nextBtnRef = reactExports.useRef(null);
   const activeLessonBtnRef = reactExports.useRef(null);
   const categoryNextLessonBtnRef = reactExports.useRef(null);
+  const lessonRightPanelRef = reactExports.useRef(null);
   const isLessonUnlocked = reactExports.useCallback(
     (lessonId) => {
       const lesson = lessons.find((l) => l.id === lessonId);
@@ -8825,12 +9831,17 @@ const LearnModal = ({ settings, onClose }) => {
   const triggerCheckoSpeech = reactExports.useCallback(
     (text, forceSpeak = false) => {
       if (!autoVoice && !forceSpeak) return;
-      myPCService.speakText(text, lang, {
-        onStart: () => setIsSpeaking(true),
-        onEnd: () => setIsSpeaking(false)
-      });
+      myPCService.speakText(
+        text,
+        lang,
+        {
+          onStart: () => setIsSpeaking(true),
+          onEnd: () => setIsSpeaking(false)
+        },
+        settings.tts_provider_id
+      );
     },
-    [autoVoice, lang]
+    [autoVoice, lang, settings.tts_provider_id]
   );
   reactExports.useEffect(() => {
     soundManager.playSound("checko_crow");
@@ -8861,10 +9872,12 @@ const LearnModal = ({ settings, onClose }) => {
     }
   }, [viewMode, selectedCategoryId]);
   reactExports.useEffect(() => {
+    var _a2, _b;
     if (viewMode !== "lesson" || !activeStep) return;
+    let loadedChess = new Chess();
     try {
-      const c = new Chess(activeStep.fen);
-      setChess(c);
+      loadedChess = new Chess(activeStep.fen);
+      setChess(loadedChess);
     } catch {
       setChess(new Chess());
     }
@@ -8874,6 +9887,14 @@ const LearnModal = ({ settings, onClose }) => {
     setStepStatus("prompt");
     setCheckoMood("idle");
     setCustomNotice(null);
+    setLearnFocusZone("board");
+    clearAllSpatialFocus();
+    const expectedFrom = (_b = (_a2 = activeStep.expectedMoves) == null ? void 0 : _a2[0]) == null ? void 0 : _b.slice(0, 2);
+    if (expectedFrom && /^[a-h][1-8]$/.test(expectedFrom)) {
+      setLearnCursorSquare(expectedFrom);
+    } else {
+      setLearnCursorSquare(activeStep.playerColor === "b" ? "e7" : "e2");
+    }
     const promptText = activeStep.bubble[lang] || activeStep.bubble.en;
     triggerCheckoSpeech(promptText);
   }, [viewMode, activeLessonId, activeStepIdx, activeStep, lang, triggerCheckoSpeech]);
@@ -8888,12 +9909,13 @@ const LearnModal = ({ settings, onClose }) => {
   }, [viewMode, activeLessonId]);
   reactExports.useEffect(() => {
     if (stepStatus === "correct") {
+      setLearnFocusZone("panel");
       const timer = setTimeout(() => {
         if (nextBtnRef.current) {
           setSpatialFocus(nextBtnRef.current);
           nextBtnRef.current.focus();
         }
-      }, 40);
+      }, 35);
       return () => clearTimeout(timer);
     }
   }, [stepStatus]);
@@ -8931,14 +9953,14 @@ const LearnModal = ({ settings, onClose }) => {
     }
   };
   const handleOpenTierCategories = (tierId, e) => {
-    var _a;
+    var _a2;
     if (e) e.stopPropagation();
     soundManager.playSound("checko_crow");
     setSelectedTierId(tierId);
     myPCService.save("checko_selected_tier", tierId);
     const nextLesson = getNextPlayableLessonForTier(tierId);
     const tierCats = categories.filter((c) => c.tierId === tierId);
-    const targetCatId = nextLesson ? getLessonCategoryId(nextLesson) : ((_a = tierCats[0]) == null ? void 0 : _a.id) || "";
+    const targetCatId = nextLesson ? getLessonCategoryId(nextLesson) : ((_a2 = tierCats[0]) == null ? void 0 : _a2.id) || "";
     if (targetCatId) {
       setSelectedCategoryId(targetCatId);
       myPCService.save("checko_selected_category", targetCatId);
@@ -8987,6 +10009,8 @@ const LearnModal = ({ settings, onClose }) => {
     setStepStatus("prompt");
     setCheckoMood("idle");
     setCustomNotice(null);
+    setLearnFocusZone("board");
+    clearAllSpatialFocus();
     triggerCheckoSpeech(activeStep.bubble[lang]);
   };
   const handleShowHint = () => {
@@ -8994,6 +10018,8 @@ const LearnModal = ({ settings, onClose }) => {
     setStepStatus("wrong");
     setCheckoMood("wrong");
     setCustomNotice(null);
+    setLearnFocusZone("board");
+    clearAllSpatialFocus();
     triggerCheckoSpeech(activeStep.hint[lang], true);
   };
   const attemptLessonMove = (from, to) => {
@@ -9043,6 +10069,9 @@ const LearnModal = ({ settings, onClose }) => {
   };
   const handleBoardSquareClick = (sq) => {
     if (stepStatus === "correct") return;
+    setLearnFocusZone("board");
+    clearAllSpatialFocus();
+    setLearnCursorSquare(sq);
     const piece = chess.get(sq);
     if (selectedSquare) {
       if (selectedSquare === sq) {
@@ -9084,6 +10113,8 @@ const LearnModal = ({ settings, onClose }) => {
     }
   };
   const handleAdvanceNext = () => {
+    setLearnFocusZone("board");
+    clearAllSpatialFocus();
     if (activeStepIdx + 1 < activeLesson.steps.length) {
       soundManager.playSound("click");
       setActiveStepIdx((prev) => prev + 1);
@@ -9106,17 +10137,124 @@ const LearnModal = ({ settings, onClose }) => {
       setViewMode("levels");
     }
   };
+  const switchLearnFocusZone = reactExports.useCallback((targetZone) => {
+    soundManager.playSound("select");
+    setLearnFocusZone(targetZone);
+    if (targetZone === "board") {
+      clearAllSpatialFocus();
+    } else {
+      setTimeout(() => {
+        if (lessonRightPanelRef.current) {
+          ensureSpatialFocus(lessonRightPanelRef.current);
+        }
+      }, 20);
+    }
+  }, []);
+  reactExports.useEffect(() => {
+    const handler = (action) => {
+      if (viewMode !== "lesson" || !activeStep) {
+        if (action === "cancel" || action === "mypc_menu" || action === "pause") {
+          if (viewMode === "categories") {
+            soundManager.playSound("click");
+            setCustomNotice(null);
+            setViewMode("levels");
+            return true;
+          }
+        }
+        return false;
+      }
+      if (action === "focus_left" || action === "focus_right" || action === "cycle_zone_prev" || action === "cycle_zone_next" || action === "zone_switch") {
+        switchLearnFocusZone(learnFocusZone === "board" ? "panel" : "board");
+        return true;
+      }
+      if (stepStatus === "correct") {
+        if (action === "confirm") {
+          handleAdvanceNext();
+          return true;
+        }
+        if (action === "cancel" || action === "mypc_menu") {
+          soundManager.playSound("click");
+          setCustomNotice(null);
+          setViewMode("categories");
+          return true;
+        }
+        return false;
+      }
+      if (learnFocusZone === "panel") {
+        if (action === "cancel") {
+          switchLearnFocusZone("board");
+          return true;
+        }
+        return false;
+      }
+      if (action === "cancel" || action === "mypc_menu" || action === "pause") {
+        if (selectedSquare !== null) {
+          setSelectedSquare(null);
+          setValidMoves([]);
+          soundManager.playSound("select");
+          return true;
+        }
+        soundManager.playSound("click");
+        setCustomNotice(null);
+        setViewMode("categories");
+        return true;
+      }
+      const flipped = activeStep.playerColor === "b";
+      const files = ["a", "b", "c", "d", "e", "f", "g", "h"];
+      const ranks = ["8", "7", "6", "5", "4", "3", "2", "1"];
+      const displayFiles = flipped ? [...files].reverse() : files;
+      const displayRanks = flipped ? [...ranks].reverse() : ranks;
+      const current = learnCursorSquare || (activeStep.playerColor === "b" ? "e7" : "e2");
+      const col = Math.max(0, displayFiles.indexOf(current[0]));
+      const row = Math.max(0, displayRanks.indexOf(current[1]));
+      if (action === "confirm") {
+        handleBoardSquareClick(current);
+        return true;
+      }
+      if (action === "left") {
+        const nextCol = col > 0 ? col - 1 : 7;
+        setLearnCursorSquare(`${displayFiles[nextCol]}${displayRanks[row]}`);
+        soundManager.playSound("select");
+        return true;
+      }
+      if (action === "right") {
+        const nextCol = col < 7 ? col + 1 : 0;
+        setLearnCursorSquare(`${displayFiles[nextCol]}${displayRanks[row]}`);
+        soundManager.playSound("select");
+        return true;
+      }
+      if (action === "up") {
+        const nextRow = row > 0 ? row - 1 : 7;
+        setLearnCursorSquare(`${displayFiles[col]}${displayRanks[nextRow]}`);
+        soundManager.playSound("select");
+        return true;
+      }
+      if (action === "down") {
+        const nextRow = row < 7 ? row + 1 : 0;
+        setLearnCursorSquare(`${displayFiles[col]}${displayRanks[nextRow]}`);
+        soundManager.playSound("select");
+        return true;
+      }
+      return false;
+    };
+    window.__mypcLearnInputHandler = handler;
+    return () => {
+      if (window.__mypcLearnInputHandler === handler) {
+        delete window.__mypcLearnInputHandler;
+      }
+    };
+  });
   const currentBubbleText = customNotice ? customNotice : viewMode !== "lesson" ? (activeTier == null ? void 0 : activeTier.checkoGreeting[lang]) || (activeTier == null ? void 0 : activeTier.checkoGreeting.en) || "" : stepStatus === "correct" ? (activeStep == null ? void 0 : activeStep.success[lang]) || (activeStep == null ? void 0 : activeStep.success.en) || "" : stepStatus === "wrong" ? (activeStep == null ? void 0 : activeStep.hint[lang]) || (activeStep == null ? void 0 : activeStep.hint.en) || "" : (activeStep == null ? void 0 : activeStep.bubble[lang]) || (activeStep == null ? void 0 : activeStep.bubble.en) || "";
   const displayedArrows = stepStatus === "correct" ? [] : (activeStep == null ? void 0 : activeStep.arrows) || [];
   const displayedHighlights = stepStatus === "correct" ? [] : (activeStep == null ? void 0 : activeStep.highlightSquares) || [];
   const nextCategoryLessonId = reactExports.useMemo(() => {
-    var _a;
+    var _a2;
     const uncompletedUnlocked = categoryLessons.find(
       (l) => !completedLessons.includes(l.id) && isLessonUnlocked(l.id)
     );
     if (uncompletedUnlocked) return uncompletedUnlocked.id;
     const lastUnlocked = [...categoryLessons].reverse().find((l) => isLessonUnlocked(l.id));
-    return (lastUnlocked == null ? void 0 : lastUnlocked.id) || ((_a = categoryLessons[0]) == null ? void 0 : _a.id);
+    return (lastUnlocked == null ? void 0 : lastUnlocked.id) || ((_a2 = categoryLessons[0]) == null ? void 0 : _a2.id);
   }, [categoryLessons, completedLessons, isLessonUnlocked]);
   return /* @__PURE__ */ jsxRuntimeExports.jsx(
     "div",
@@ -9452,28 +10590,57 @@ const LearnModal = ({ settings, onClose }) => {
           }
         ),
         viewMode === "lesson" && activeStep && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-[auto_1fr] items-center gap-4 overflow-y-auto lg:overflow-hidden px-1", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "flex flex-col items-center justify-center", children: /* @__PURE__ */ jsxRuntimeExports.jsx(
-            ChessBoard,
-            {
-              chess,
-              flipped: activeStep.playerColor === "b",
-              selectedSquare,
-              validMoves,
-              lastMove,
-              cursorSquare: null,
-              settings: { ...settings, show_legal_moves: true },
-              arrows: displayedArrows,
-              highlightSquares: displayedHighlights,
-              sizeVariant: "puzzle",
-              enableDomFocus: true,
-              onSquareClick: handleBoardSquareClick
-            }
-          ) }),
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-col items-center justify-center gap-1.5", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx(
+              ChessBoard,
+              {
+                chess,
+                flipped: activeStep.playerColor === "b",
+                selectedSquare,
+                validMoves,
+                lastMove,
+                cursorSquare: learnFocusZone === "board" && stepStatus !== "correct" ? learnCursorSquare : null,
+                settings: { ...settings, show_legal_moves: true },
+                arrows: displayedArrows,
+                highlightSquares: displayedHighlights,
+                sizeVariant: "puzzle",
+                enableDomFocus: false,
+                onSquareClick: handleBoardSquareClick
+              }
+            ),
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center justify-between gap-2 w-full max-w-[380px] px-2.5 py-1 rounded-xl bg-slate-900/90 border border-slate-800 text-[11px]", children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "flex items-center gap-1.5 font-bold text-slate-300", children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsx(
+                  "span",
+                  {
+                    className: `w-2 h-2 rounded-full ${learnFocusZone === "board" && stepStatus !== "correct" ? "bg-emerald-400 shadow-[0_0_6px_#34d399]" : "bg-amber-400"}`
+                  }
+                ),
+                "Focus:",
+                " ",
+                /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { className: "text-white", children: stepStatus === "correct" ? "Next Button" : learnFocusZone === "board" ? `Board (${learnCursorSquare.toUpperCase()})` : "Side Controls" })
+              ] }),
+              /* @__PURE__ */ jsxRuntimeExports.jsxs(
+                "button",
+                {
+                  type: "button",
+                  onClick: () => switchLearnFocusZone(learnFocusZone === "board" ? "panel" : "board"),
+                  className: "px-2 py-0.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-amber-300 font-mono font-bold text-[10px] cursor-pointer",
+                  children: [
+                    "Switch Focus (",
+                    (((_a = settings.shortcuts) == null ? void 0 : _a.focus_right) || "E").toUpperCase(),
+                    " / CH)"
+                  ]
+                }
+              )
+            ] })
+          ] }),
           /* @__PURE__ */ jsxRuntimeExports.jsxs(
             "div",
             {
+              ref: lessonRightPanelRef,
               dir: isRtl ? "rtl" : "ltr",
-              className: "flex flex-col justify-between h-full max-h-[80vh] bg-[#1e1c19] border border-slate-800 rounded-3xl p-4 sm:p-5 gap-3 shadow-2xl",
+              className: `flex flex-col justify-between h-full max-h-[80vh] bg-[#1e1c19] border rounded-3xl p-4 sm:p-5 gap-3 shadow-2xl transition-colors ${learnFocusZone === "panel" ? "border-amber-400/80 ring-2 ring-amber-400/30" : "border-slate-800"}`,
               children: [
                 /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
                   /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center justify-between gap-2 mb-2", children: [
@@ -10440,6 +11607,7 @@ const App = () => {
     }
   }, [mobileChatOpen, chatMessages.length]);
   const currentMatchSavedRef = reactExports.useRef(false);
+  const lastLocalLichessMoveTimeRef = reactExports.useRef(0);
   const gameHistoryRef = reactExports.useRef([]);
   reactExports.useEffect(() => {
     gameHistoryRef.current = gameHistory;
@@ -10460,6 +11628,17 @@ const App = () => {
   const [isOpponentOnline, setIsOpponentOnline] = reactExports.useState(true);
   const [lichessStreamStatus, setLichessStreamStatus] = reactExports.useState("connected");
   const [reconnectRetrySec, setReconnectRetrySec] = reactExports.useState(10);
+  const [lichessMatchmaking, setLichessMatchmaking] = reactExports.useState({
+    active: false,
+    phase: "seeking",
+    timeControl: "10+0",
+    speed: "Rapid",
+    rated: true,
+    opponentType: "human",
+    elapsedSec: 0,
+    statusMessage: "",
+    poolInfo: ""
+  });
   const [ongoingLichessGames, setOngoingLichessGames] = reactExports.useState([]);
   const [savedLocalMatch, setSavedLocalMatch] = reactExports.useState(
     () => validateActiveLocalMatch(myPCService.load("active_local_match", null))
@@ -10522,7 +11701,17 @@ const App = () => {
   const [playFocusZone, setPlayFocusZone] = reactExports.useState("board");
   const lastDispatchedRef = reactExports.useRef(null);
   const lastModalTransitionRef = reactExports.useRef(0);
+  const lastPauseToggleRef = reactExports.useRef(0);
   const lastLowTimeBeepSecRef = reactExports.useRef(null);
+  reactExports.useEffect(() => {
+    if (!lichessMatchmaking.active || lichessMatchmaking.phase === "error") return;
+    const t = setInterval(() => {
+      setLichessMatchmaking(
+        (prev) => prev.active && prev.phase !== "error" ? { ...prev, elapsedSec: prev.elapsedSec + 1 } : prev
+      );
+    }, 1e3);
+    return () => clearInterval(t);
+  }, [lichessMatchmaking.active, lichessMatchmaking.phase]);
   reactExports.useEffect(() => {
     soundManager.init();
     myPCService.init({
@@ -10817,7 +12006,16 @@ const App = () => {
       setDrawOfferSent(false);
       if (gameMode === "lichess" && activeLichessGameId && !isRemoteSync) {
         const uci = `${from}${to}${promotion || ""}`;
-        lichessService.sendBoardMove(activeLichessGameId, uci);
+        lastLocalLichessMoveTimeRef.current = Date.now();
+        lichessService.sendBoardMove(activeLichessGameId, uci).then((ok) => {
+          if (!ok) {
+            appendChatMessage(
+              "System",
+              "Lichess did not accept that move — resynchronizing board with server...",
+              true
+            );
+          }
+        });
       }
       setChess((prevChess) => {
         var _a;
@@ -10913,10 +12111,17 @@ const App = () => {
       settings
     ]
   );
+  const handleCancelLichessMatchmaking = reactExports.useCallback(() => {
+    soundManager.stopSearchPulse();
+    soundManager.playSound("select");
+    lichessService.cancelSeek();
+    lichessService.stopGameStream();
+    setActiveLichessGameId(null);
+    setLichessMatchmaking((prev) => ({ ...prev, active: false }));
+    setAppState("lichess_hub");
+  }, []);
   const handleStartLiveLichessGame = reactExports.useCallback(
-    (gameId, myUsername) => {
-      soundManager.stopSearchPulse();
-      soundManager.playSound("game_start");
+    (gameId, myUsername, keepMatchmakingOverlay = false) => {
       currentMatchSavedRef.current = false;
       setActiveLichessGameId(gameId);
       setGameMode("lichess");
@@ -10938,20 +12143,79 @@ const App = () => {
       setValidMoves([]);
       setLastMove(null);
       lastPlayerMoveSquareRef.current = { w: "e2", b: "e7" };
+      setRemotePlayerName("Matching Opponent...");
       setChatMessages([
         {
           id: `sys_${Date.now()}`,
           sender: "System",
-          text: `Connected to Lichess game #${gameId}.`,
+          text: `Connecting to Lichess match #${gameId}...`,
           timestamp: (/* @__PURE__ */ new Date()).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
           isSystem: true
         }
       ]);
+      if (!keepMatchmakingOverlay) {
+        setLichessMatchmaking({
+          active: true,
+          phase: "connecting",
+          timeControl: timeControlLabel || "10+0",
+          speed: speedLabel || "Rapid",
+          rated: ratedMatch,
+          opponentType: "human",
+          elapsedSec: 0,
+          statusMessage: `Synchronizing Lichess game #${gameId} (sides, ratings & server clocks)...`,
+          poolInfo: "Lichess Live Board Stream • Verifying assigned side (White / Black)"
+        });
+      } else {
+        setLichessMatchmaking((prev) => ({
+          ...prev,
+          active: true,
+          phase: "connecting",
+          statusMessage: `Opponent matched! Synchronizing board, assigned side & Lichess clocks...`
+        }));
+      }
       setAppState("playing");
-      if (myUsername) {
+      if (myUsername && myUsername.toLowerCase() !== "me") {
         setLichessUsername(myUsername);
       }
       let initialCursorInitialized = false;
+      let matchRevealed = false;
+      let lastKnownAssignedColor = null;
+      const unlockWatchdog = window.setTimeout(async () => {
+        if (matchRevealed) return;
+        try {
+          const ongoing = await lichessService.fetchOngoingGames(void 0, true);
+          const found = ongoing.find((g) => g.gameId === gameId);
+          if (found) {
+            setPlayerColor(found.myColor);
+            setFlipped(found.myColor === "b");
+            setRemotePlayerName(found.opponentName || "Lichess Opponent");
+            if (found.opponentRating) setOpponentElo(found.opponentRating);
+            setRatedMatch(found.rated);
+            if (found.speed) {
+              setSpeedLabel(found.speed.charAt(0).toUpperCase() + found.speed.slice(1));
+            }
+            if (typeof found.secondsLeft === "number" && found.secondsLeft > 0) {
+              const ms = found.secondsLeft * 1e3;
+              setMatchClocks({ wtime: ms, btime: ms });
+            }
+            if (gameHistoryRef.current.length === 0 && found.fen && found.fen !== "startpos" && found.fen !== new Chess().fen()) {
+              try {
+                setInitialFen(found.fen);
+                setChess(new Chess(found.fen));
+              } catch {
+              }
+            }
+            setCursorSquare(found.myColor === "b" ? "e7" : "e2");
+          }
+        } catch {
+        }
+        if (!matchRevealed) {
+          matchRevealed = true;
+          soundManager.stopSearchPulse();
+          soundManager.playSound("game_start");
+          setLichessMatchmaking((prev) => ({ ...prev, active: false }));
+        }
+      }, 2500);
       lichessService.streamBoardGame(
         gameId,
         myUsername,
@@ -10980,6 +12244,13 @@ const App = () => {
           if (state.initialFen) {
             setInitialFen(state.initialFen);
           }
+          if (state.opponentConfirmed && !matchRevealed) {
+            matchRevealed = true;
+            clearTimeout(unlockWatchdog);
+            soundManager.stopSearchPulse();
+            soundManager.playSound("game_start");
+            setLichessMatchmaking((prev) => ({ ...prev, active: false }));
+          }
           const rebChess = state.initialFen && state.initialFen !== "startpos" ? new Chess(state.initialFen) : new Chess();
           const uciTokens = state.movesUci.trim().split(/\s+/).filter(Boolean);
           const rebuiltMoves = [];
@@ -11004,8 +12275,9 @@ const App = () => {
             }
           }
           lastPlayerMoveSquareRef.current = { w: wLastSq, b: bLastSq };
-          if (!initialCursorInitialized) {
+          if (!initialCursorInitialized || lastKnownAssignedColor !== state.myColor) {
             initialCursorInitialized = true;
+            lastKnownAssignedColor = state.myColor;
             setCursorSquare(lastPlayerMoveSquareRef.current[state.myColor]);
           }
           if (rebuiltMoves.length > gameHistoryRef.current.length && lastMoveObj) {
@@ -11023,10 +12295,13 @@ const App = () => {
               soundManager.playSound("move");
             }
           }
-          gameHistoryRef.current = rebuiltMoves;
-          setGameHistory(rebuiltMoves);
-          setChess(rebChess);
-          setLastMove(lastFromTo);
+          const isStalePollDuringLocalMove = rebuiltMoves.length === gameHistoryRef.current.length - 1 && Date.now() - lastLocalLichessMoveTimeRef.current < 1500;
+          if (!isStalePollDuringLocalMove) {
+            gameHistoryRef.current = rebuiltMoves;
+            setGameHistory(rebuiltMoves);
+            setChess(rebChess);
+            setLastMove(lastFromTo);
+          }
           const oppOffered = state.myColor === "w" ? !!state.bdraw : !!state.wdraw;
           const myOffered = state.myColor === "w" ? !!state.wdraw : !!state.bdraw;
           setIncomingDrawOffer(oppOffered);
@@ -11056,9 +12331,21 @@ const App = () => {
             setAppState("game_over");
           }
         },
-        () => {
+        (errMsg) => {
+          soundManager.stopSearchPulse();
+          setLichessMatchmaking(
+            (prev) => prev.active ? {
+              ...prev,
+              phase: "error",
+              errorMessage: errMsg || "Could not open Lichess game stream."
+            } : prev
+          );
         },
         (sender, text) => {
+          const myKnownUser = (lichessUsername || lichessService.getUsername() || "").trim().toLowerCase();
+          if (myKnownUser && sender.trim().toLowerCase() === myKnownUser) {
+            return;
+          }
           appendChatMessage(sender, text);
         },
         (status, retryInSec) => {
@@ -11069,7 +12356,88 @@ const App = () => {
         }
       );
     },
-    [archiveCompletedGame, appendChatMessage]
+    [archiveCompletedGame, appendChatMessage, timeControlLabel, speedLabel, ratedMatch]
+  );
+  const handleStartLichessMatchmaking = reactExports.useCallback(
+    async (opts) => {
+      const startMs = Math.max(3e4, Math.round(opts.minutes * 60 * 1e3));
+      const incMs = Math.max(0, Math.round(opts.increment * 1e3));
+      const estSec = opts.minutes * 60 + opts.increment * 40;
+      const computedSpeed = estSec < 180 ? "Bullet" : estSec < 480 ? "Blitz" : estSec < 1500 ? "Rapid" : "Classical";
+      const tcLabel = `${opts.minutes}+${opts.increment}`;
+      lichessService.stopGameStream();
+      setActiveLichessGameId(null);
+      setGameMode("lichess");
+      setChess(new Chess());
+      setInitialFen("startpos");
+      setGameHistory([]);
+      gameHistoryRef.current = [];
+      setSelectedSquare(null);
+      setValidMoves([]);
+      setLastMove(null);
+      setMatchClocks({ wtime: startMs, btime: startMs });
+      setInitialClockMs(startMs);
+      setMatchIncrementMs(incMs);
+      setTimeControlLabel(tcLabel);
+      setSpeedLabel(computedSpeed);
+      setRatedMatch(opts.rated);
+      setRemotePlayerName("Searching Opponent...");
+      if (opts.myUsername) setLichessUsername(opts.myUsername);
+      if (opts.myRating) setMyLichessRating(opts.myRating);
+      const poolDescription = opts.opponentType === "lichess_ai" ? `Lichess Cloud Stockfish Level ${opts.aiLevel || 4} • ${tcLabel} ${computedSpeed}` : `Lichess ${computedSpeed} Lobby (${tcLabel} • ${opts.rated ? "Rated Pool" : "Casual Pool"}) • Random Color Assignment`;
+      setLichessMatchmaking({
+        active: true,
+        phase: "seeking",
+        timeControl: tcLabel,
+        speed: computedSpeed,
+        rated: opts.rated,
+        opponentType: opts.opponentType,
+        aiLevel: opts.aiLevel,
+        elapsedSec: 0,
+        statusMessage: opts.opponentType === "lichess_ai" ? `Creating ${tcLabel} match vs Lichess Stockfish Level ${opts.aiLevel || 4}...` : `Seeking opponent in Lichess ${tcLabel} ${computedSpeed} (${opts.rated ? "Rated" : "Casual"}) pool...`,
+        poolInfo: poolDescription
+      });
+      setAppState("playing");
+      soundManager.startSearchPulse();
+      try {
+        let gameId;
+        if (opts.opponentType === "lichess_ai") {
+          gameId = await lichessService.createAIChallenge(
+            opts.aiLevel || 4,
+            opts.minutes,
+            opts.increment,
+            "random"
+          );
+        } else {
+          gameId = await lichessService.seekHumanMatch(
+            opts.minutes,
+            opts.increment,
+            opts.rated,
+            (statusText) => {
+              setLichessMatchmaking(
+                (prev) => prev.active ? { ...prev, statusMessage: statusText } : prev
+              );
+            }
+          );
+        }
+        handleStartLiveLichessGame(
+          gameId,
+          opts.myUsername || lichessUsername || lichessService.getUsername() || "",
+          true
+        );
+      } catch (err) {
+        soundManager.stopSearchPulse();
+        const msg = (err == null ? void 0 : err.message) || "Could not pair match on Lichess.";
+        setLichessMatchmaking(
+          (prev) => prev.active ? {
+            ...prev,
+            phase: "error",
+            errorMessage: msg
+          } : prev
+        );
+      }
+    },
+    [handleStartLiveLichessGame, lichessUsername]
   );
   reactExports.useEffect(() => {
     if (appState !== "playing") return;
@@ -11196,6 +12564,9 @@ const App = () => {
   ]);
   reactExports.useEffect(() => {
     if (appState !== "playing") return;
+    if (lichessMatchmaking.active) return;
+    if (gameHistory.length < 2) return;
+    if (chess.isGameOver()) return;
     const timer = setInterval(() => {
       const turn = chess.turn();
       setMatchClocks((prev) => {
@@ -11215,7 +12586,7 @@ const App = () => {
       });
     }, 1e3);
     return () => clearInterval(timer);
-  }, [appState, chess]);
+  }, [appState, chess, lichessMatchmaking.active, gameHistory.length]);
   const displayedBoardState = reactExports.useMemo(() => {
     if (viewPly === null || viewPly >= gameHistory.length) {
       return {
@@ -11356,8 +12727,24 @@ const App = () => {
   }, [appState, gameMode, gameHistory.length, playerColor, clearActiveLocalMatch]);
   const handleResign = reactExports.useCallback(() => {
     var _a;
-    soundManager.playSound("lose");
     clearActiveLocalMatch();
+    if (gameMode === "lichess" && activeLichessGameId && gameHistoryRef.current.length < 2) {
+      soundManager.playSound("select");
+      lichessService.markGameEnded(activeLichessGameId);
+      setOngoingLichessGames(
+        (prev) => prev.filter((item) => item.gameId !== activeLichessGameId)
+      );
+      lichessService.abortBoardGame(activeLichessGameId);
+      lichessService.stopGameStream();
+      setInitialConfirmResign(false);
+      setGameOverInfo({
+        winner: "draw",
+        reason: "Lichess Match Aborted (Move 1)"
+      });
+      setAppState("game_over");
+      return;
+    }
+    soundManager.playSound("lose");
     const winner = playerColor === "w" ? "b" : "w";
     const eloChange = gameMode === "ai" ? -15 : 0;
     const updatedElo = Math.max(400, myElo + eloChange);
@@ -11371,6 +12758,7 @@ const App = () => {
         (prev) => prev.filter((item) => item.gameId !== activeLichessGameId)
       );
       lichessService.resignBoardGame(activeLichessGameId);
+      lichessService.stopGameStream();
     }
     if (gameMode === "online" && onlineSession) {
       const peer = isHost ? (_a = onlineSession.peers) == null ? void 0 : _a[0] : onlineSession;
@@ -11557,13 +12945,16 @@ const App = () => {
   ]);
   const handleGiveMoreTime = reactExports.useCallback(() => {
     soundManager.playSound("click");
+    if (gameMode === "lichess" && activeLichessGameId) {
+      lichessService.giveMoreTime(activeLichessGameId, 15);
+    }
     const oppColor = playerColor === "w" ? "b" : "w";
     setMatchClocks((prev) => ({
       wtime: oppColor === "w" ? prev.wtime + 15e3 : prev.wtime,
       btime: oppColor === "b" ? prev.btime + 15e3 : prev.btime
     }));
     appendChatMessage("System", "+15 seconds added to opponent clock.", true);
-  }, [playerColor, appendChatMessage]);
+  }, [gameMode, activeLichessGameId, playerColor, appendChatMessage]);
   const handleSendChat = reactExports.useCallback(
     (text) => {
       var _a;
@@ -11643,19 +13034,39 @@ const App = () => {
       }
     }, 20);
   }, []);
+  const triggerPauseMenuTransition = reactExports.useCallback((target) => {
+    const now = performance.now();
+    if (now - lastPauseToggleRef.current < 550) {
+      return;
+    }
+    lastPauseToggleRef.current = now;
+    lastModalTransitionRef.current = now;
+    soundManager.playSound("click");
+    setInitialConfirmResign(false);
+    setAppState(target);
+  }, []);
   const handleUnifiedAction = reactExports.useCallback(
     (action) => {
       var _a;
       const isDirection = action === "up" || action === "down" || action === "left" || action === "right";
-      const isModalOrSubScreen = pendingPromotion !== null || mobileChatOpen || appState !== "menu" && appState !== "playing";
+      if (appState === "learn" && typeof window.__mypcLearnInputHandler === "function") {
+        const handledByLearn = window.__mypcLearnInputHandler(action);
+        if (handledByLearn) {
+          return;
+        }
+      }
+      const isModalOrSubScreen = pendingPromotion !== null || mobileChatOpen || lichessMatchmaking.active || appState !== "menu" && appState !== "playing";
       if (isModalOrSubScreen) {
         const modals = document.querySelectorAll('[data-tv-modal="true"]');
         const activeModal = modals.length > 0 ? modals[modals.length - 1] : document;
-        if (action === "pause" && appState === "paused") {
-          lastModalTransitionRef.current = performance.now();
-          soundManager.playSound("click");
-          setInitialConfirmResign(false);
-          setAppState("playing");
+        if (lichessMatchmaking.active) {
+          if (action === "cancel" || action === "mypc_menu" || action === "pause") {
+            handleCancelLichessMatchmaking();
+            return;
+          }
+        }
+        if ((action === "pause" || action === "zone_switch") && appState === "paused") {
+          triggerPauseMenuTransition("playing");
           return;
         }
         if (action === "cancel" || action === "mypc_menu" || action === "pause") {
@@ -11665,14 +13076,16 @@ const App = () => {
             soundManager.playSound("select");
             return;
           }
+          if (appState === "paused") {
+            triggerPauseMenuTransition("playing");
+            return;
+          }
           lastModalTransitionRef.current = performance.now();
           soundManager.playSound("click");
           if (pendingPromotion) {
             setPendingPromotion(null);
           } else if (mobileChatOpen) {
             setMobileChatOpen(false);
-          } else if (appState === "paused") {
-            setAppState("playing");
           } else if (appState === "settings") {
             setAppState(settingsReturnState);
           } else if (appState === "analysis_stats" || appState === "analysis_view" || appState === "analysis_learn") {
@@ -11776,9 +13189,7 @@ const App = () => {
       }
       if (appState === "playing") {
         if (action === "pause" || action === "zone_switch") {
-          soundManager.playSound("click");
-          setInitialConfirmResign(false);
-          setAppState("paused");
+          triggerPauseMenuTransition("paused");
           return;
         }
         if (action === "mypc_menu") {
@@ -11794,9 +13205,7 @@ const App = () => {
           }
           const handledByMyPC = myPCService.triggerSystemPause();
           if (!handledByMyPC) {
-            soundManager.playSound("click");
-            setInitialConfirmResign(false);
-            setAppState("paused");
+            triggerPauseMenuTransition("paused");
           }
           return;
         }
@@ -11951,6 +13360,7 @@ const App = () => {
       appState,
       pendingPromotion,
       mobileChatOpen,
+      lichessMatchmaking.active,
       settingsReturnState,
       analysisReturnState,
       menuIndex,
@@ -11966,6 +13376,8 @@ const App = () => {
       gameHistory.length,
       startNewGame,
       handleContinueOngoingGame,
+      handleCancelLichessMatchmaking,
+      triggerPauseMenuTransition,
       openSettings,
       handleUndo,
       handleRequestResignConfirm,
@@ -11977,7 +13389,7 @@ const App = () => {
     (action, source) => {
       const now = performance.now();
       const isDirection = action === "up" || action === "down" || action === "left" || action === "right";
-      if (!isDirection && (action === "confirm" || action === "cancel" || action === "mypc_menu" || action === "pause" || action === "zone_switch" || action === "resign") && now - lastModalTransitionRef.current < 260) {
+      if (!isDirection && (action === "confirm" || action === "cancel" || action === "mypc_menu" || action === "pause" || action === "zone_switch" || action === "resign") && now - lastModalTransitionRef.current < 420) {
         return;
       }
       const last = lastDispatchedRef.current;
@@ -11985,7 +13397,7 @@ const App = () => {
         const isCancelOrPause = (a) => a === "cancel" || a === "mypc_menu" || a === "pause" || a === "zone_switch";
         const sameSemanticAction = last.action === action || isCancelOrPause(last.action) && isCancelOrPause(action);
         if (!isDirection) {
-          if (sameSemanticAction && now - last.time < 280) {
+          if (sameSemanticAction && now - last.time < 420) {
             return;
           }
         } else {
@@ -12002,13 +13414,13 @@ const App = () => {
   reactExports.useEffect(() => {
     myPCService.setInputHandler((rawAction, pressed, repeat, dev) => {
       if (!pressed) return;
+      if (dev === "keys") return;
       if (document.querySelector('[data-listening-shortcut="true"]')) {
         return;
       }
       const activeEl = document.activeElement;
       const isTextInput = isTextInputElement(activeEl);
       if (isTextInput && activeEl) {
-        if (dev === "keys") return;
         const mapped2 = mapMyPCAction(rawAction);
         if (mapped2 === "cancel" || mapped2 === "mypc_menu") {
           activeEl.blur();
@@ -12032,9 +13444,9 @@ const App = () => {
   }, [dispatchUnifiedAction]);
   reactExports.useEffect(() => {
     lastModalTransitionRef.current = performance.now();
-  }, [appState, pendingPromotion, mobileChatOpen]);
+  }, [appState, pendingPromotion, mobileChatOpen, lichessMatchmaking.active]);
   reactExports.useEffect(() => {
-    const isModalOrSubScreen = pendingPromotion !== null || mobileChatOpen || appState !== "menu" && appState !== "playing";
+    const isModalOrSubScreen = pendingPromotion !== null || mobileChatOpen || lichessMatchmaking.active || appState !== "menu" && appState !== "playing";
     if (!isModalOrSubScreen) {
       if (playFocusZone === "board") {
         clearAllSpatialFocus();
@@ -12049,7 +13461,7 @@ const App = () => {
       }
     }, 40);
     return () => clearTimeout(timer);
-  }, [appState, pendingPromotion, mobileChatOpen, playFocusZone, analyzing]);
+  }, [appState, pendingPromotion, mobileChatOpen, lichessMatchmaking.active, playFocusZone, analyzing]);
   reactExports.useEffect(() => {
     const onBodyKeyDown = (e) => {
       const targetEl = e.target || document.activeElement;
@@ -12106,7 +13518,7 @@ const App = () => {
       if (document.querySelector('[data-listening-shortcut="true"]')) {
         return;
       }
-      if (appState === "playing" && !pendingPromotion && !mobileChatOpen) {
+      if ((appState === "playing" || appState === "learn") && !pendingPromotion && !mobileChatOpen) {
         const k = (e.key === " " ? "space" : e.key).toLowerCase();
         const focusLeftKey = (settings.shortcuts.focus_left || "q").toLowerCase();
         const focusRightKey = (settings.shortcuts.focus_right || "e").toLowerCase();
@@ -12114,7 +13526,14 @@ const App = () => {
         const pauseKey = (settings.shortcuts.pause || "p").toLowerCase();
         const resignKey = (settings.shortcuts.resign || "r").toLowerCase();
         const undoKey = (settings.shortcuts.undo || "u").toLowerCase();
-        if (k === "m" || k === flipKey || k === pauseKey || k === resignKey || k === undoKey || k === focusLeftKey || k === focusRightKey) {
+        if (appState === "learn" && (k === focusLeftKey || k === focusRightKey)) {
+          e.preventDefault();
+          e.stopPropagation();
+          if (e.repeat) return;
+          dispatchUnifiedAction(k === focusLeftKey ? "focus_left" : "focus_right", "keyboard");
+          return;
+        }
+        if (appState === "playing" && (k === "m" || k === flipKey || k === pauseKey || k === resignKey || k === undoKey || k === focusLeftKey || k === focusRightKey)) {
           e.preventDefault();
           e.stopPropagation();
           if (e.repeat) return;
@@ -12606,11 +14025,7 @@ const App = () => {
     onCycleFontScale: handleCycleFontScale,
     onFlipBoard: () => setFlipped((prev) => !prev),
     onOpenSettings: () => openSettings("playing"),
-    onPause: () => {
-      soundManager.playSound("click");
-      setInitialConfirmResign(false);
-      setAppState("paused");
-    },
+    onPause: () => triggerPauseMenuTransition("paused"),
     onResign: handleResign,
     chatInputRef
   };
@@ -12974,82 +14389,137 @@ const App = () => {
                     }
                   ),
                   /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "•" }),
-                  /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "px-2 py-0.5 rounded-lg bg-slate-900 border border-amber-500/40 text-amber-400 font-mono font-bold text-[11px]", children: "Build v4.2.0" })
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "px-2 py-0.5 rounded-lg bg-slate-900 border border-amber-500/40 text-amber-400 font-mono font-bold text-[11px]", children: "Build v4.3.4" })
                 ] })
               ] })
             ]
           }
         ),
-        (appState === "playing" || appState === "paused" || appState === "game_over") && (isVerticalScreen ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "w-full h-full max-w-[540px] mx-auto flex flex-col justify-between gap-1.5 px-1 py-0.5 overflow-hidden", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx(VerticalTopSection, { ...sharedArenaProps }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "flex items-center justify-center shrink-0 py-0.5", children: /* @__PURE__ */ jsxRuntimeExports.jsx(
-            ChessBoard,
-            {
-              chess: displayedBoardState.boardChess,
-              flipped,
-              selectedSquare: displayedBoardState.isInspectingHistory ? null : selectedSquare,
-              validMoves: displayedBoardState.isInspectingHistory ? [] : validMoves,
-              lastMove: displayedBoardState.boardLastMove,
-              cursorSquare: playFocusZone === "board" ? cursorSquare : null,
-              settings,
-              sizeVariant: "vertical",
-              onSquareClick: handleSquareClick
-            }
-          ) }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx(
-            VerticalBottomSection,
-            {
-              ...sharedArenaProps,
-              onOpenChatModal: () => {
-                soundManager.playSound("click");
-                setMobileChatOpen(true);
-              },
-              unreadChatCount: Math.max(0, chatMessages.length - lastSeenChatCount)
-            }
-          ),
-          /* @__PURE__ */ jsxRuntimeExports.jsx(
-            MobileChatModal,
-            {
-              ...sharedArenaProps,
-              isOpen: mobileChatOpen,
-              onClose: () => {
-                soundManager.playSound("click");
-                setMobileChatOpen(false);
-              }
-            }
-          )
-        ] }) : /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "w-full h-full max-w-[1920px] mx-auto grid grid-cols-[minmax(280px,1fr)_auto_minmax(320px,380px)] xl:grid-cols-[minmax(340px,1fr)_auto_minmax(350px,410px)] items-center justify-center gap-3 xl:gap-5 px-3 overflow-hidden", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "flex flex-col w-full h-full max-h-[90vh] py-1", children: /* @__PURE__ */ jsxRuntimeExports.jsx(LeftArenaPanel, { ...sharedArenaProps }) }),
-          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-col items-center justify-center h-full max-h-[96vh] py-0.5", children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsx(
-              ChessBoard,
-              {
-                chess: displayedBoardState.boardChess,
-                flipped,
-                selectedSquare: displayedBoardState.isInspectingHistory ? null : selectedSquare,
-                validMoves: displayedBoardState.isInspectingHistory ? [] : validMoves,
-                lastMove: displayedBoardState.boardLastMove,
-                cursorSquare: playFocusZone === "board" ? cursorSquare : null,
-                settings,
-                sizeVariant: "arena",
-                onSquareClick: handleSquareClick
-              }
-            ),
-            /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "w-full max-w-[min(81vh,48vw)] xl:max-w-[min(83vh,50vw)]", children: /* @__PURE__ */ jsxRuntimeExports.jsx(
-              BottomCrosstableBar,
-              {
-                profileName: activeMyName,
-                opponentName: activeOpponentName,
-                savedGames,
-                onFocusChat: () => {
-                  var _a;
-                  return (_a = chatInputRef.current) == null ? void 0 : _a.focus();
+        (appState === "playing" || appState === "paused" || appState === "game_over") && (isVerticalScreen ? /* @__PURE__ */ jsxRuntimeExports.jsxs(
+          "div",
+          {
+            className: `w-full h-full max-w-[540px] mx-auto flex flex-col justify-between gap-1.5 px-1 py-0.5 overflow-hidden transition-all duration-300 ${lichessMatchmaking.active ? "blur-[6px] opacity-75 pointer-events-none select-none" : ""}`,
+            children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx(VerticalTopSection, { ...sharedArenaProps }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "flex items-center justify-center shrink-0 py-0.5", children: /* @__PURE__ */ jsxRuntimeExports.jsx(
+                ChessBoard,
+                {
+                  chess: displayedBoardState.boardChess,
+                  flipped,
+                  selectedSquare: displayedBoardState.isInspectingHistory ? null : selectedSquare,
+                  validMoves: displayedBoardState.isInspectingHistory ? [] : validMoves,
+                  lastMove: displayedBoardState.boardLastMove,
+                  cursorSquare: playFocusZone === "board" && !lichessMatchmaking.active ? cursorSquare : null,
+                  settings,
+                  sizeVariant: "vertical",
+                  onSquareClick: handleSquareClick
                 }
-              }
-            ) })
-          ] }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "flex flex-col justify-center w-full h-full max-h-[90vh] py-1", children: /* @__PURE__ */ jsxRuntimeExports.jsx(RightArenaPanel, { ...sharedArenaProps }) })
-        ] })),
+              ) }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx(
+                VerticalBottomSection,
+                {
+                  ...sharedArenaProps,
+                  onOpenChatModal: () => {
+                    soundManager.playSound("click");
+                    setMobileChatOpen(true);
+                  },
+                  unreadChatCount: Math.max(0, chatMessages.length - lastSeenChatCount)
+                }
+              ),
+              /* @__PURE__ */ jsxRuntimeExports.jsx(
+                MobileChatModal,
+                {
+                  ...sharedArenaProps,
+                  isOpen: mobileChatOpen,
+                  onClose: () => {
+                    soundManager.playSound("click");
+                    setMobileChatOpen(false);
+                  }
+                }
+              )
+            ]
+          }
+        ) : /* @__PURE__ */ jsxRuntimeExports.jsxs(
+          "div",
+          {
+            className: `w-full h-full max-w-[1920px] mx-auto grid grid-cols-[minmax(280px,1fr)_auto_minmax(320px,380px)] xl:grid-cols-[minmax(340px,1fr)_auto_minmax(350px,410px)] items-center justify-center gap-3 xl:gap-5 px-3 overflow-hidden transition-all duration-300 ${lichessMatchmaking.active ? "blur-[6px] opacity-75 pointer-events-none select-none" : ""}`,
+            children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "flex flex-col w-full h-full max-h-[90vh] py-1", children: /* @__PURE__ */ jsxRuntimeExports.jsx(LeftArenaPanel, { ...sharedArenaProps }) }),
+              /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-col items-center justify-center h-full max-h-[96vh] py-0.5", children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsx(
+                  ChessBoard,
+                  {
+                    chess: displayedBoardState.boardChess,
+                    flipped,
+                    selectedSquare: displayedBoardState.isInspectingHistory ? null : selectedSquare,
+                    validMoves: displayedBoardState.isInspectingHistory ? [] : validMoves,
+                    lastMove: displayedBoardState.boardLastMove,
+                    cursorSquare: playFocusZone === "board" && !lichessMatchmaking.active ? cursorSquare : null,
+                    settings,
+                    sizeVariant: "arena",
+                    onSquareClick: handleSquareClick
+                  }
+                ),
+                /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "w-full max-w-[min(81vh,48vw)] xl:max-w-[min(83vh,50vw)]", children: /* @__PURE__ */ jsxRuntimeExports.jsx(
+                  BottomCrosstableBar,
+                  {
+                    profileName: activeMyName,
+                    opponentName: activeOpponentName,
+                    savedGames,
+                    onFocusChat: () => {
+                      var _a;
+                      return (_a = chatInputRef.current) == null ? void 0 : _a.focus();
+                    }
+                  }
+                ) })
+              ] }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "flex flex-col justify-center w-full h-full max-h-[90vh] py-1", children: /* @__PURE__ */ jsxRuntimeExports.jsx(RightArenaPanel, { ...sharedArenaProps }) })
+            ]
+          }
+        )),
+        appState === "playing" && lichessMatchmaking.active && /* @__PURE__ */ jsxRuntimeExports.jsx(
+          "div",
+          {
+            "data-tv-modal": "true",
+            className: "fixed inset-0 z-50 bg-black/45 flex items-center justify-center p-4 select-none",
+            children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "bg-slate-900/95 border-2 border-amber-400/70 rounded-3xl p-6 sm:p-7 max-w-md w-full shadow-[0_0_50px_rgba(251,191,36,0.2)] flex flex-col items-center text-center gap-4", children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "relative flex items-center justify-center w-20 h-20", children: [
+                lichessMatchmaking.phase !== "error" && /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "absolute inset-0 rounded-full border-2 border-amber-400/40 animate-ping" }),
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "absolute inset-1.5 rounded-full border-2 border-emerald-400/40 animate-pulse" })
+                ] }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "relative w-16 h-16 rounded-2xl bg-white text-slate-950 flex items-center justify-center text-4xl font-black shadow-xl", children: "♞" })
+              ] }),
+              /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center justify-center gap-2 flex-wrap", children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "px-3 py-1 rounded-full bg-amber-400 text-slate-950 font-mono font-black text-xs sm:text-sm uppercase shadow", children: [
+                  lichessMatchmaking.timeControl,
+                  " • ",
+                  lichessMatchmaking.speed
+                ] }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "px-2.5 py-1 rounded-full bg-slate-800 border border-slate-700 text-emerald-300 font-bold text-xs uppercase", children: lichessMatchmaking.opponentType === "lichess_ai" ? `Stockfish Lv.${lichessMatchmaking.aiLevel || 4}` : lichessMatchmaking.rated ? "Rated Match" : "Casual Match" }),
+                lichessMatchmaking.phase !== "error" && /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "px-2.5 py-1 rounded-full bg-slate-950 border border-amber-500/40 text-amber-300 font-mono font-bold text-xs", children: [
+                  Math.floor(lichessMatchmaking.elapsedSec / 60),
+                  ":",
+                  String(lichessMatchmaking.elapsedSec % 60).padStart(2, "0")
+                ] })
+              ] }),
+              /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { className: "text-xl sm:text-2xl font-black text-white", children: lichessMatchmaking.phase === "error" ? "Matchmaking Stopped" : lichessMatchmaking.phase === "connecting" ? "Opponent Found! Syncing Board..." : "Finding Opponent on Lichess..." }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-xs sm:text-sm text-slate-300 font-medium mt-1", children: lichessMatchmaking.phase === "error" ? lichessMatchmaking.errorMessage : lichessMatchmaking.statusMessage })
+              ] }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx(
+                "button",
+                {
+                  type: "button",
+                  "data-tv-autofocus": "true",
+                  onClick: handleCancelLichessMatchmaking,
+                  className: "w-full py-3 px-5 rounded-2xl bg-slate-800 hover:bg-red-950/80 border-2 border-slate-600 hover:border-red-400 text-white font-black text-sm transition-all cursor-pointer shadow-lg",
+                  children: lichessMatchmaking.phase === "error" ? "Back to Lichess Hub" : "Cancel Matchmaking"
+                }
+              )
+            ] })
+          }
+        ),
         pendingPromotion && /* @__PURE__ */ jsxRuntimeExports.jsx(
           PromotionModal,
           {
@@ -13075,12 +14545,8 @@ const App = () => {
             onAcceptDraw: handleAcceptDraw,
             onDeclineDraw: handleDeclineDraw,
             onConfirmResign: handleResign,
-            onResume: () => {
-              soundManager.playSound("click");
-              setInitialConfirmResign(false);
-              setAppState("playing");
-            },
-            onRestart: () => startNewGame(gameMode, playerColor),
+            onResume: () => triggerPauseMenuTransition("playing"),
+            onRestart: () => gameMode === "lichess" ? handleAbortOrRestart() : startNewGame(gameMode, playerColor),
             onOpenSettings: () => openSettings("paused"),
             onQuitToMenu: () => {
               soundManager.playSound("click");
@@ -13178,6 +14644,7 @@ const App = () => {
             savedLocalMatch,
             onResumeSavedLocalMatch: handleContinueOngoingGame,
             onStartTimedLocalAIMatch: (mins, inc) => startNewGame("ai", "w", mins, inc),
+            onStartLichessMatchmaking: handleStartLichessMatchmaking,
             onStartLiveLichessGame: handleStartLiveLichessGame,
             onAnalyzeLichessGame: (moves, color) => startAnalysisForMoves(moves, "lichess_hub", color),
             onUsernameChange: (uname) => setLichessUsername(uname),

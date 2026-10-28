@@ -79,6 +79,35 @@ export interface GameSettings {
   lichess_opponent_type?: LichessOpponentType;
   lichess_rated?: boolean;
   lichess_ai_level?: number;
+  tts_provider_id?: string; // 'auto' | 'web_speech' | MyPC provider id
+  tts_voice?: string;
+}
+
+export interface MyPCAIProviderInfo {
+  id: string;
+  name: string;
+  type: string;
+  preset: string;
+  model: string;
+  isDefault: boolean;
+  tasks: {
+    chat: boolean;
+    image: boolean;
+    speech: boolean;
+    transcribe: boolean;
+    video: boolean;
+    embed: boolean;
+  };
+  resolvedSpeechModel: string;
+}
+
+export interface MyPCTTSStatus {
+  providerId: string;
+  providerName: string;
+  modelName: string;
+  engine: 'mypc_ai' | 'web_speech' | 'none';
+  speechSupported: boolean;
+  lastError?: string;
 }
 
 export interface MoveRecord {
