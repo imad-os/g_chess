@@ -630,6 +630,25 @@ export const App: React.FC = () => {
     [appState]
   );
 
+  // Pre-cache Checko's Learn first-screen greeting once in the background if not yet cached locally,
+  // so opening the Learn screen plays instantaneously from local cache without calling AI every time
+  useEffect(() => {
+    if (appState !== 'menu') return;
+    const timer = setTimeout(() => {
+      const savedTierId = myPCService.load<LearnTierId>('checko_selected_tier', 'beginner');
+      const tier = LEARN_TIERS.find((t) => t.id === savedTierId) || LEARN_TIERS[0];
+      const lang = myPCService.getLanguage();
+      const greetingText =
+        tier?.checkoGreeting?.[lang] ||
+        tier?.checkoGreeting?.en ||
+        "Peep-peep! I am Checko! Pick a level and let's learn how every piece moves!";
+      if (!myPCService.isPhraseCached(greetingText, lang)) {
+        myPCService.precacheText(greetingText, lang, settings.tts_provider_id).catch(() => {});
+      }
+    }, 350);
+    return () => clearTimeout(timer);
+  }, [appState, settings.tts_provider_id]);
+
   // Open Checko's Learn Academy and trigger Checko's greeting speech synchronously inside the user gesture
   const openLearnAcademy = useCallback(() => {
     myPCService.unlockSpeechAudio();
@@ -3668,7 +3687,7 @@ export const App: React.FC = () => {
               </button>
               <span>•</span>
               <span className="px-2 py-0.5 rounded-lg bg-slate-900 border border-amber-500/40 text-amber-400 font-mono font-bold text-[11px]">
-                Build v4.3.6
+                Build v4.3.7
               </span>
             </div>
           </div>

@@ -6,7 +6,7 @@
   "type": "game",
   "entry": "index.html",
   "icon": "assets/pieces/nl.svg",
-  "version": "4.3.6",
+  "version": "4.3.7",
   "scores": true,
   "config": {
     "show_legal_moves": true,

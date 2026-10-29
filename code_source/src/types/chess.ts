@@ -107,6 +107,8 @@ export interface MyPCTTSStatus {
   modelName: string;
   engine: 'mypc_ai' | 'web_speech' | 'none';
   speechSupported: boolean;
+  fromCache?: boolean;
+  cachedCount?: number;
   lastError?: string;
 }
 

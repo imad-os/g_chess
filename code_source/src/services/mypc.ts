@@ -82,6 +82,34 @@ function toUint8Array(data: any): Uint8Array | null {
   return null;
 }
 
+function uint8ToBase64(bytes: Uint8Array): string {
+  let binary = '';
+  const chunkSize = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    const sub = bytes.subarray(i, i + chunkSize);
+    binary += String.fromCharCode.apply(null, Array.from(sub));
+  }
+  return btoa(binary);
+}
+
+interface CachedTTSAudioEntry {
+  key: string;
+  lang: 'en' | 'fr' | 'es' | 'ar';
+  providerId: string;
+  providerName: string;
+  modelName: string;
+  mime: string;
+  bytes: Uint8Array;
+  updatedAt: number;
+}
+
+const TTS_IDB_NAME = 'mypc_chess_tts_cache_v1';
+const TTS_IDB_STORE = 'phrases';
+const TTS_LS_KEY = 'mypc_chess_tts_ls_cache_v1';
+const MAX_IDB_PHRASES = 250;
+const MAX_LS_PHRASES = 12;
+const MAX_LS_JSON_CHARS = 850000;
+
 /**
  * Ensures audio bytes returned by MyPC.ai.generate have a valid container header.
  * Some TTS models (e.g. Gemini 2.5 Flash TTS) return raw 16-bit signed little-endian PCM
@@ -187,6 +215,8 @@ class MyPCService {
 
   constructor() {
     this.checkAvailability();
+    this.hydrateTTSCacheFromLocalStorage();
+    this.hydrateTTSCacheFromIDB().catch(() => {});
     this.setupAudioUnlockListeners();
   }
 
@@ -510,13 +540,217 @@ class MyPCService {
   private speechAbortId: number = 0;
   private cachedProviders: MyPCAIProviderInfo[] | null = null;
   private cachedProvidersAt: number = 0;
+  private ttsAudioCache: Map<string, CachedTTSAudioEntry> = new Map();
+  private inFlightSynthesis: Map<string, Promise<CachedTTSAudioEntry | null>> = new Map();
+  private idbPromise: Promise<IDBDatabase | null> | null = null;
   private lastTTSStatus: MyPCTTSStatus = {
     providerId: 'auto',
     providerName: 'Detecting MyPC AI...',
     modelName: 'Auto',
     engine: 'mypc_ai',
     speechSupported: true,
+    fromCache: false,
+    cachedCount: 0,
   };
+
+  private getTTSCacheKey(lang: string, text: string): string {
+    const norm = (text || '').trim().replace(/\s+/g, ' ').toLowerCase();
+    return `${lang}::${norm}`;
+  }
+
+  public getCachedPhrasesCount(): number {
+    return this.ttsAudioCache.size;
+  }
+
+  public isPhraseCached(text: string, lang: 'en' | 'fr' | 'es' | 'ar' = 'en'): boolean {
+    const clean = (text || '').trim();
+    if (!clean) return false;
+    return this.ttsAudioCache.has(this.getTTSCacheKey(lang, clean));
+  }
+
+  private hydrateTTSCacheFromLocalStorage() {
+    if (typeof window === 'undefined' || typeof localStorage === 'undefined') return;
+    try {
+      const raw = localStorage.getItem(TTS_LS_KEY);
+      if (!raw) return;
+      const list = JSON.parse(raw);
+      if (!Array.isArray(list)) return;
+      for (const item of list) {
+        if (!item?.key || !item?.b64) continue;
+        const bytes = toUint8Array(item.b64);
+        if (bytes && bytes.byteLength > 0) {
+          this.ttsAudioCache.set(String(item.key), {
+            key: String(item.key),
+            lang: (item.lang as any) || 'en',
+            providerId: String(item.providerId || 'auto'),
+            providerName: String(item.providerName || 'MyPC AI'),
+            modelName: String(item.modelName || 'MyPC Neural TTS'),
+            mime: String(item.mime || 'audio/wav'),
+            bytes,
+            updatedAt: Number(item.updatedAt || Date.now()),
+          });
+        }
+      }
+      this.lastTTSStatus.cachedCount = this.ttsAudioCache.size;
+    } catch {}
+  }
+
+  private persistTTSCacheToLocalStorage() {
+    if (typeof window === 'undefined' || typeof localStorage === 'undefined') return;
+    try {
+      const entries = Array.from(this.ttsAudioCache.values())
+        .filter((e) => e.bytes && e.bytes.byteLength > 0 && e.bytes.byteLength <= 240000)
+        .sort((a, b) => b.updatedAt - a.updatedAt)
+        .slice(0, MAX_LS_PHRASES);
+
+      const serialized: any[] = [];
+      let approxChars = 0;
+      for (const e of entries) {
+        const b64 = uint8ToBase64(e.bytes);
+        if (approxChars + b64.length > MAX_LS_JSON_CHARS) break;
+        approxChars += b64.length + 180;
+        serialized.push({
+          key: e.key,
+          lang: e.lang,
+          providerId: e.providerId,
+          providerName: e.providerName,
+          modelName: e.modelName,
+          mime: e.mime,
+          b64,
+          updatedAt: e.updatedAt,
+        });
+      }
+      localStorage.setItem(TTS_LS_KEY, JSON.stringify(serialized));
+    } catch {}
+  }
+
+  private openTTSIndexedDB(): Promise<IDBDatabase | null> {
+    if (typeof window === 'undefined' || typeof indexedDB === 'undefined') {
+      return Promise.resolve(null);
+    }
+    if (this.idbPromise) {
+      return this.idbPromise;
+    }
+    this.idbPromise = new Promise<IDBDatabase | null>((resolve) => {
+      try {
+        const req = indexedDB.open(TTS_IDB_NAME, 1);
+        req.onupgradeneeded = () => {
+          try {
+            const db = req.result;
+            if (!db.objectStoreNames.contains(TTS_IDB_STORE)) {
+              db.createObjectStore(TTS_IDB_STORE, { keyPath: 'key' });
+            }
+          } catch {}
+        };
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => resolve(null);
+        req.onblocked = () => resolve(null);
+      } catch {
+        resolve(null);
+      }
+    });
+    return this.idbPromise;
+  }
+
+  private async hydrateTTSCacheFromIDB(): Promise<void> {
+    try {
+      const db = await this.openTTSIndexedDB();
+      if (!db) return;
+      const rows = await new Promise<any[]>((resolve) => {
+        try {
+          const tx = db.transaction(TTS_IDB_STORE, 'readonly');
+          const store = tx.objectStore(TTS_IDB_STORE);
+          const getAllReq = store.getAll();
+          getAllReq.onsuccess = () => resolve(Array.isArray(getAllReq.result) ? getAllReq.result : []);
+          getAllReq.onerror = () => resolve([]);
+        } catch {
+          resolve([]);
+        }
+      });
+      for (const row of rows) {
+        if (!row?.key) continue;
+        const bytes = toUint8Array(row.bytes);
+        if (bytes && bytes.byteLength > 0) {
+          this.ttsAudioCache.set(String(row.key), {
+            key: String(row.key),
+            lang: (row.lang as any) || 'en',
+            providerId: String(row.providerId || 'auto'),
+            providerName: String(row.providerName || 'MyPC AI'),
+            modelName: String(row.modelName || 'MyPC Neural TTS'),
+            mime: String(row.mime || 'audio/wav'),
+            bytes,
+            updatedAt: Number(row.updatedAt || Date.now()),
+          });
+        }
+      }
+      this.lastTTSStatus.cachedCount = this.ttsAudioCache.size;
+    } catch {}
+  }
+
+  private saveCachedTTSAudio(entry: CachedTTSAudioEntry) {
+    this.ttsAudioCache.set(entry.key, entry);
+    if (this.ttsAudioCache.size > MAX_IDB_PHRASES) {
+      const oldest = Array.from(this.ttsAudioCache.values()).sort(
+        (a, b) => a.updatedAt - b.updatedAt
+      )[0];
+      if (oldest) {
+        this.ttsAudioCache.delete(oldest.key);
+      }
+    }
+    this.lastTTSStatus.cachedCount = this.ttsAudioCache.size;
+    this.persistTTSCacheToLocalStorage();
+
+    this.openTTSIndexedDB()
+      .then((db) => {
+        if (!db) return;
+        try {
+          const tx = db.transaction(TTS_IDB_STORE, 'readwrite');
+          const store = tx.objectStore(TTS_IDB_STORE);
+          store.put({
+            key: entry.key,
+            lang: entry.lang,
+            providerId: entry.providerId,
+            providerName: entry.providerName,
+            modelName: entry.modelName,
+            mime: entry.mime,
+            bytes: entry.bytes,
+            updatedAt: entry.updatedAt,
+          });
+        } catch {}
+      })
+      .catch(() => {});
+  }
+
+  public async clearTTSCache(): Promise<void> {
+    this.ttsAudioCache.clear();
+    this.inFlightSynthesis.clear();
+    this.lastTTSStatus = {
+      ...this.lastTTSStatus,
+      fromCache: false,
+      cachedCount: 0,
+    };
+    try {
+      if (typeof localStorage !== 'undefined') {
+        localStorage.removeItem(TTS_LS_KEY);
+      }
+    } catch {}
+    try {
+      const db = await this.openTTSIndexedDB();
+      if (db) {
+        await new Promise<void>((resolve) => {
+          try {
+            const tx = db.transaction(TTS_IDB_STORE, 'readwrite');
+            const store = tx.objectStore(TTS_IDB_STORE);
+            const req = store.clear();
+            req.onsuccess = () => resolve();
+            req.onerror = () => resolve();
+          } catch {
+            resolve();
+          }
+        });
+      }
+    } catch {}
+  }
 
   /**
    * Queries MyPC.ai.providers() to list all configured AI providers on the user's MyPC system
@@ -662,6 +896,8 @@ class MyPCService {
       modelName: hasWebSpeech ? 'System Voice Synthesizer' : 'None',
       engine: hasWebSpeech ? 'web_speech' : 'none',
       speechSupported: hasWebSpeech,
+      fromCache: this.lastTTSStatus.fromCache,
+      cachedCount: this.ttsAudioCache.size,
       lastError: this.lastTTSStatus.lastError,
     };
     this.lastTTSStatus = status;
@@ -669,7 +905,10 @@ class MyPCService {
   }
 
   public getLastTTSStatus(): MyPCTTSStatus {
-    return this.lastTTSStatus;
+    return {
+      ...this.lastTTSStatus,
+      cachedCount: this.ttsAudioCache.size,
+    };
   }
 
   /**
@@ -776,8 +1015,9 @@ class MyPCService {
       this.speechCtx = ctx;
       try {
         if (ctx.state === 'suspended') {
+          const resumePromise = ctx.resume().catch(() => {});
           await Promise.race([
-            ctx.resume().catch(() => {}),
+            resumePromise,
             new Promise((r) => setTimeout(r, 150)),
           ]);
         }
@@ -897,8 +1137,172 @@ class MyPCService {
   }
 
   /**
-   * Speaks Checko's lesson text using MyPC.ai.generate({ provider, task: 'speech' }) as documented in MyPC SDK v2.8.0+,
-   * automatically routing to a speech-capable provider if the default provider is chat-only,
+   * Synthesizes TTS audio via MyPC.ai.generate (or joins an already in-flight synthesis for the same phrase)
+   * and stores the playable audio buffer in the persistent local cache (in-memory Map + IndexedDB + localStorage).
+   */
+  private async synthesizeAndCachePhrase(
+    cleanText: string,
+    lang: 'en' | 'fr' | 'es' | 'ar',
+    prefId: string
+  ): Promise<CachedTTSAudioEntry | null> {
+    const cacheKey = this.getTTSCacheKey(lang, cleanText);
+    const existingInFlight = this.inFlightSynthesis.get(cacheKey);
+    if (existingInFlight) {
+      return existingInFlight;
+    }
+
+    const localeMap: Record<'en' | 'fr' | 'es' | 'ar', string> = {
+      en: 'en-US',
+      fr: 'fr-FR',
+      es: 'es-US',
+      ar: 'ar-SA',
+    };
+    const locale = localeMap[lang] || 'en-US';
+    const MyPC = typeof window !== 'undefined' ? (window as any).MyPC : null;
+    if (prefId === 'web_speech' || !MyPC?.ai || typeof MyPC.ai.generate !== 'function') {
+      return null;
+    }
+
+    const synthPromise = (async (): Promise<CachedTTSAudioEntry | null> => {
+      try {
+        const providers = await this.getAIProviders();
+        const candidates: MyPCAIProviderInfo[] = [];
+        if (prefId !== 'auto') {
+          const chosen = providers.find((p) => p.id === prefId && p.tasks.speech);
+          if (chosen) candidates.push(chosen);
+        }
+        const defaultSpeech = providers.find((p) => p.isDefault && p.tasks.speech);
+        if (defaultSpeech && !candidates.some((c) => c.id === defaultSpeech.id)) {
+          candidates.push(defaultSpeech);
+        }
+        for (const p of providers) {
+          if (p.tasks.speech && !candidates.some((c) => c.id === p.id)) {
+            if (
+              p.type === 'nvidia' &&
+              lang === 'ar' &&
+              providers.some((other) => other.tasks.speech && other.type !== 'nvidia')
+            ) {
+              continue;
+            }
+            candidates.push(p);
+          }
+        }
+
+        const providerIdsToTry: (string | undefined)[] =
+          candidates.length > 0 ? candidates.map((c) => c.id) : [undefined];
+
+        for (const candidateId of providerIdsToTry) {
+          const candidateInfo = candidates.find((c) => c.id === candidateId);
+          if (candidateInfo?.type === 'nvidia' && lang === 'ar') {
+            continue;
+          }
+
+          try {
+            const reqOpts: Record<string, any> = {
+              task: 'speech',
+              output: 'audio',
+              prompt: cleanText,
+              language: locale,
+            };
+            if (candidateId) {
+              reqOpts.provider = candidateId;
+            }
+
+            const job = MyPC.ai.generate(reqOpts);
+            this.activeAIJob = job;
+            const res = await job;
+            if (this.activeAIJob === job) {
+              this.activeAIJob = null;
+            }
+
+            const audioPart =
+              res?.parts?.find((pt: any) => pt?.type === 'audio' && pt?.data) ||
+              res?.parts?.[0];
+            const rawBytes =
+              toUint8Array(audioPart?.data) ||
+              toUint8Array(res?.audio) ||
+              toUint8Array(res?.data);
+
+            if (rawBytes && rawBytes.byteLength > 0) {
+              const activeModel =
+                res?.model ||
+                candidateInfo?.resolvedSpeechModel ||
+                'MyPC Neural TTS';
+              const activeProvName =
+                candidateInfo?.name || res?.provider || 'MyPC AI';
+              const playable = ensurePlayableAudioContainer(
+                rawBytes,
+                audioPart?.mime || res?.mime || 'audio/wav'
+              );
+              const entry: CachedTTSAudioEntry = {
+                key: cacheKey,
+                lang,
+                providerId: candidateId || 'auto',
+                providerName: activeProvName,
+                modelName: activeModel,
+                mime: playable.mime,
+                bytes: playable.bytes,
+                updatedAt: Date.now(),
+              };
+              this.saveCachedTTSAudio(entry);
+              return entry;
+            }
+          } catch (genErr: any) {
+            this.activeAIJob = null;
+            const errMsg = genErr?.message || String(genErr || 'MyPC TTS error');
+            this.lastTTSStatus = {
+              ...this.lastTTSStatus,
+              cachedCount: this.ttsAudioCache.size,
+              lastError: errMsg,
+            };
+          }
+        }
+      } catch (outerErr: any) {
+        this.lastTTSStatus = {
+          ...this.lastTTSStatus,
+          cachedCount: this.ttsAudioCache.size,
+          lastError: outerErr?.message || String(outerErr || 'MyPC AI unavailable'),
+        };
+      }
+      return null;
+    })();
+
+    this.inFlightSynthesis.set(cacheKey, synthPromise);
+    try {
+      return await synthPromise;
+    } finally {
+      this.inFlightSynthesis.delete(cacheKey);
+    }
+  }
+
+  /**
+   * Silently pre-caches a phrase into local storage/IndexedDB if not already cached,
+   * so that opening the Learn screen can play the greeting instantaneously without calling AI every time.
+   */
+  public async precacheText(
+    text: string,
+    lang: 'en' | 'fr' | 'es' | 'ar' = 'en',
+    preferredProviderId?: string
+  ): Promise<boolean> {
+    const cleanText = (text || '').trim();
+    if (!cleanText) return false;
+    const savedConfig = this.load<any>('config', {});
+    const prefId = preferredProviderId || savedConfig?.tts_provider_id || 'auto';
+    if (prefId === 'web_speech') return false;
+
+    const cacheKey = this.getTTSCacheKey(lang, cleanText);
+    const existing = this.ttsAudioCache.get(cacheKey);
+    if (existing && (prefId === 'auto' || existing.providerId === prefId)) {
+      return true;
+    }
+
+    const synthesized = await this.synthesizeAndCachePhrase(cleanText, lang, prefId);
+    return Boolean(synthesized);
+  }
+
+  /**
+   * Speaks Checko's lesson text using the local TTS phrase cache first (0ms latency, 0 AI calls on repeat),
+   * synthesizing via MyPC.ai.generate({ provider, task: 'speech' }) on a cache miss and caching the result locally,
    * and falling back to Web Speech API (speechSynthesis) if AI TTS is unavailable.
    */
   public async speakText(
@@ -945,115 +1349,62 @@ class MyPCService {
     const savedConfig = this.load<any>('config', {});
     const prefId = preferredProviderId || savedConfig?.tts_provider_id || 'auto';
     const MyPC = typeof window !== 'undefined' ? (window as any).MyPC : null;
+    const cacheKey = this.getTTSCacheKey(lang, cleanText);
 
-    // 1. Try MyPC.ai.generate({ provider, task: 'speech', output: 'audio', prompt, language })
-    if (prefId !== 'web_speech' && MyPC?.ai && typeof MyPC.ai.generate === 'function') {
-      try {
-        const providers = await this.getAIProviders();
-        if (currentCallId !== this.speechAbortId) return;
-
-        // Build ordered candidate list of speech-capable providers
-        const candidates: MyPCAIProviderInfo[] = [];
-        if (prefId !== 'auto') {
-          const chosen = providers.find((p) => p.id === prefId && p.tasks.speech);
-          if (chosen) candidates.push(chosen);
-        }
-        const defaultSpeech = providers.find((p) => p.isDefault && p.tasks.speech);
-        if (defaultSpeech && !candidates.some((c) => c.id === defaultSpeech.id)) {
-          candidates.push(defaultSpeech);
-        }
-        for (const p of providers) {
-          if (p.tasks.speech && !candidates.some((c) => c.id === p.id)) {
-            // Note: NVIDIA Magpie supports en-US, es-US, fr-FR, de-DE (not ar-SA)
-            if (
-              p.type === 'nvidia' &&
-              lang === 'ar' &&
-              providers.some((other) => other.tasks.speech && other.type !== 'nvidia')
-            ) {
-              continue;
-            }
-            candidates.push(p);
-          }
-        }
-
-        // If providers() returned empty (or older SDK), still try calling generate once with default
-        const providerIdsToTry: (string | undefined)[] =
-          candidates.length > 0 ? candidates.map((c) => c.id) : [undefined];
-
-        for (const candidateId of providerIdsToTry) {
-          const candidateInfo = candidates.find((c) => c.id === candidateId);
-          // Skip NVIDIA Magpie when speaking Arabic if no custom model is set, as Magpie throws on ar-SA
-          if (candidateInfo?.type === 'nvidia' && lang === 'ar') {
-            continue;
-          }
-
-          try {
-            const reqOpts: Record<string, any> = {
-              task: 'speech',
-              output: 'audio',
-              prompt: cleanText,
-              language: locale,
-            };
-            if (candidateId) {
-              reqOpts.provider = candidateId;
-            }
-
-            const job = MyPC.ai.generate(reqOpts);
-            this.activeAIJob = job;
-            const res = await job;
-            if (this.activeAIJob === job) {
-              this.activeAIJob = null;
-            }
-            if (currentCallId !== this.speechAbortId) return;
-
-            const audioPart =
-              res?.parts?.find((pt: any) => pt?.type === 'audio' && pt?.data) ||
-              res?.parts?.[0];
-            const rawBytes =
-              toUint8Array(audioPart?.data) ||
-              toUint8Array(res?.audio) ||
-              toUint8Array(res?.data);
-            if (rawBytes && rawBytes.byteLength > 0) {
-              const activeModel =
-                res?.model ||
-                candidateInfo?.resolvedSpeechModel ||
-                'MyPC Neural TTS';
-              const activeProvName =
-                candidateInfo?.name || res?.provider || 'MyPC AI';
-
-              this.lastTTSStatus = {
-                providerId: candidateId || 'auto',
-                providerName: activeProvName,
-                modelName: activeModel,
-                engine: 'mypc_ai',
-                speechSupported: true,
-                lastError: undefined,
-              };
-
-              const played = await this.playRawAudioBytes(
-                rawBytes,
-                audioPart?.mime || res?.mime || 'audio/wav',
-                currentCallId
-              );
-              if (played) {
-                return;
-              }
-            }
-          } catch (genErr: any) {
-            this.activeAIJob = null;
-            const errMsg = genErr?.message || String(genErr || 'MyPC TTS error');
-            this.lastTTSStatus = {
-              ...this.lastTTSStatus,
-              lastError: errMsg,
-            };
-          }
-        }
-      } catch (outerErr: any) {
-        if (currentCallId !== this.speechAbortId) return;
+    // 0. Check Local TTS Phrase Cache FIRST (Synchronous in-memory hit -> 0 AI calls, instant playback!)
+    if (prefId !== 'web_speech') {
+      const cached = this.ttsAudioCache.get(cacheKey);
+      if (cached && cached.bytes && cached.bytes.byteLength > 0 && (prefId === 'auto' || cached.providerId === prefId)) {
+        cached.updatedAt = Date.now();
         this.lastTTSStatus = {
-          ...this.lastTTSStatus,
-          lastError: outerErr?.message || String(outerErr || 'MyPC AI unavailable'),
+          providerId: cached.providerId || 'auto',
+          providerName: `${cached.providerName || 'MyPC AI'} (Local Cache)`,
+          modelName: cached.modelName || 'Cached Neural TTS',
+          engine: 'mypc_ai',
+          speechSupported: true,
+          fromCache: true,
+          cachedCount: this.ttsAudioCache.size,
+          lastError: undefined,
         };
+        const playedCached = await this.playRawAudioBytes(
+          cached.bytes,
+          cached.mime || 'audio/wav',
+          currentCallId
+        );
+        if (playedCached) {
+          return;
+        }
+      }
+    }
+
+    // 1. Cache Miss -> Synthesize via MyPC.ai.generate({ provider, task: 'speech', output: 'audio', prompt, language }) and cache locally
+    if (prefId !== 'web_speech' && MyPC?.ai && typeof MyPC.ai.generate === 'function') {
+      const synthesized = await this.synthesizeAndCachePhrase(cleanText, lang, prefId);
+      if (currentCallId !== this.speechAbortId) return;
+
+      const entryToPlay = synthesized || this.ttsAudioCache.get(cacheKey) || null;
+      if (entryToPlay && entryToPlay.bytes && entryToPlay.bytes.byteLength > 0) {
+        const isFallbackCache = !synthesized;
+        this.lastTTSStatus = {
+          providerId: entryToPlay.providerId || 'auto',
+          providerName: isFallbackCache
+            ? `${entryToPlay.providerName} (Local Cache)`
+            : entryToPlay.providerName,
+          modelName: entryToPlay.modelName,
+          engine: 'mypc_ai',
+          speechSupported: true,
+          fromCache: isFallbackCache,
+          cachedCount: this.ttsAudioCache.size,
+          lastError: undefined,
+        };
+        const played = await this.playRawAudioBytes(
+          entryToPlay.bytes,
+          entryToPlay.mime || 'audio/wav',
+          currentCallId
+        );
+        if (played) {
+          return;
+        }
       }
     }
 

@@ -1,7 +1,8 @@
+/* MyPC Chess Build v4.3.7 */
 var __defProp = Object.defineProperty;
 var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
 var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "symbol" ? key + "" : key, value);
-/*! MyPC Chess Build v4.3.6 */
+/*! MyPC Chess Build */
 import { R as React, j as jsxRuntimeExports, T as Type, a as RotateCcw, V as Volume2, b as VolumeX, M as Music, S as SlidersVertical, P as Pause, c as Plus, r as reactExports, C as ChevronsLeft, d as ChevronLeft, e as ChevronRight, f as ChevronsRight, X, U as Undo2, g as MessageSquare, h as Send, B as Bot, i as Users, W as Wifi, Z as Zap, F as Flame, k as Clock, l as Flag, H as Handshake, m as Check, n as Play, o as TriangleAlert, L as LogOut, E as Eye, p as Crown, q as ShieldAlert, s as Trophy, t as TrendingUp, u as TrendingDown, v as Swords, w as Sparkles, x as House, y as Chess, A as ArrowLeft, z as ChartColumn, D as EyeOff, G as GraduationCap, I as Compass, J as Monitor, K as Keyboard, N as Cpu, O as Minus, Q as Tv, Y as Gamepad2, _ as RefreshCw, $ as LoaderCircle, a0 as CircleAlert, a1 as History, a2 as FileText, a3 as Trash2, a4 as Award, a5 as Calendar, a6 as BookOpen, a7 as CircleCheck, a8 as Key, a9 as Puzzle, aa as LayoutGrid, ab as Lock, ac as Lightbulb, ad as client } from "./vendor.js";
 (function polyfill() {
   const relList = document.createElement("link").relList;
@@ -3755,6 +3756,21 @@ function toUint8Array(data) {
   }
   return null;
 }
+function uint8ToBase64(bytes) {
+  let binary = "";
+  const chunkSize = 32768;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    const sub = bytes.subarray(i, i + chunkSize);
+    binary += String.fromCharCode.apply(null, Array.from(sub));
+  }
+  return btoa(binary);
+}
+const TTS_IDB_NAME = "mypc_chess_tts_cache_v1";
+const TTS_IDB_STORE = "phrases";
+const TTS_LS_KEY = "mypc_chess_tts_ls_cache_v1";
+const MAX_IDB_PHRASES = 250;
+const MAX_LS_PHRASES = 12;
+const MAX_LS_JSON_CHARS = 85e4;
 function ensurePlayableAudioContainer(bytes, rawMime) {
   const mimeLower = (rawMime || "").toLowerCase();
   if (bytes.byteLength >= 12) {
@@ -3830,14 +3846,22 @@ class MyPCService {
     __publicField(this, "speechAbortId", 0);
     __publicField(this, "cachedProviders", null);
     __publicField(this, "cachedProvidersAt", 0);
+    __publicField(this, "ttsAudioCache", /* @__PURE__ */ new Map());
+    __publicField(this, "inFlightSynthesis", /* @__PURE__ */ new Map());
+    __publicField(this, "idbPromise", null);
     __publicField(this, "lastTTSStatus", {
       providerId: "auto",
       providerName: "Detecting MyPC AI...",
       modelName: "Auto",
       engine: "mypc_ai",
-      speechSupported: true
+      speechSupported: true,
+      fromCache: false,
+      cachedCount: 0
     });
     this.checkAvailability();
+    this.hydrateTTSCacheFromLocalStorage();
+    this.hydrateTTSCacheFromIDB().catch(() => {
+    });
     this.setupAudioUnlockListeners();
   }
   setupAudioUnlockListeners() {
@@ -4142,6 +4166,197 @@ class MyPCService {
       throw fetchErr;
     }
   }
+  getTTSCacheKey(lang, text) {
+    const norm = (text || "").trim().replace(/\s+/g, " ").toLowerCase();
+    return `${lang}::${norm}`;
+  }
+  getCachedPhrasesCount() {
+    return this.ttsAudioCache.size;
+  }
+  isPhraseCached(text, lang = "en") {
+    const clean = (text || "").trim();
+    if (!clean) return false;
+    return this.ttsAudioCache.has(this.getTTSCacheKey(lang, clean));
+  }
+  hydrateTTSCacheFromLocalStorage() {
+    if (typeof window === "undefined" || typeof localStorage === "undefined") return;
+    try {
+      const raw = localStorage.getItem(TTS_LS_KEY);
+      if (!raw) return;
+      const list = JSON.parse(raw);
+      if (!Array.isArray(list)) return;
+      for (const item of list) {
+        if (!(item == null ? void 0 : item.key) || !(item == null ? void 0 : item.b64)) continue;
+        const bytes = toUint8Array(item.b64);
+        if (bytes && bytes.byteLength > 0) {
+          this.ttsAudioCache.set(String(item.key), {
+            key: String(item.key),
+            lang: item.lang || "en",
+            providerId: String(item.providerId || "auto"),
+            providerName: String(item.providerName || "MyPC AI"),
+            modelName: String(item.modelName || "MyPC Neural TTS"),
+            mime: String(item.mime || "audio/wav"),
+            bytes,
+            updatedAt: Number(item.updatedAt || Date.now())
+          });
+        }
+      }
+      this.lastTTSStatus.cachedCount = this.ttsAudioCache.size;
+    } catch {
+    }
+  }
+  persistTTSCacheToLocalStorage() {
+    if (typeof window === "undefined" || typeof localStorage === "undefined") return;
+    try {
+      const entries = Array.from(this.ttsAudioCache.values()).filter((e) => e.bytes && e.bytes.byteLength > 0 && e.bytes.byteLength <= 24e4).sort((a, b) => b.updatedAt - a.updatedAt).slice(0, MAX_LS_PHRASES);
+      const serialized = [];
+      let approxChars = 0;
+      for (const e of entries) {
+        const b64 = uint8ToBase64(e.bytes);
+        if (approxChars + b64.length > MAX_LS_JSON_CHARS) break;
+        approxChars += b64.length + 180;
+        serialized.push({
+          key: e.key,
+          lang: e.lang,
+          providerId: e.providerId,
+          providerName: e.providerName,
+          modelName: e.modelName,
+          mime: e.mime,
+          b64,
+          updatedAt: e.updatedAt
+        });
+      }
+      localStorage.setItem(TTS_LS_KEY, JSON.stringify(serialized));
+    } catch {
+    }
+  }
+  openTTSIndexedDB() {
+    if (typeof window === "undefined" || typeof indexedDB === "undefined") {
+      return Promise.resolve(null);
+    }
+    if (this.idbPromise) {
+      return this.idbPromise;
+    }
+    this.idbPromise = new Promise((resolve) => {
+      try {
+        const req = indexedDB.open(TTS_IDB_NAME, 1);
+        req.onupgradeneeded = () => {
+          try {
+            const db = req.result;
+            if (!db.objectStoreNames.contains(TTS_IDB_STORE)) {
+              db.createObjectStore(TTS_IDB_STORE, { keyPath: "key" });
+            }
+          } catch {
+          }
+        };
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => resolve(null);
+        req.onblocked = () => resolve(null);
+      } catch {
+        resolve(null);
+      }
+    });
+    return this.idbPromise;
+  }
+  async hydrateTTSCacheFromIDB() {
+    try {
+      const db = await this.openTTSIndexedDB();
+      if (!db) return;
+      const rows = await new Promise((resolve) => {
+        try {
+          const tx = db.transaction(TTS_IDB_STORE, "readonly");
+          const store = tx.objectStore(TTS_IDB_STORE);
+          const getAllReq = store.getAll();
+          getAllReq.onsuccess = () => resolve(Array.isArray(getAllReq.result) ? getAllReq.result : []);
+          getAllReq.onerror = () => resolve([]);
+        } catch {
+          resolve([]);
+        }
+      });
+      for (const row of rows) {
+        if (!(row == null ? void 0 : row.key)) continue;
+        const bytes = toUint8Array(row.bytes);
+        if (bytes && bytes.byteLength > 0) {
+          this.ttsAudioCache.set(String(row.key), {
+            key: String(row.key),
+            lang: row.lang || "en",
+            providerId: String(row.providerId || "auto"),
+            providerName: String(row.providerName || "MyPC AI"),
+            modelName: String(row.modelName || "MyPC Neural TTS"),
+            mime: String(row.mime || "audio/wav"),
+            bytes,
+            updatedAt: Number(row.updatedAt || Date.now())
+          });
+        }
+      }
+      this.lastTTSStatus.cachedCount = this.ttsAudioCache.size;
+    } catch {
+    }
+  }
+  saveCachedTTSAudio(entry) {
+    this.ttsAudioCache.set(entry.key, entry);
+    if (this.ttsAudioCache.size > MAX_IDB_PHRASES) {
+      const oldest = Array.from(this.ttsAudioCache.values()).sort(
+        (a, b) => a.updatedAt - b.updatedAt
+      )[0];
+      if (oldest) {
+        this.ttsAudioCache.delete(oldest.key);
+      }
+    }
+    this.lastTTSStatus.cachedCount = this.ttsAudioCache.size;
+    this.persistTTSCacheToLocalStorage();
+    this.openTTSIndexedDB().then((db) => {
+      if (!db) return;
+      try {
+        const tx = db.transaction(TTS_IDB_STORE, "readwrite");
+        const store = tx.objectStore(TTS_IDB_STORE);
+        store.put({
+          key: entry.key,
+          lang: entry.lang,
+          providerId: entry.providerId,
+          providerName: entry.providerName,
+          modelName: entry.modelName,
+          mime: entry.mime,
+          bytes: entry.bytes,
+          updatedAt: entry.updatedAt
+        });
+      } catch {
+      }
+    }).catch(() => {
+    });
+  }
+  async clearTTSCache() {
+    this.ttsAudioCache.clear();
+    this.inFlightSynthesis.clear();
+    this.lastTTSStatus = {
+      ...this.lastTTSStatus,
+      fromCache: false,
+      cachedCount: 0
+    };
+    try {
+      if (typeof localStorage !== "undefined") {
+        localStorage.removeItem(TTS_LS_KEY);
+      }
+    } catch {
+    }
+    try {
+      const db = await this.openTTSIndexedDB();
+      if (db) {
+        await new Promise((resolve) => {
+          try {
+            const tx = db.transaction(TTS_IDB_STORE, "readwrite");
+            const store = tx.objectStore(TTS_IDB_STORE);
+            const req = store.clear();
+            req.onsuccess = () => resolve();
+            req.onerror = () => resolve();
+          } catch {
+            resolve();
+          }
+        });
+      }
+    } catch {
+    }
+  }
   /**
    * Queries MyPC.ai.providers() to list all configured AI providers on the user's MyPC system
    * along with their speech capability and resolved TTS model name.
@@ -4261,13 +4476,18 @@ class MyPCService {
       modelName: hasWebSpeech ? "System Voice Synthesizer" : "None",
       engine: hasWebSpeech ? "web_speech" : "none",
       speechSupported: hasWebSpeech,
+      fromCache: this.lastTTSStatus.fromCache,
+      cachedCount: this.ttsAudioCache.size,
       lastError: this.lastTTSStatus.lastError
     };
     this.lastTTSStatus = status;
     return status;
   }
   getLastTTSStatus() {
-    return this.lastTTSStatus;
+    return {
+      ...this.lastTTSStatus,
+      cachedCount: this.ttsAudioCache.size
+    };
   }
   /**
    * Detects current language directly from MyPC user basic configs (info.lang / MyPC.info().lang: 'en' | 'fr' | 'es' | 'ar'),
@@ -4363,9 +4583,10 @@ class MyPCService {
       this.speechCtx = ctx;
       try {
         if (ctx.state === "suspended") {
+          const resumePromise = ctx.resume().catch(() => {
+          });
           await Promise.race([
-            ctx.resume().catch(() => {
-            }),
+            resumePromise,
             new Promise((r) => setTimeout(r, 150))
           ]);
         }
@@ -4477,28 +4698,15 @@ class MyPCService {
     return false;
   }
   /**
-   * Speaks Checko's lesson text using MyPC.ai.generate({ provider, task: 'speech' }) as documented in MyPC SDK v2.8.0+,
-   * automatically routing to a speech-capable provider if the default provider is chat-only,
-   * and falling back to Web Speech API (speechSynthesis) if AI TTS is unavailable.
+   * Synthesizes TTS audio via MyPC.ai.generate (or joins an already in-flight synthesis for the same phrase)
+   * and stores the playable audio buffer in the persistent local cache (in-memory Map + IndexedDB + localStorage).
    */
-  async speakText(text, lang = "en", callbacks, preferredProviderId, forceRestart = false) {
-    var _a, _b, _c, _d, _e, _f, _g;
-    const cleanText = (text || "").trim();
-    if (!cleanText) {
-      (_a = callbacks == null ? void 0 : callbacks.onEnd) == null ? void 0 : _a.call(callbacks);
-      return;
+  async synthesizeAndCachePhrase(cleanText, lang, prefId) {
+    const cacheKey = this.getTTSCacheKey(lang, cleanText);
+    const existingInFlight = this.inFlightSynthesis.get(cacheKey);
+    if (existingInFlight) {
+      return existingInFlight;
     }
-    if (!forceRestart && this.inFlightActive && this.inFlightText === cleanText && Date.now() - this.inFlightStartedAt < 2500) {
-      this.activeSpeechCallbacks = callbacks;
-      (_b = callbacks == null ? void 0 : callbacks.onStart) == null ? void 0 : _b.call(callbacks);
-      return;
-    }
-    this.stopSpeech();
-    this.activeSpeechCallbacks = callbacks;
-    this.inFlightText = cleanText;
-    this.inFlightStartedAt = Date.now();
-    this.inFlightActive = true;
-    const currentCallId = ++this.speechAbortId;
     const localeMap = {
       en: "en-US",
       fr: "fr-FR",
@@ -4506,13 +4714,14 @@ class MyPCService {
       ar: "ar-SA"
     };
     const locale = localeMap[lang] || "en-US";
-    const savedConfig = this.load("config", {});
-    const prefId = preferredProviderId || (savedConfig == null ? void 0 : savedConfig.tts_provider_id) || "auto";
     const MyPC = typeof window !== "undefined" ? window.MyPC : null;
-    if (prefId !== "web_speech" && (MyPC == null ? void 0 : MyPC.ai) && typeof MyPC.ai.generate === "function") {
+    if (prefId === "web_speech" || !(MyPC == null ? void 0 : MyPC.ai) || typeof MyPC.ai.generate !== "function") {
+      return null;
+    }
+    const synthPromise = (async () => {
+      var _a, _b;
       try {
         const providers = await this.getAIProviders();
-        if (currentCallId !== this.speechAbortId) return;
         const candidates = [];
         if (prefId !== "auto") {
           const chosen = providers.find((p) => p.id === prefId && p.tasks.speech);
@@ -4552,44 +4761,154 @@ class MyPCService {
             if (this.activeAIJob === job) {
               this.activeAIJob = null;
             }
-            if (currentCallId !== this.speechAbortId) return;
-            const audioPart = ((_c = res == null ? void 0 : res.parts) == null ? void 0 : _c.find((pt) => (pt == null ? void 0 : pt.type) === "audio" && (pt == null ? void 0 : pt.data))) || ((_d = res == null ? void 0 : res.parts) == null ? void 0 : _d[0]);
+            const audioPart = ((_a = res == null ? void 0 : res.parts) == null ? void 0 : _a.find((pt) => (pt == null ? void 0 : pt.type) === "audio" && (pt == null ? void 0 : pt.data))) || ((_b = res == null ? void 0 : res.parts) == null ? void 0 : _b[0]);
             const rawBytes = toUint8Array(audioPart == null ? void 0 : audioPart.data) || toUint8Array(res == null ? void 0 : res.audio) || toUint8Array(res == null ? void 0 : res.data);
             if (rawBytes && rawBytes.byteLength > 0) {
               const activeModel = (res == null ? void 0 : res.model) || (candidateInfo == null ? void 0 : candidateInfo.resolvedSpeechModel) || "MyPC Neural TTS";
               const activeProvName = (candidateInfo == null ? void 0 : candidateInfo.name) || (res == null ? void 0 : res.provider) || "MyPC AI";
-              this.lastTTSStatus = {
+              const playable = ensurePlayableAudioContainer(
+                rawBytes,
+                (audioPart == null ? void 0 : audioPart.mime) || (res == null ? void 0 : res.mime) || "audio/wav"
+              );
+              const entry = {
+                key: cacheKey,
+                lang,
                 providerId: candidateId || "auto",
                 providerName: activeProvName,
                 modelName: activeModel,
-                engine: "mypc_ai",
-                speechSupported: true,
-                lastError: void 0
+                mime: playable.mime,
+                bytes: playable.bytes,
+                updatedAt: Date.now()
               };
-              const played = await this.playRawAudioBytes(
-                rawBytes,
-                (audioPart == null ? void 0 : audioPart.mime) || (res == null ? void 0 : res.mime) || "audio/wav",
-                currentCallId
-              );
-              if (played) {
-                return;
-              }
+              this.saveCachedTTSAudio(entry);
+              return entry;
             }
           } catch (genErr) {
             this.activeAIJob = null;
             const errMsg = (genErr == null ? void 0 : genErr.message) || String(genErr || "MyPC TTS error");
             this.lastTTSStatus = {
               ...this.lastTTSStatus,
+              cachedCount: this.ttsAudioCache.size,
               lastError: errMsg
             };
           }
         }
       } catch (outerErr) {
-        if (currentCallId !== this.speechAbortId) return;
         this.lastTTSStatus = {
           ...this.lastTTSStatus,
+          cachedCount: this.ttsAudioCache.size,
           lastError: (outerErr == null ? void 0 : outerErr.message) || String(outerErr || "MyPC AI unavailable")
         };
+      }
+      return null;
+    })();
+    this.inFlightSynthesis.set(cacheKey, synthPromise);
+    try {
+      return await synthPromise;
+    } finally {
+      this.inFlightSynthesis.delete(cacheKey);
+    }
+  }
+  /**
+   * Silently pre-caches a phrase into local storage/IndexedDB if not already cached,
+   * so that opening the Learn screen can play the greeting instantaneously without calling AI every time.
+   */
+  async precacheText(text, lang = "en", preferredProviderId) {
+    const cleanText = (text || "").trim();
+    if (!cleanText) return false;
+    const savedConfig = this.load("config", {});
+    const prefId = preferredProviderId || (savedConfig == null ? void 0 : savedConfig.tts_provider_id) || "auto";
+    if (prefId === "web_speech") return false;
+    const cacheKey = this.getTTSCacheKey(lang, cleanText);
+    const existing = this.ttsAudioCache.get(cacheKey);
+    if (existing && (prefId === "auto" || existing.providerId === prefId)) {
+      return true;
+    }
+    const synthesized = await this.synthesizeAndCachePhrase(cleanText, lang, prefId);
+    return Boolean(synthesized);
+  }
+  /**
+   * Speaks Checko's lesson text using the local TTS phrase cache first (0ms latency, 0 AI calls on repeat),
+   * synthesizing via MyPC.ai.generate({ provider, task: 'speech' }) on a cache miss and caching the result locally,
+   * and falling back to Web Speech API (speechSynthesis) if AI TTS is unavailable.
+   */
+  async speakText(text, lang = "en", callbacks, preferredProviderId, forceRestart = false) {
+    var _a, _b, _c, _d, _e;
+    const cleanText = (text || "").trim();
+    if (!cleanText) {
+      (_a = callbacks == null ? void 0 : callbacks.onEnd) == null ? void 0 : _a.call(callbacks);
+      return;
+    }
+    if (!forceRestart && this.inFlightActive && this.inFlightText === cleanText && Date.now() - this.inFlightStartedAt < 2500) {
+      this.activeSpeechCallbacks = callbacks;
+      (_b = callbacks == null ? void 0 : callbacks.onStart) == null ? void 0 : _b.call(callbacks);
+      return;
+    }
+    this.stopSpeech();
+    this.activeSpeechCallbacks = callbacks;
+    this.inFlightText = cleanText;
+    this.inFlightStartedAt = Date.now();
+    this.inFlightActive = true;
+    const currentCallId = ++this.speechAbortId;
+    const localeMap = {
+      en: "en-US",
+      fr: "fr-FR",
+      es: "es-US",
+      ar: "ar-SA"
+    };
+    const locale = localeMap[lang] || "en-US";
+    const savedConfig = this.load("config", {});
+    const prefId = preferredProviderId || (savedConfig == null ? void 0 : savedConfig.tts_provider_id) || "auto";
+    const MyPC = typeof window !== "undefined" ? window.MyPC : null;
+    const cacheKey = this.getTTSCacheKey(lang, cleanText);
+    if (prefId !== "web_speech") {
+      const cached = this.ttsAudioCache.get(cacheKey);
+      if (cached && cached.bytes && cached.bytes.byteLength > 0 && (prefId === "auto" || cached.providerId === prefId)) {
+        cached.updatedAt = Date.now();
+        this.lastTTSStatus = {
+          providerId: cached.providerId || "auto",
+          providerName: `${cached.providerName || "MyPC AI"} (Local Cache)`,
+          modelName: cached.modelName || "Cached Neural TTS",
+          engine: "mypc_ai",
+          speechSupported: true,
+          fromCache: true,
+          cachedCount: this.ttsAudioCache.size,
+          lastError: void 0
+        };
+        const playedCached = await this.playRawAudioBytes(
+          cached.bytes,
+          cached.mime || "audio/wav",
+          currentCallId
+        );
+        if (playedCached) {
+          return;
+        }
+      }
+    }
+    if (prefId !== "web_speech" && (MyPC == null ? void 0 : MyPC.ai) && typeof MyPC.ai.generate === "function") {
+      const synthesized = await this.synthesizeAndCachePhrase(cleanText, lang, prefId);
+      if (currentCallId !== this.speechAbortId) return;
+      const entryToPlay = synthesized || this.ttsAudioCache.get(cacheKey) || null;
+      if (entryToPlay && entryToPlay.bytes && entryToPlay.bytes.byteLength > 0) {
+        const isFallbackCache = !synthesized;
+        this.lastTTSStatus = {
+          providerId: entryToPlay.providerId || "auto",
+          providerName: isFallbackCache ? `${entryToPlay.providerName} (Local Cache)` : entryToPlay.providerName,
+          modelName: entryToPlay.modelName,
+          engine: "mypc_ai",
+          speechSupported: true,
+          fromCache: isFallbackCache,
+          cachedCount: this.ttsAudioCache.size,
+          lastError: void 0
+        };
+        const played = await this.playRawAudioBytes(
+          entryToPlay.bytes,
+          entryToPlay.mime || "audio/wav",
+          currentCallId
+        );
+        if (played) {
+          return;
+        }
       }
     }
     try {
@@ -4602,7 +4921,7 @@ class MyPCService {
       try {
         const synth = window.speechSynthesis;
         if (synth.paused) {
-          (_e = synth.resume) == null ? void 0 : _e.call(synth);
+          (_c = synth.resume) == null ? void 0 : _c.call(synth);
         }
         const createAndSpeakUtterance = () => {
           var _a2, _b2, _c2;
@@ -4686,7 +5005,7 @@ class MyPCService {
       } catch {
       }
     }
-    (_g = (_f = this.activeSpeechCallbacks) == null ? void 0 : _f.onStart) == null ? void 0 : _g.call(_f);
+    (_e = (_d = this.activeSpeechCallbacks) == null ? void 0 : _d.onStart) == null ? void 0 : _e.call(_d);
     setTimeout(() => {
       var _a2, _b2;
       if (currentCallId === this.speechAbortId) {
@@ -5533,6 +5852,30 @@ const SettingsModal = ({
                   /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-[10px] uppercase font-bold text-slate-400 block", children: "Selected TTS AI Model" }),
                   /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-xs font-mono font-black text-emerald-400 truncate block mt-0.5", children: ttsStatus.modelName })
                 ] })
+              ] }),
+              /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center justify-between gap-2 px-2.5 py-2 rounded-xl bg-slate-900/80 border border-slate-800", children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "min-w-0", children: [
+                  /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "text-[10px] uppercase font-bold text-emerald-400 flex items-center gap-1.5", children: [
+                    /* @__PURE__ */ jsxRuntimeExports.jsx(Zap, { size: 11, className: "shrink-0" }),
+                    "Local Voice Phrase Cache (",
+                    ttsStatus.cachedCount ?? myPCService.getCachedPhrasesCount(),
+                    " saved)"
+                  ] }),
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-[10px] text-slate-400 block truncate mt-0.5", children: "Pronounced Checko phrases are cached locally so Learn screens play instantly without re-calling AI." })
+                ] }),
+                (ttsStatus.cachedCount ?? myPCService.getCachedPhrasesCount()) > 0 && /* @__PURE__ */ jsxRuntimeExports.jsx(
+                  "button",
+                  {
+                    type: "button",
+                    onClick: async () => {
+                      soundManager.playSound("select");
+                      await myPCService.clearTTSCache();
+                      setTtsStatus(myPCService.getLastTTSStatus());
+                    },
+                    className: "px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-red-950/80 text-slate-300 hover:text-red-300 border border-slate-700 text-[10px] font-bold shrink-0 transition-colors cursor-pointer",
+                    children: "Clear Cache"
+                  }
+                )
               ] }),
               /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "space-y-1.5", children: [
                 /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "text-[10px] uppercase font-bold text-slate-400 block", children: [
@@ -12171,6 +12514,21 @@ const App = () => {
     },
     [appState]
   );
+  reactExports.useEffect(() => {
+    if (appState !== "menu") return;
+    const timer = setTimeout(() => {
+      var _a, _b;
+      const savedTierId = myPCService.load("checko_selected_tier", "beginner");
+      const tier = LEARN_TIERS.find((t) => t.id === savedTierId) || LEARN_TIERS[0];
+      const lang = myPCService.getLanguage();
+      const greetingText = ((_a = tier == null ? void 0 : tier.checkoGreeting) == null ? void 0 : _a[lang]) || ((_b = tier == null ? void 0 : tier.checkoGreeting) == null ? void 0 : _b.en) || "Peep-peep! I am Checko! Pick a level and let's learn how every piece moves!";
+      if (!myPCService.isPhraseCached(greetingText, lang)) {
+        myPCService.precacheText(greetingText, lang, settings.tts_provider_id).catch(() => {
+        });
+      }
+    }, 350);
+    return () => clearTimeout(timer);
+  }, [appState, settings.tts_provider_id]);
   const openLearnAcademy = reactExports.useCallback(() => {
     var _a, _b;
     myPCService.unlockSpeechAudio();
@@ -14683,7 +15041,7 @@ const App = () => {
                     }
                   ),
                   /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "•" }),
-                  /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "px-2 py-0.5 rounded-lg bg-slate-900 border border-amber-500/40 text-amber-400 font-mono font-bold text-[11px]", children: "Build v4.3.6" })
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "px-2 py-0.5 rounded-lg bg-slate-900 border border-amber-500/40 text-amber-400 font-mono font-bold text-[11px]", children: "Build v4.3.7" })
                 ] })
               ] })
             ]

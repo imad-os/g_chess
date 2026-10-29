@@ -980,6 +980,32 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   </div>
                 </div>
 
+                {/* Local Voice Phrase Cache Status & Clear Button */}
+                <div className="flex items-center justify-between gap-2 px-2.5 py-2 rounded-xl bg-slate-900/80 border border-slate-800">
+                  <div className="min-w-0">
+                    <span className="text-[10px] uppercase font-bold text-emerald-400 flex items-center gap-1.5">
+                      <Zap size={11} className="shrink-0" />
+                      Local Voice Phrase Cache ({ttsStatus.cachedCount ?? myPCService.getCachedPhrasesCount()} saved)
+                    </span>
+                    <span className="text-[10px] text-slate-400 block truncate mt-0.5">
+                      Pronounced Checko phrases are cached locally so Learn screens play instantly without re-calling AI.
+                    </span>
+                  </div>
+                  {(ttsStatus.cachedCount ?? myPCService.getCachedPhrasesCount()) > 0 && (
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        soundManager.playSound('select');
+                        await myPCService.clearTTSCache();
+                        setTtsStatus(myPCService.getLastTTSStatus());
+                      }}
+                      className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-red-950/80 text-slate-300 hover:text-red-300 border border-slate-700 text-[10px] font-bold shrink-0 transition-colors cursor-pointer"
+                    >
+                      Clear Cache
+                    </button>
+                  )}
+                </div>
+
                 {/* Provider Selection Buttons */}
                 <div className="space-y-1.5">
                   <span className="text-[10px] uppercase font-bold text-slate-400 block">
