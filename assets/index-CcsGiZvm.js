@@ -1,7 +1,7 @@
 var __defProp = Object.defineProperty;
 var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
 var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "symbol" ? key + "" : key, value);
-/*! MyPC Chess Build v4.3.4 */
+/*! MyPC Chess Build v4.3.6 */
 import { R as React, j as jsxRuntimeExports, T as Type, a as RotateCcw, V as Volume2, b as VolumeX, M as Music, S as SlidersVertical, P as Pause, c as Plus, r as reactExports, C as ChevronsLeft, d as ChevronLeft, e as ChevronRight, f as ChevronsRight, X, U as Undo2, g as MessageSquare, h as Send, B as Bot, i as Users, W as Wifi, Z as Zap, F as Flame, k as Clock, l as Flag, H as Handshake, m as Check, n as Play, o as TriangleAlert, L as LogOut, E as Eye, p as Crown, q as ShieldAlert, s as Trophy, t as TrendingUp, u as TrendingDown, v as Swords, w as Sparkles, x as House, y as Chess, A as ArrowLeft, z as ChartColumn, D as EyeOff, G as GraduationCap, I as Compass, J as Monitor, K as Keyboard, N as Cpu, O as Minus, Q as Tv, Y as Gamepad2, _ as RefreshCw, $ as LoaderCircle, a0 as CircleAlert, a1 as History, a2 as FileText, a3 as Trash2, a4 as Award, a5 as Calendar, a6 as BookOpen, a7 as CircleCheck, a8 as Key, a9 as Puzzle, aa as LayoutGrid, ab as Lock, ac as Lightbulb, ad as client } from "./vendor.js";
 (function polyfill() {
   const relList = document.createElement("link").relList;
@@ -2164,6 +2164,13 @@ class SoundService {
   getSoundPack() {
     return this.soundPack;
   }
+  getAudioContext() {
+    if (!this.initialized) {
+      this.init();
+    }
+    this.resumeContext();
+    return this.ctx;
+  }
   resumeContext() {
     if (this.ctx && this.ctx.state === "suspended") {
       this.ctx.resume().catch(() => {
@@ -3692,11 +3699,26 @@ const DEFAULT_SPEECH_MODELS = {
   openai: "gpt-4o-mini-tts",
   nvidia: "magpie-multilingual"
 };
+function hasProviderTask(p, taskName) {
+  const tasksRaw = p == null ? void 0 : p.tasks;
+  if (tasksRaw) {
+    if (Array.isArray(tasksRaw)) {
+      return tasksRaw.includes(taskName);
+    }
+    if (typeof tasksRaw === "object" && taskName in tasksRaw) {
+      return Boolean(tasksRaw[taskName]);
+    }
+  }
+  if (taskName === "speech") {
+    const typeKey = String((p == null ? void 0 : p.type) || (p == null ? void 0 : p.preset) || "").toLowerCase();
+    return typeKey === "gemini" || typeKey === "openai" || typeKey === "nvidia";
+  }
+  return taskName === "chat";
+}
 function resolveProviderSpeechModel(p) {
-  var _a;
   const typeKey = String((p == null ? void 0 : p.type) || (p == null ? void 0 : p.preset) || "").toLowerCase();
   const rawModel = String((p == null ? void 0 : p.model) || "").trim();
-  const isSpeechCapable = Boolean((_a = p == null ? void 0 : p.tasks) == null ? void 0 : _a.speech);
+  const isSpeechCapable = hasProviderTask(p, "speech");
   if (!isSpeechCapable) {
     return rawModel ? `${rawModel} (No TTS)` : "Not supported";
   }
@@ -3733,6 +3755,56 @@ function toUint8Array(data) {
   }
   return null;
 }
+function ensurePlayableAudioContainer(bytes, rawMime) {
+  const mimeLower = (rawMime || "").toLowerCase();
+  if (bytes.byteLength >= 12) {
+    if (bytes[0] === 82 && bytes[1] === 73 && bytes[2] === 70 && bytes[3] === 70) {
+      return { bytes, mime: "audio/wav" };
+    }
+    if (bytes[0] === 73 && bytes[1] === 68 && bytes[2] === 51 || bytes[0] === 255 && (bytes[1] & 224) === 224) {
+      return { bytes, mime: "audio/mpeg" };
+    }
+    if (bytes[0] === 79 && bytes[1] === 103 && bytes[2] === 103 && bytes[3] === 83) {
+      return { bytes, mime: "audio/ogg" };
+    }
+    if (bytes[0] === 102 && bytes[1] === 76 && bytes[2] === 97 && bytes[3] === 67) {
+      return { bytes, mime: "audio/flac" };
+    }
+    if (bytes[4] === 102 && bytes[5] === 116 && bytes[6] === 121 && bytes[7] === 112) {
+      return { bytes, mime: "audio/mp4" };
+    }
+  }
+  const rateMatch = mimeLower.match(/rate=(\d+)/);
+  const sampleRate = rateMatch ? Math.max(8e3, parseInt(rateMatch[1], 10)) : 24e3;
+  const numChannels = 1;
+  const bitsPerSample = 16;
+  const dataLen = bytes.byteLength & -2;
+  const byteRate = sampleRate * numChannels * (bitsPerSample / 8);
+  const blockAlign = numChannels * (bitsPerSample / 8);
+  const wavBuffer = new ArrayBuffer(44 + dataLen);
+  const view = new DataView(wavBuffer);
+  const writeStr = (offset, str) => {
+    for (let i = 0; i < str.length; i++) {
+      view.setUint8(offset + i, str.charCodeAt(i));
+    }
+  };
+  writeStr(0, "RIFF");
+  view.setUint32(4, 36 + dataLen, true);
+  writeStr(8, "WAVE");
+  writeStr(12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, numChannels, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, byteRate, true);
+  view.setUint16(32, blockAlign, true);
+  view.setUint16(34, bitsPerSample, true);
+  writeStr(36, "data");
+  view.setUint32(40, dataLen, true);
+  const wavBytes = new Uint8Array(wavBuffer);
+  wavBytes.set(bytes.subarray(0, dataLen), 44);
+  return { bytes: wavBytes, mime: "audio/wav" };
+}
 class MyPCService {
   constructor() {
     __publicField(this, "isMyPCAvailable", false);
@@ -3742,11 +3814,22 @@ class MyPCService {
     __publicField(this, "profileName", "Player 1");
     __publicField(this, "systemLang", null);
     __publicField(this, "currentHandlers", {});
+    __publicField(this, "unlockListenersBound", false);
     __publicField(this, "speechCtx", null);
     __publicField(this, "activeSpeechSource", null);
+    __publicField(this, "sharedAudioEl", null);
+    __publicField(this, "sharedAudioUnlocked", false);
     __publicField(this, "activeAudioEl", null);
     __publicField(this, "activeAudioUrl", null);
+    __publicField(this, "activeUtterance", null);
+    __publicField(this, "activeAIJob", null);
+    __publicField(this, "activeSpeechCallbacks");
+    __publicField(this, "inFlightText", "");
+    __publicField(this, "inFlightStartedAt", 0);
+    __publicField(this, "inFlightActive", false);
     __publicField(this, "speechAbortId", 0);
+    __publicField(this, "cachedProviders", null);
+    __publicField(this, "cachedProvidersAt", 0);
     __publicField(this, "lastTTSStatus", {
       providerId: "auto",
       providerName: "Detecting MyPC AI...",
@@ -3755,6 +3838,64 @@ class MyPCService {
       speechSupported: true
     });
     this.checkAvailability();
+    this.setupAudioUnlockListeners();
+  }
+  setupAudioUnlockListeners() {
+    if (typeof window === "undefined" || this.unlockListenersBound) return;
+    this.unlockListenersBound = true;
+    const onUserGesture = () => {
+      this.unlockSpeechAudio();
+    };
+    window.addEventListener("pointerdown", onUserGesture, { passive: true, capture: true });
+    window.addEventListener("mousedown", onUserGesture, { passive: true, capture: true });
+    window.addEventListener("keydown", onUserGesture, { passive: true, capture: true });
+    window.addEventListener("touchstart", onUserGesture, { passive: true, capture: true });
+    window.addEventListener("click", onUserGesture, { passive: true, capture: true });
+  }
+  unlockSpeechAudio() {
+    var _a, _b, _c, _d;
+    try {
+      const ctx = soundManager.getAudioContext();
+      if (ctx) {
+        this.speechCtx = ctx;
+        if (ctx.state === "suspended") {
+          ctx.resume().catch(() => {
+          });
+        }
+      }
+      if (typeof window !== "undefined" && typeof Audio !== "undefined" && !this.sharedAudioUnlocked) {
+        this.sharedAudioUnlocked = true;
+        if (!this.sharedAudioEl) {
+          this.sharedAudioEl = new Audio();
+        }
+        const el = this.sharedAudioEl;
+        el.volume = 0;
+        el.src = "data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA";
+        const p = el.play();
+        if (p && typeof p.then === "function") {
+          p.then(() => {
+            el.pause();
+            el.currentTime = 0;
+            el.volume = 1;
+          }).catch(() => {
+            el.volume = 1;
+          });
+        } else {
+          el.volume = 1;
+        }
+      }
+      if (typeof window !== "undefined" && "speechSynthesis" in window) {
+        (_b = (_a = window.speechSynthesis).getVoices) == null ? void 0 : _b.call(_a);
+        if (window.speechSynthesis.paused) {
+          (_d = (_c = window.speechSynthesis).resume) == null ? void 0 : _d.call(_c);
+        }
+      }
+      if (!this.cachedProviders) {
+        this.getAIProviders().catch(() => {
+        });
+      }
+    } catch {
+    }
   }
   checkAvailability() {
     if (typeof window !== "undefined" && window.MyPC) {
@@ -3805,11 +3946,15 @@ class MyPCService {
           if (detectedLang) {
             this.systemLang = detectedLang;
           }
+          this.getAIProviders().catch(() => {
+          });
           (_d = (_c = this.currentHandlers).onInit) == null ? void 0 : _d.call(_c, info);
           (_e = MyPC.ready) == null ? void 0 : _e.call(MyPC);
         },
         onStart: () => {
           var _a, _b;
+          this.getAIProviders().catch(() => {
+          });
           (_b = (_a = this.currentHandlers).onStart) == null ? void 0 : _b.call(_a);
         },
         onPause: () => {
@@ -3826,6 +3971,9 @@ class MyPCService {
         },
         onInput: (action, pressed, repeat, dev) => {
           var _a, _b;
+          if (pressed) {
+            this.unlockSpeechAudio();
+          }
           (_b = (_a = this.currentHandlers).onInput) == null ? void 0 : _b.call(_a, action, pressed, repeat, dev);
         },
         onMenu: (id) => {
@@ -3998,36 +4146,39 @@ class MyPCService {
    * Queries MyPC.ai.providers() to list all configured AI providers on the user's MyPC system
    * along with their speech capability and resolved TTS model name.
    */
-  async getAIProviders() {
+  async getAIProviders(forceRefresh = false) {
     const MyPC = typeof window !== "undefined" ? window.MyPC : null;
     if (!(MyPC == null ? void 0 : MyPC.ai) || typeof MyPC.ai.providers !== "function") {
       return [];
     }
+    if (!forceRefresh && this.cachedProviders && this.cachedProviders.length > 0 && Date.now() - this.cachedProvidersAt < 15e3) {
+      return this.cachedProviders;
+    }
     try {
       const rawList = await MyPC.ai.providers();
       if (!Array.isArray(rawList)) return [];
-      return rawList.map((p) => {
-        var _a, _b, _c, _d, _e, _f;
-        return {
-          id: String((p == null ? void 0 : p.id) || ""),
-          name: String((p == null ? void 0 : p.name) || (p == null ? void 0 : p.type) || "AI Provider"),
-          type: String((p == null ? void 0 : p.type) || ""),
-          preset: String((p == null ? void 0 : p.preset) || (p == null ? void 0 : p.type) || ""),
-          model: String((p == null ? void 0 : p.model) || ""),
-          isDefault: Boolean(p == null ? void 0 : p.isDefault),
-          tasks: {
-            chat: Boolean((_a = p == null ? void 0 : p.tasks) == null ? void 0 : _a.chat),
-            image: Boolean((_b = p == null ? void 0 : p.tasks) == null ? void 0 : _b.image),
-            speech: Boolean((_c = p == null ? void 0 : p.tasks) == null ? void 0 : _c.speech),
-            transcribe: Boolean((_d = p == null ? void 0 : p.tasks) == null ? void 0 : _d.transcribe),
-            video: Boolean((_e = p == null ? void 0 : p.tasks) == null ? void 0 : _e.video),
-            embed: Boolean((_f = p == null ? void 0 : p.tasks) == null ? void 0 : _f.embed)
-          },
-          resolvedSpeechModel: resolveProviderSpeechModel(p)
-        };
-      });
+      const mapped = rawList.map((p) => ({
+        id: String((p == null ? void 0 : p.id) || ""),
+        name: String((p == null ? void 0 : p.name) || (p == null ? void 0 : p.type) || "AI Provider"),
+        type: String((p == null ? void 0 : p.type) || ""),
+        preset: String((p == null ? void 0 : p.preset) || (p == null ? void 0 : p.type) || ""),
+        model: String((p == null ? void 0 : p.model) || ""),
+        isDefault: Boolean(p == null ? void 0 : p.isDefault),
+        tasks: {
+          chat: hasProviderTask(p, "chat"),
+          image: hasProviderTask(p, "image"),
+          speech: hasProviderTask(p, "speech"),
+          transcribe: hasProviderTask(p, "transcribe"),
+          video: hasProviderTask(p, "video"),
+          embed: hasProviderTask(p, "embed")
+        },
+        resolvedSpeechModel: resolveProviderSpeechModel(p)
+      }));
+      this.cachedProviders = mapped;
+      this.cachedProvidersAt = Date.now();
+      return mapped;
     } catch {
-      return [];
+      return this.cachedProviders || [];
     }
   }
   /**
@@ -4147,12 +4298,25 @@ class MyPCService {
   }
   stopSpeech() {
     this.speechAbortId++;
+    this.inFlightActive = false;
+    this.inFlightText = "";
+    if (this.activeAIJob) {
+      try {
+        if (typeof this.activeAIJob.cancel === "function") {
+          this.activeAIJob.cancel();
+        }
+      } catch {
+      }
+      this.activeAIJob = null;
+    }
     if (this.activeAudioEl) {
       try {
         this.activeAudioEl.onended = null;
         this.activeAudioEl.onerror = null;
         this.activeAudioEl.pause();
-        this.activeAudioEl.src = "";
+        if (this.activeAudioEl !== this.sharedAudioEl) {
+          this.activeAudioEl.src = "";
+        }
       } catch {
       }
       this.activeAudioEl = null;
@@ -4173,27 +4337,84 @@ class MyPCService {
       }
       this.activeSpeechSource = null;
     }
+    if (this.activeUtterance) {
+      this.activeUtterance.onstart = null;
+      this.activeUtterance.onend = null;
+      this.activeUtterance.onerror = null;
+      this.activeUtterance = null;
+    }
     if (typeof window !== "undefined" && "speechSynthesis" in window) {
       try {
-        window.speechSynthesis.cancel();
+        if (window.speechSynthesis.speaking || window.speechSynthesis.pending) {
+          window.speechSynthesis.cancel();
+        }
       } catch {
       }
     }
   }
-  async playRawAudioBytes(bytes, mime, currentCallId, callbacks) {
-    var _a;
+  async playRawAudioBytes(rawInputBytes, rawMime, currentCallId) {
+    var _a, _b;
     if (currentCallId !== this.speechAbortId) return false;
+    const { bytes, mime } = ensurePlayableAudioContainer(rawInputBytes, rawMime);
+    const sharedCtx = soundManager.getAudioContext() || this.speechCtx;
+    const AudioCtxClass = typeof window !== "undefined" ? window.AudioContext || window.webkitAudioContext : null;
+    const ctx = sharedCtx || (AudioCtxClass ? new AudioCtxClass() : null);
+    if (ctx) {
+      this.speechCtx = ctx;
+      try {
+        if (ctx.state === "suspended") {
+          await Promise.race([
+            ctx.resume().catch(() => {
+            }),
+            new Promise((r) => setTimeout(r, 150))
+          ]);
+        }
+        if (currentCallId !== this.speechAbortId) return true;
+        const bufferCopy = bytes.buffer.slice(
+          bytes.byteOffset,
+          bytes.byteOffset + bytes.byteLength
+        );
+        const decoded = await ctx.decodeAudioData(bufferCopy);
+        if (currentCallId !== this.speechAbortId) return true;
+        if (ctx.state === "running") {
+          const src = ctx.createBufferSource();
+          src.buffer = decoded;
+          src.connect(ctx.destination);
+          this.activeSpeechSource = src;
+          (_b = (_a = this.activeSpeechCallbacks) == null ? void 0 : _a.onStart) == null ? void 0 : _b.call(_a);
+          src.onended = () => {
+            var _a2, _b2;
+            if (this.activeSpeechSource === src) {
+              this.activeSpeechSource = null;
+            }
+            if (currentCallId === this.speechAbortId) {
+              this.inFlightActive = false;
+              (_b2 = (_a2 = this.activeSpeechCallbacks) == null ? void 0 : _a2.onEnd) == null ? void 0 : _b2.call(_a2);
+            }
+          };
+          src.start(0);
+          return true;
+        }
+      } catch {
+      }
+    }
     if (typeof window !== "undefined" && typeof Audio !== "undefined" && typeof (URL == null ? void 0 : URL.createObjectURL) === "function") {
       try {
-        const blob = new Blob([bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)], {
-          type: mime || "audio/wav"
-        });
+        const blob = new Blob(
+          [bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)],
+          {
+            type: mime || "audio/wav"
+          }
+        );
         const url = URL.createObjectURL(blob);
         this.activeAudioUrl = url;
-        const audio = new Audio(url);
+        const audio = this.sharedAudioEl || new Audio();
+        audio.volume = 1;
+        audio.muted = false;
+        audio.src = url;
         this.activeAudioEl = audio;
         const playedViaElement = await new Promise((resolve) => {
-          var _a2;
+          var _a2, _b2;
           let started = false;
           const cleanupUrl = () => {
             if (this.activeAudioUrl === url) {
@@ -4208,32 +4429,34 @@ class MyPCService {
             }
           };
           audio.onended = () => {
-            var _a3;
+            var _a3, _b3;
             cleanupUrl();
             if (currentCallId === this.speechAbortId) {
-              (_a3 = callbacks == null ? void 0 : callbacks.onEnd) == null ? void 0 : _a3.call(callbacks);
+              this.inFlightActive = false;
+              (_b3 = (_a3 = this.activeSpeechCallbacks) == null ? void 0 : _a3.onEnd) == null ? void 0 : _b3.call(_a3);
             }
           };
           audio.onerror = () => {
-            var _a3;
+            var _a3, _b3;
             cleanupUrl();
             if (!started) {
               resolve(false);
             } else if (currentCallId === this.speechAbortId) {
-              (_a3 = callbacks == null ? void 0 : callbacks.onEnd) == null ? void 0 : _a3.call(callbacks);
+              this.inFlightActive = false;
+              (_b3 = (_a3 = this.activeSpeechCallbacks) == null ? void 0 : _a3.onEnd) == null ? void 0 : _b3.call(_a3);
             }
           };
           const playPromise = audio.play();
           if (playPromise && typeof playPromise.then === "function") {
             playPromise.then(() => {
-              var _a3;
+              var _a3, _b3;
               if (currentCallId !== this.speechAbortId) {
                 cleanupUrl();
                 resolve(true);
                 return;
               }
               started = true;
-              (_a3 = callbacks == null ? void 0 : callbacks.onStart) == null ? void 0 : _a3.call(callbacks);
+              (_b3 = (_a3 = this.activeSpeechCallbacks) == null ? void 0 : _a3.onStart) == null ? void 0 : _b3.call(_a3);
               resolve(true);
             }).catch(() => {
               cleanupUrl();
@@ -4241,48 +4464,13 @@ class MyPCService {
             });
           } else {
             started = true;
-            (_a2 = callbacks == null ? void 0 : callbacks.onStart) == null ? void 0 : _a2.call(callbacks);
+            (_b2 = (_a2 = this.activeSpeechCallbacks) == null ? void 0 : _a2.onStart) == null ? void 0 : _b2.call(_a2);
             resolve(true);
           }
         });
         if (playedViaElement) {
           return true;
         }
-      } catch {
-      }
-    }
-    const AudioCtxClass = typeof window !== "undefined" ? window.AudioContext || window.webkitAudioContext : null;
-    if (AudioCtxClass) {
-      try {
-        if (!this.speechCtx) {
-          this.speechCtx = new AudioCtxClass();
-        }
-        if (this.speechCtx.state === "suspended") {
-          await this.speechCtx.resume().catch(() => {
-          });
-        }
-        const bufferCopy = bytes.buffer.slice(
-          bytes.byteOffset,
-          bytes.byteOffset + bytes.byteLength
-        );
-        const decoded = await this.speechCtx.decodeAudioData(bufferCopy);
-        if (currentCallId !== this.speechAbortId) return true;
-        const src = this.speechCtx.createBufferSource();
-        src.buffer = decoded;
-        src.connect(this.speechCtx.destination);
-        this.activeSpeechSource = src;
-        (_a = callbacks == null ? void 0 : callbacks.onStart) == null ? void 0 : _a.call(callbacks);
-        src.onended = () => {
-          var _a2;
-          if (this.activeSpeechSource === src) {
-            this.activeSpeechSource = null;
-          }
-          if (currentCallId === this.speechAbortId) {
-            (_a2 = callbacks == null ? void 0 : callbacks.onEnd) == null ? void 0 : _a2.call(callbacks);
-          }
-        };
-        src.start(0);
-        return true;
       } catch {
       }
     }
@@ -4293,14 +4481,23 @@ class MyPCService {
    * automatically routing to a speech-capable provider if the default provider is chat-only,
    * and falling back to Web Speech API (speechSynthesis) if AI TTS is unavailable.
    */
-  async speakText(text, lang = "en", callbacks, preferredProviderId) {
+  async speakText(text, lang = "en", callbacks, preferredProviderId, forceRestart = false) {
     var _a, _b, _c, _d, _e, _f, _g;
-    this.stopSpeech();
-    const cleanText = text.trim();
+    const cleanText = (text || "").trim();
     if (!cleanText) {
       (_a = callbacks == null ? void 0 : callbacks.onEnd) == null ? void 0 : _a.call(callbacks);
       return;
     }
+    if (!forceRestart && this.inFlightActive && this.inFlightText === cleanText && Date.now() - this.inFlightStartedAt < 2500) {
+      this.activeSpeechCallbacks = callbacks;
+      (_b = callbacks == null ? void 0 : callbacks.onStart) == null ? void 0 : _b.call(callbacks);
+      return;
+    }
+    this.stopSpeech();
+    this.activeSpeechCallbacks = callbacks;
+    this.inFlightText = cleanText;
+    this.inFlightStartedAt = Date.now();
+    this.inFlightActive = true;
     const currentCallId = ++this.speechAbortId;
     const localeMap = {
       en: "en-US",
@@ -4349,10 +4546,15 @@ class MyPCService {
             if (candidateId) {
               reqOpts.provider = candidateId;
             }
-            const res = await MyPC.ai.generate(reqOpts);
+            const job = MyPC.ai.generate(reqOpts);
+            this.activeAIJob = job;
+            const res = await job;
+            if (this.activeAIJob === job) {
+              this.activeAIJob = null;
+            }
             if (currentCallId !== this.speechAbortId) return;
-            const audioPart = ((_b = res == null ? void 0 : res.parts) == null ? void 0 : _b.find((pt) => (pt == null ? void 0 : pt.type) === "audio" && (pt == null ? void 0 : pt.data))) || ((_c = res == null ? void 0 : res.parts) == null ? void 0 : _c[0]);
-            const rawBytes = toUint8Array(audioPart == null ? void 0 : audioPart.data);
+            const audioPart = ((_c = res == null ? void 0 : res.parts) == null ? void 0 : _c.find((pt) => (pt == null ? void 0 : pt.type) === "audio" && (pt == null ? void 0 : pt.data))) || ((_d = res == null ? void 0 : res.parts) == null ? void 0 : _d[0]);
+            const rawBytes = toUint8Array(audioPart == null ? void 0 : audioPart.data) || toUint8Array(res == null ? void 0 : res.audio) || toUint8Array(res == null ? void 0 : res.data);
             if (rawBytes && rawBytes.byteLength > 0) {
               const activeModel = (res == null ? void 0 : res.model) || (candidateInfo == null ? void 0 : candidateInfo.resolvedSpeechModel) || "MyPC Neural TTS";
               const activeProvName = (candidateInfo == null ? void 0 : candidateInfo.name) || (res == null ? void 0 : res.provider) || "MyPC AI";
@@ -4366,15 +4568,15 @@ class MyPCService {
               };
               const played = await this.playRawAudioBytes(
                 rawBytes,
-                (audioPart == null ? void 0 : audioPart.mime) || "audio/wav",
-                currentCallId,
-                callbacks
+                (audioPart == null ? void 0 : audioPart.mime) || (res == null ? void 0 : res.mime) || "audio/wav",
+                currentCallId
               );
               if (played) {
                 return;
               }
             }
           } catch (genErr) {
+            this.activeAIJob = null;
             const errMsg = (genErr == null ? void 0 : genErr.message) || String(genErr || "MyPC TTS error");
             this.lastTTSStatus = {
               ...this.lastTTSStatus,
@@ -4398,61 +4600,98 @@ class MyPCService {
     }
     if (typeof window !== "undefined" && "speechSynthesis" in window) {
       try {
-        window.speechSynthesis.cancel();
-        const utterance = new SpeechSynthesisUtterance(cleanText);
-        utterance.lang = locale;
-        utterance.rate = 0.98;
-        utterance.pitch = 1.08;
-        const voices = ((_e = (_d = window.speechSynthesis).getVoices) == null ? void 0 : _e.call(_d)) || [];
-        const matchingVoice = voices.find((v) => v.lang.toLowerCase().startsWith(lang)) || voices.find((v) => v.lang.toLowerCase().includes(lang));
-        if (matchingVoice) {
-          utterance.voice = matchingVoice;
+        const synth = window.speechSynthesis;
+        if (synth.paused) {
+          (_e = synth.resume) == null ? void 0 : _e.call(synth);
         }
-        this.lastTTSStatus = {
-          providerId: this.lastTTSStatus.providerId || "web_speech",
-          providerName: prefId === "web_speech" ? "Browser Web Speech API" : `${this.lastTTSStatus.providerName || "Web Speech"} (Fallback)`,
-          modelName: (matchingVoice == null ? void 0 : matchingVoice.name) || `Web Speech (${locale})`,
-          engine: "web_speech",
-          speechSupported: true,
-          lastError: this.lastTTSStatus.lastError
-        };
-        let started = false;
-        utterance.onstart = () => {
-          var _a2;
-          started = true;
-          if (currentCallId === this.speechAbortId) {
-            (_a2 = callbacks == null ? void 0 : callbacks.onStart) == null ? void 0 : _a2.call(callbacks);
+        const createAndSpeakUtterance = () => {
+          var _a2, _b2, _c2;
+          if (currentCallId !== this.speechAbortId) return;
+          const utterance = new SpeechSynthesisUtterance(cleanText);
+          this.activeUtterance = utterance;
+          utterance.lang = locale;
+          utterance.rate = 0.98;
+          utterance.pitch = 1.08;
+          const voices = ((_a2 = synth.getVoices) == null ? void 0 : _a2.call(synth)) || [];
+          const matchingVoice = voices.find((v) => v.lang.toLowerCase().startsWith(lang)) || voices.find((v) => v.lang.toLowerCase().includes(lang));
+          if (matchingVoice) {
+            utterance.voice = matchingVoice;
           }
-        };
-        utterance.onend = () => {
-          var _a2;
-          if (currentCallId === this.speechAbortId) {
-            (_a2 = callbacks == null ? void 0 : callbacks.onEnd) == null ? void 0 : _a2.call(callbacks);
+          this.lastTTSStatus = {
+            providerId: this.lastTTSStatus.providerId || "web_speech",
+            providerName: prefId === "web_speech" ? "Browser Web Speech API" : `${this.lastTTSStatus.providerName || "Web Speech"} (Fallback)`,
+            modelName: (matchingVoice == null ? void 0 : matchingVoice.name) || `Web Speech (${locale})`,
+            engine: "web_speech",
+            speechSupported: true,
+            lastError: this.lastTTSStatus.lastError
+          };
+          let started = false;
+          utterance.onstart = () => {
+            var _a3, _b3;
+            started = true;
+            if (currentCallId === this.speechAbortId) {
+              (_b3 = (_a3 = this.activeSpeechCallbacks) == null ? void 0 : _a3.onStart) == null ? void 0 : _b3.call(_a3);
+            }
+          };
+          utterance.onend = () => {
+            var _a3, _b3;
+            if (this.activeUtterance === utterance) {
+              this.activeUtterance = null;
+            }
+            if (currentCallId === this.speechAbortId) {
+              this.inFlightActive = false;
+              (_b3 = (_a3 = this.activeSpeechCallbacks) == null ? void 0 : _a3.onEnd) == null ? void 0 : _b3.call(_a3);
+            }
+          };
+          utterance.onerror = () => {
+            var _a3, _b3;
+            if (this.activeUtterance === utterance) {
+              this.activeUtterance = null;
+            }
+            if (currentCallId === this.speechAbortId) {
+              this.inFlightActive = false;
+              (_b3 = (_a3 = this.activeSpeechCallbacks) == null ? void 0 : _a3.onEnd) == null ? void 0 : _b3.call(_a3);
+            }
+          };
+          (_c2 = (_b2 = this.activeSpeechCallbacks) == null ? void 0 : _b2.onStart) == null ? void 0 : _c2.call(_b2);
+          synth.speak(utterance);
+          if (voices.length === 0 && typeof synth.addEventListener === "function") {
+            const onVoicesReady = () => {
+              var _a3;
+              synth.removeEventListener("voiceschanged", onVoicesReady);
+              if (!started && !synth.speaking && currentCallId === this.speechAbortId) {
+                const loadedVoices = ((_a3 = synth.getVoices) == null ? void 0 : _a3.call(synth)) || [];
+                const foundVoice = loadedVoices.find((v) => v.lang.toLowerCase().startsWith(lang)) || loadedVoices.find((v) => v.lang.toLowerCase().includes(lang));
+                if (foundVoice) {
+                  utterance.voice = foundVoice;
+                }
+                synth.speak(utterance);
+              }
+            };
+            synth.addEventListener("voiceschanged", onVoicesReady);
+            setTimeout(() => {
+              synth.removeEventListener("voiceschanged", onVoicesReady);
+            }, 1500);
           }
+          setTimeout(() => {
+            var _a3, _b3;
+            if (!started && currentCallId === this.speechAbortId) {
+              this.inFlightActive = false;
+              (_b3 = (_a3 = this.activeSpeechCallbacks) == null ? void 0 : _a3.onEnd) == null ? void 0 : _b3.call(_a3);
+            }
+          }, Math.min(5500, Math.max(2e3, cleanText.length * 60)));
         };
-        utterance.onerror = () => {
-          var _a2;
-          if (currentCallId === this.speechAbortId) {
-            (_a2 = callbacks == null ? void 0 : callbacks.onEnd) == null ? void 0 : _a2.call(callbacks);
-          }
-        };
-        (_f = callbacks == null ? void 0 : callbacks.onStart) == null ? void 0 : _f.call(callbacks);
-        window.speechSynthesis.speak(utterance);
-        setTimeout(() => {
-          var _a2;
-          if (!started && currentCallId === this.speechAbortId) {
-            (_a2 = callbacks == null ? void 0 : callbacks.onEnd) == null ? void 0 : _a2.call(callbacks);
-          }
-        }, Math.min(5e3, Math.max(1800, cleanText.length * 55)));
+        createAndSpeakUtterance();
         return;
       } catch {
       }
     }
-    (_g = callbacks == null ? void 0 : callbacks.onStart) == null ? void 0 : _g.call(callbacks);
+    (_g = (_f = this.activeSpeechCallbacks) == null ? void 0 : _f.onStart) == null ? void 0 : _g.call(_f);
     setTimeout(() => {
-      var _a2;
+      var _a2, _b2;
       if (currentCallId === this.speechAbortId) {
-        (_a2 = callbacks == null ? void 0 : callbacks.onEnd) == null ? void 0 : _a2.call(callbacks);
+        this.inFlightActive = false;
+        (_b2 = (_a2 = this.activeSpeechCallbacks) == null ? void 0 : _a2.onEnd) == null ? void 0 : _b2.call(_a2);
       }
     }, Math.min(4500, Math.max(1500, cleanText.length * 45)));
   }
@@ -9211,7 +9450,7 @@ const LEARN_UI_TEXT = {
     lockedMessage: "أكمل الدرس السابق أولاً لفتح هذا الدرس!"
   }
 };
-const LEARN_TIERS = [
+let LEARN_TIERS = [
   {
     id: "beginner",
     eloRange: "0 – 400 Elo",
@@ -9234,18 +9473,18 @@ const LEARN_TIERS = [
     id: "novice",
     eloRange: "400 – 800 Elo",
     badgeColor: "from-sky-500 to-blue-600",
-    title: L("Novice Tactician", "Tacticien Novice", "Táctico Novato", "تكتيكي ناشئ"),
+    title: L("Novice Tactician", "Novice Tacticien", "Táctico Novato", "ممارس ناشئ"),
     levelWords: L(
-      "Forks, Pins, Skewers & Mates",
-      "Fourchettes, Clouages et Mats",
-      "Dobletes, Clavadas y Mates",
-      "الشوكة والربط والسيخ والمايت"
+      "Captures, Forks, Pins & Skewers",
+      "Prises, fourchettes, clouages et enfilades",
+      "Capturas, ataques dobles, clavadas y enfiladas",
+      "اقتناص القطع والشوكة والربط والسيخ"
     ),
     checkoGreeting: L(
-      "Now that you know the moves, let us hunt enemy pieces with sharp tactics!",
-      "Maintenant que vous connaissez les règles, chassons les pièces avec des tactiques !",
-      "¡Ahora que conoces las reglas, ganemos piezas con tácticas!",
-      "الآن بعد أن عرفت حركة القطع، لنتعلم التكتيكات الذكية لربح القطع!"
+      "Let's sharpen your tactics! Win enemy pieces with forks, pins, and skewers!",
+      "Aiguisons votre tactique ! Gagnez des pièces avec des fourchettes et des clouages !",
+      "¡Afilemos tu táctica! Gana piezas con ataques dobles, clavadas y enfiladas.",
+      "هيا نطور مهاراتك التكتيكية بالربط والشوكة والسيخ!"
     )
   },
   {
@@ -9254,34 +9493,34 @@ const LEARN_TIERS = [
     badgeColor: "from-amber-500 to-orange-600",
     title: L("Intermediate Player", "Joueur Intermédiaire", "Jugador Intermedio", "لاعب متوسط"),
     levelWords: L(
-      "Openings, Combinations & Endgames",
-      "Ouvertures, Combinaisons et Finales",
-      "Aperturas, Combinaciones y Finales",
-      "الافتتاحيات والتوليفات والنهايات"
+      "Openings & Checkmate Patterns",
+      "Ouvertures et schémas de mat",
+      "Aperturas y patrones de mate",
+      "مبادئ الافتتاح وأنماط الكش مات"
     ),
     checkoGreeting: L(
-      "Welcome to Intermediate! Here we master famous openings, combinations, and king endgames!",
-      "Bienvenue au niveau Intermédiaire ! Maîtrisons les ouvertures et les finales !",
-      "¡Bienvenido al nivel Intermedio! ¡Dominemos aperturas, combinaciones y finales!",
-      "مرحباً بك في المستوى المتوسط! هنا نتقن الافتتاحيات الشهيرة والنهايات!"
+      "Control the center squares and hunt the enemy King with checkmate patterns!",
+      "Contrôlez le centre et chassez le Roi adverse avec des schémas de mat !",
+      "¡Controla el centro y ataca al Rey enemigo con patrones de mate!",
+      "سيطر على وسط الرقعة وحاصر ملك الخصم بأنماط الكش مات!"
     )
   },
   {
     id: "club",
     eloRange: "1200 – 1500 Elo",
-    badgeColor: "from-purple-500 to-rose-600",
-    title: L("Club Contender", "Joueur de Club", "Competidor de Club", "منافس الأندية"),
+    badgeColor: "from-purple-500 to-indigo-600",
+    title: L("Club Contender", "Joueur de Club", "Jugador de Club", "منافس الأندية (1500)"),
     levelWords: L(
-      "Sacrifices, Strategy & Rook Endgames",
-      "Sacrifices, Stratégie et Finales de Tours",
-      "Sacrificios, Estrategia y Finales de Torres",
-      "التضحيات والاستراتيجية ونهايات الرخاخ"
+      "Strategy, Sacrifices & Endgames",
+      "Stratégie, sacrifices et finales",
+      "Estrategia, sacrificios y finales",
+      "الاستراتيجية والتضحيات ونهايات اللعب"
     ),
     checkoGreeting: L(
-      "Ready for 1500 Elo? Let us master Greek Gift sacrifices, Lucena, Philidor, and deep strategy!",
-      "Prêt pour 1500 Elo ? Étudions les sacrifices, Lucena, Philidor et la stratégie !",
-      "¿Listo para 1500 Elo? ¡Estudiemos sacrificios, Lucena, Philidor y estrategia!",
-      "هل أنت مستعد لمستوى 1500؟ لندرس التضحيات الهجومية ونهايات لوسينا وفيليدور!"
+      "Welcome to the 1500 Elo class! Master pawn structures, sacrifices, and endgames!",
+      "Bienvenue au niveau 1500 Elo ! Maîtrisez les structures, sacrifices et finales !",
+      "¡Bienvenido al nivel 1500 Elo! Domina estructuras, sacrificios y finales.",
+      "مرحباً بك في مستوى 1500! أتقن الاستراتيجية والتضحيات ونهايات اللعب!"
     )
   }
 ];
@@ -9450,6 +9689,7 @@ async function loadRuntimeLessonsData() {
     if (customRaw) {
       const parsed = JSON.parse(customRaw);
       if (parsed && Array.isArray(parsed.tiers) && Array.isArray(parsed.lessons)) {
+        LEARN_TIERS = parsed.tiers;
         LEARN_LESSONS = parsed.lessons;
         return {
           ...parsed,
@@ -9467,6 +9707,7 @@ async function loadRuntimeLessonsData() {
     if (res.ok) {
       const data = await res.json();
       if (data && Array.isArray(data.tiers) && Array.isArray(data.lessons)) {
+        LEARN_TIERS = data.tiers;
         LEARN_LESSONS = data.lessons;
         const nextPayload = {
           ...data,
@@ -9734,10 +9975,9 @@ const LearnModal = ({ settings, onClose }) => {
       mounted = false;
     };
   }, []);
-  const [autoVoice, setAutoVoice] = reactExports.useState(
-    () => myPCService.load("checko_auto_voice", true)
-  );
+  const [autoVoice, setAutoVoice] = reactExports.useState(true);
   const [isSpeaking, setIsSpeaking] = reactExports.useState(false);
+  const lastSpokenKeyRef = reactExports.useRef("");
   const [completedLessons, setCompletedLessons] = reactExports.useState(
     () => myPCService.load("checko_completed_lessons", [])
   );
@@ -9828,9 +10068,32 @@ const LearnModal = ({ settings, onClose }) => {
     ),
     [lessons, selectedTierId, activeCategory, getLessonCategoryId]
   );
+  const currentBubbleText = reactExports.useMemo(() => {
+    if (customNotice) return customNotice;
+    if (viewMode === "levels") {
+      return (activeTier == null ? void 0 : activeTier.checkoGreeting[lang]) || (activeTier == null ? void 0 : activeTier.checkoGreeting.en) || "Peep-peep! I am Checko! Pick a level and let's learn how every piece moves!";
+    }
+    if (viewMode === "categories") {
+      const catTitle = (activeCategory == null ? void 0 : activeCategory.title[lang]) || (activeCategory == null ? void 0 : activeCategory.title.en) || "";
+      const catSub = (activeCategory == null ? void 0 : activeCategory.subtitle[lang]) || (activeCategory == null ? void 0 : activeCategory.subtitle.en) || "";
+      if (catTitle && catSub) {
+        return `${catTitle}. ${catSub}`;
+      }
+      return (activeTier == null ? void 0 : activeTier.checkoGreeting[lang]) || (activeTier == null ? void 0 : activeTier.checkoGreeting.en) || "";
+    }
+    if (stepStatus === "correct") {
+      return (activeStep == null ? void 0 : activeStep.success[lang]) || (activeStep == null ? void 0 : activeStep.success.en) || "";
+    }
+    if (stepStatus === "wrong") {
+      return (activeStep == null ? void 0 : activeStep.hint[lang]) || (activeStep == null ? void 0 : activeStep.hint.en) || "";
+    }
+    return (activeStep == null ? void 0 : activeStep.bubble[lang]) || (activeStep == null ? void 0 : activeStep.bubble.en) || "";
+  }, [customNotice, viewMode, activeTier, activeCategory, lang, stepStatus, activeStep]);
+  const spokenStateKey = `${viewMode}|${selectedTierId}|${selectedCategoryId}|${activeLessonId}|${activeStepIdx}|${stepStatus}|${customNotice || ""}|${currentBubbleText}`;
   const triggerCheckoSpeech = reactExports.useCallback(
-    (text, forceSpeak = false) => {
+    (text, forceSpeak = false, forceRestart = false) => {
       if (!autoVoice && !forceSpeak) return;
+      myPCService.unlockSpeechAudio();
       myPCService.speakText(
         text,
         lang,
@@ -9838,19 +10101,34 @@ const LearnModal = ({ settings, onClose }) => {
           onStart: () => setIsSpeaking(true),
           onEnd: () => setIsSpeaking(false)
         },
-        settings.tts_provider_id
+        settings.tts_provider_id,
+        forceRestart
       );
     },
     [autoVoice, lang, settings.tts_provider_id]
   );
   reactExports.useEffect(() => {
+    if (window.__checkoUnmountStopTimer) {
+      clearTimeout(window.__checkoUnmountStopTimer);
+      window.__checkoUnmountStopTimer = null;
+    }
+    myPCService.unlockSpeechAudio();
+    myPCService.save("checko_auto_voice", true);
     soundManager.playSound("checko_crow");
-    const greeting = (activeTier == null ? void 0 : activeTier.checkoGreeting[lang]) || (activeTier == null ? void 0 : activeTier.checkoGreeting.en) || "";
-    triggerCheckoSpeech(greeting);
     return () => {
-      myPCService.stopSpeech();
+      lastSpokenKeyRef.current = "";
+      window.__checkoUnmountStopTimer = window.setTimeout(() => {
+        myPCService.stopSpeech();
+        window.__checkoUnmountStopTimer = null;
+      }, 80);
     };
   }, []);
+  reactExports.useEffect(() => {
+    if (!currentBubbleText) return;
+    if (lastSpokenKeyRef.current === spokenStateKey) return;
+    lastSpokenKeyRef.current = spokenStateKey;
+    triggerCheckoSpeech(currentBubbleText, true, false);
+  }, [spokenStateKey, currentBubbleText, triggerCheckoSpeech]);
   reactExports.useEffect(() => {
     if (viewMode === "levels") {
       const timer = setTimeout(() => {
@@ -9895,9 +10173,7 @@ const LearnModal = ({ settings, onClose }) => {
     } else {
       setLearnCursorSquare(activeStep.playerColor === "b" ? "e7" : "e2");
     }
-    const promptText = activeStep.bubble[lang] || activeStep.bubble.en;
-    triggerCheckoSpeech(promptText);
-  }, [viewMode, activeLessonId, activeStepIdx, activeStep, lang, triggerCheckoSpeech]);
+  }, [viewMode, activeLessonId, activeStepIdx]);
   reactExports.useEffect(() => {
     if (viewMode === "lesson" && activeLessonBtnRef.current) {
       activeLessonBtnRef.current.scrollIntoView({
@@ -9949,6 +10225,9 @@ const LearnModal = ({ settings, onClose }) => {
       setActiveLessonId(targetLesson.id);
       myPCService.save("checko_last_lesson", targetLesson.id);
       setActiveStepIdx(0);
+      setStepStatus("prompt");
+      setCheckoMood("idle");
+      setCustomNotice(null);
       setViewMode("lesson");
     }
   };
@@ -9990,6 +10269,8 @@ const LearnModal = ({ settings, onClose }) => {
     setSelectedCategoryId(catId);
     setActiveLessonId(target.id);
     setActiveStepIdx(0);
+    setStepStatus("prompt");
+    setCheckoMood("idle");
     setCustomNotice(null);
     myPCService.save("checko_selected_tier", target.tierId);
     myPCService.save("checko_selected_category", catId);
@@ -10011,7 +10292,7 @@ const LearnModal = ({ settings, onClose }) => {
     setCustomNotice(null);
     setLearnFocusZone("board");
     clearAllSpatialFocus();
-    triggerCheckoSpeech(activeStep.bubble[lang]);
+    triggerCheckoSpeech(activeStep.bubble[lang] || activeStep.bubble.en, false, true);
   };
   const handleShowHint = () => {
     soundManager.playSound("checko_crow");
@@ -10020,7 +10301,7 @@ const LearnModal = ({ settings, onClose }) => {
     setCustomNotice(null);
     setLearnFocusZone("board");
     clearAllSpatialFocus();
-    triggerCheckoSpeech(activeStep.hint[lang], true);
+    triggerCheckoSpeech(activeStep.hint[lang] || activeStep.hint.en, true, true);
   };
   const attemptLessonMove = (from, to) => {
     const uci = `${from}${to}`;
@@ -10029,12 +10310,15 @@ const LearnModal = ({ settings, onClose }) => {
     );
     if (!isExpected) {
       soundManager.playSound("checko_wrong");
+      const wasAlreadyWrong = stepStatus === "wrong";
       setStepStatus("wrong");
       setCheckoMood("wrong");
       setCustomNotice(null);
       setSelectedSquare(null);
       setValidMoves([]);
-      triggerCheckoSpeech(activeStep.hint[lang]);
+      if (wasAlreadyWrong) {
+        triggerCheckoSpeech(activeStep.hint[lang] || activeStep.hint.en);
+      }
       return;
     }
     try {
@@ -10054,7 +10338,6 @@ const LearnModal = ({ settings, onClose }) => {
       setCheckoMood("happy");
       setCustomNotice(null);
       soundManager.playSound("checko_correct");
-      triggerCheckoSpeech(activeStep.success[lang]);
       if (activeStepIdx + 1 >= activeLesson.steps.length) {
         setCompletedLessons((prev) => {
           if (prev.includes(activeLesson.id)) return prev;
@@ -10115,6 +10398,9 @@ const LearnModal = ({ settings, onClose }) => {
   const handleAdvanceNext = () => {
     setLearnFocusZone("board");
     clearAllSpatialFocus();
+    setStepStatus("prompt");
+    setCheckoMood("idle");
+    setCustomNotice(null);
     if (activeStepIdx + 1 < activeLesson.steps.length) {
       soundManager.playSound("click");
       setActiveStepIdx((prev) => prev + 1);
@@ -10244,7 +10530,6 @@ const LearnModal = ({ settings, onClose }) => {
       }
     };
   });
-  const currentBubbleText = customNotice ? customNotice : viewMode !== "lesson" ? (activeTier == null ? void 0 : activeTier.checkoGreeting[lang]) || (activeTier == null ? void 0 : activeTier.checkoGreeting.en) || "" : stepStatus === "correct" ? (activeStep == null ? void 0 : activeStep.success[lang]) || (activeStep == null ? void 0 : activeStep.success.en) || "" : stepStatus === "wrong" ? (activeStep == null ? void 0 : activeStep.hint[lang]) || (activeStep == null ? void 0 : activeStep.hint.en) || "" : (activeStep == null ? void 0 : activeStep.bubble[lang]) || (activeStep == null ? void 0 : activeStep.bubble.en) || "";
   const displayedArrows = stepStatus === "correct" ? [] : (activeStep == null ? void 0 : activeStep.arrows) || [];
   const displayedHighlights = stepStatus === "correct" ? [] : (activeStep == null ? void 0 : activeStep.highlightSquares) || [];
   const nextCategoryLessonId = reactExports.useMemo(() => {
@@ -10351,7 +10636,7 @@ const LearnModal = ({ settings, onClose }) => {
                     size: "md",
                     onClick: () => {
                       soundManager.playSound("checko_crow");
-                      triggerCheckoSpeech(currentBubbleText, true);
+                      triggerCheckoSpeech(currentBubbleText, true, true);
                     }
                   }
                 ),
@@ -10529,7 +10814,7 @@ const LearnModal = ({ settings, onClose }) => {
                       mood: customNotice ? "wrong" : "happy",
                       isSpeaking,
                       size: "sm",
-                      onClick: () => triggerCheckoSpeech(currentBubbleText, true)
+                      onClick: () => triggerCheckoSpeech(currentBubbleText, true, true)
                     }
                   ),
                   /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "text-xs sm:text-sm font-bold text-amber-100 leading-snug", children: [
@@ -10685,7 +10970,7 @@ const LearnModal = ({ settings, onClose }) => {
                       size: "lg",
                       onClick: () => {
                         soundManager.playSound("checko_crow");
-                        triggerCheckoSpeech(currentBubbleText, true);
+                        triggerCheckoSpeech(currentBubbleText, true, true);
                       }
                     }
                   ),
@@ -10700,7 +10985,7 @@ const LearnModal = ({ settings, onClose }) => {
                             "button",
                             {
                               type: "button",
-                              onClick: () => triggerCheckoSpeech(currentBubbleText, true),
+                              onClick: () => triggerCheckoSpeech(currentBubbleText, true, true),
                               className: "inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-600 text-amber-300 text-xs font-bold transition-colors cursor-pointer",
                               children: [
                                 /* @__PURE__ */ jsxRuntimeExports.jsx(Volume2, { size: 14 }),
@@ -11886,6 +12171,17 @@ const App = () => {
     },
     [appState]
   );
+  const openLearnAcademy = reactExports.useCallback(() => {
+    var _a, _b;
+    myPCService.unlockSpeechAudio();
+    soundManager.playSound("click");
+    const savedTierId = myPCService.load("checko_selected_tier", "beginner");
+    const tier = LEARN_TIERS.find((t) => t.id === savedTierId) || LEARN_TIERS[0];
+    const lang = myPCService.getLanguage();
+    const greetingText = ((_a = tier == null ? void 0 : tier.checkoGreeting) == null ? void 0 : _a[lang]) || ((_b = tier == null ? void 0 : tier.checkoGreeting) == null ? void 0 : _b.en) || "Peep-peep! I am Checko! Pick a level and let's learn how every piece moves!";
+    myPCService.speakText(greetingText, lang, void 0, settings.tts_provider_id);
+    setAppState("learn");
+  }, [settings.tts_provider_id]);
   const startNewGame = reactExports.useCallback(
     (mode, color = "w", customMinutes = 10, customIncrementSec = 0) => {
       soundManager.stopSearchPulse();
@@ -13169,7 +13465,7 @@ const App = () => {
           } else if (menuIndex === 1 + offset) {
             setAppState("lichess_hub");
           } else if (menuIndex === 2 + offset) {
-            setAppState("learn");
+            openLearnAcademy();
           } else if (menuIndex === 3 + offset) {
             startNewGame("local");
           } else if (menuIndex === 4 + offset) {
@@ -13379,6 +13675,7 @@ const App = () => {
       handleCancelLichessMatchmaking,
       triggerPauseMenuTransition,
       openSettings,
+      openLearnAcademy,
       handleUndo,
       handleRequestResignConfirm,
       handleSquareClick,
@@ -14257,10 +14554,7 @@ const App = () => {
                   /* @__PURE__ */ jsxRuntimeExports.jsxs(
                     "button",
                     {
-                      onClick: () => {
-                        soundManager.playSound("click");
-                        setAppState("learn");
-                      },
+                      onClick: openLearnAcademy,
                       onMouseEnter: () => setMenuIndex(2 + menuOffset),
                       className: `flex items-center justify-between p-3 rounded-2xl border transition-colors cursor-pointer ${menuIndex === 2 + menuOffset ? "bg-gradient-to-r from-amber-500 to-emerald-600 border-amber-300 text-slate-950 shadow-lg ring-2 ring-amber-400/60" : "bg-slate-900 border-amber-500/40 text-slate-100 hover:bg-slate-800"}`,
                       children: [
@@ -14389,7 +14683,7 @@ const App = () => {
                     }
                   ),
                   /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: "•" }),
-                  /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "px-2 py-0.5 rounded-lg bg-slate-900 border border-amber-500/40 text-amber-400 font-mono font-bold text-[11px]", children: "Build v4.3.4" })
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "px-2 py-0.5 rounded-lg bg-slate-900 border border-amber-500/40 text-amber-400 font-mono font-bold text-[11px]", children: "Build v4.3.6" })
                 ] })
               ] })
             ]

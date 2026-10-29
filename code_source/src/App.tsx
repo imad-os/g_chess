@@ -33,6 +33,7 @@ import { MultiplayerModal } from './components/MultiplayerModal';
 import { HistoryModal } from './components/HistoryModal';
 import { LichessModal } from './components/LichessModal';
 import { LearnModal, CheckoButtonIcon } from './components/LearnModal';
+import { LEARN_TIERS, LearnTierId } from './services/learnLessons';
 import { MiniBoardPreview } from './components/MiniBoardPreview';
 import { soundManager } from './services/sound';
 import { stockfishService } from './services/stockfish';
@@ -628,6 +629,21 @@ export const App: React.FC = () => {
     },
     [appState]
   );
+
+  // Open Checko's Learn Academy and trigger Checko's greeting speech synchronously inside the user gesture
+  const openLearnAcademy = useCallback(() => {
+    myPCService.unlockSpeechAudio();
+    soundManager.playSound('click');
+    const savedTierId = myPCService.load<LearnTierId>('checko_selected_tier', 'beginner');
+    const tier = LEARN_TIERS.find((t) => t.id === savedTierId) || LEARN_TIERS[0];
+    const lang = myPCService.getLanguage();
+    const greetingText =
+      tier?.checkoGreeting?.[lang] ||
+      tier?.checkoGreeting?.en ||
+      "Peep-peep! I am Checko! Pick a level and let's learn how every piece moves!";
+    myPCService.speakText(greetingText, lang, undefined, settings.tts_provider_id);
+    setAppState('learn');
+  }, [settings.tts_provider_id]);
 
   // Start a new game session
   const startNewGame = useCallback(
@@ -2236,7 +2252,7 @@ export const App: React.FC = () => {
           } else if (menuIndex === 1 + offset) {
             setAppState('lichess_hub');
           } else if (menuIndex === 2 + offset) {
-            setAppState('learn');
+            openLearnAcademy();
           } else if (menuIndex === 3 + offset) {
             startNewGame('local');
           } else if (menuIndex === 4 + offset) {
@@ -2466,6 +2482,7 @@ export const App: React.FC = () => {
       handleCancelLichessMatchmaking,
       triggerPauseMenuTransition,
       openSettings,
+      openLearnAcademy,
       handleUndo,
       handleRequestResignConfirm,
       handleSquareClick,
@@ -3510,10 +3527,7 @@ export const App: React.FC = () => {
 
               {/* Learn (with Checko cartoon rooster icon) */}
               <button
-                onClick={() => {
-                  soundManager.playSound('click');
-                  setAppState('learn');
-                }}
+                onClick={openLearnAcademy}
                 onMouseEnter={() => setMenuIndex(2 + menuOffset)}
                 className={`flex items-center justify-between p-3 rounded-2xl border transition-colors cursor-pointer ${
                   menuIndex === 2 + menuOffset
@@ -3654,7 +3668,7 @@ export const App: React.FC = () => {
               </button>
               <span>•</span>
               <span className="px-2 py-0.5 rounded-lg bg-slate-900 border border-amber-500/40 text-amber-400 font-mono font-bold text-[11px]">
-                Build v4.3.4
+                Build v4.3.6
               </span>
             </div>
           </div>

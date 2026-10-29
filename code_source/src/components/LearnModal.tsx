@@ -320,11 +320,10 @@ export const LearnModal: React.FC<LearnModalProps> = ({ settings, onClose }) => 
     };
   }, []);
 
-  // Auto-voice narration state
-  const [autoVoice, setAutoVoice] = useState<boolean>(() =>
-    myPCService.load<boolean>('checko_auto_voice', true)
-  );
+  // Auto-voice narration state (always enabled by default when entering Learn Mode so Checko speaks automatically)
+  const [autoVoice, setAutoVoice] = useState<boolean>(true);
   const [isSpeaking, setIsSpeaking] = useState<boolean>(false);
+  const lastSpokenKeyRef = useRef<string>('');
 
   // Completed lesson IDs persisted in MyPC storage
   const [completedLessons, setCompletedLessons] = useState<string[]>(() =>
@@ -447,10 +446,39 @@ export const LearnModal: React.FC<LearnModalProps> = ({ settings, onClose }) => 
     [lessons, selectedTierId, activeCategory, getLessonCategoryId]
   );
 
+  const currentBubbleText = useMemo(() => {
+    if (customNotice) return customNotice;
+    if (viewMode === 'levels') {
+      return (
+        activeTier?.checkoGreeting[lang] ||
+        activeTier?.checkoGreeting.en ||
+        "Peep-peep! I am Checko! Pick a level and let's learn how every piece moves!"
+      );
+    }
+    if (viewMode === 'categories') {
+      const catTitle = activeCategory?.title[lang] || activeCategory?.title.en || '';
+      const catSub = activeCategory?.subtitle[lang] || activeCategory?.subtitle.en || '';
+      if (catTitle && catSub) {
+        return `${catTitle}. ${catSub}`;
+      }
+      return activeTier?.checkoGreeting[lang] || activeTier?.checkoGreeting.en || '';
+    }
+    if (stepStatus === 'correct') {
+      return activeStep?.success[lang] || activeStep?.success.en || '';
+    }
+    if (stepStatus === 'wrong') {
+      return activeStep?.hint[lang] || activeStep?.hint.en || '';
+    }
+    return activeStep?.bubble[lang] || activeStep?.bubble.en || '';
+  }, [customNotice, viewMode, activeTier, activeCategory, lang, stepStatus, activeStep]);
+
+  const spokenStateKey = `${viewMode}|${selectedTierId}|${selectedCategoryId}|${activeLessonId}|${activeStepIdx}|${stepStatus}|${customNotice || ''}|${currentBubbleText}`;
+
   // Speak text through MyPC AI TTS
   const triggerCheckoSpeech = useCallback(
-    (text: string, forceSpeak: boolean = false) => {
+    (text: string, forceSpeak: boolean = false, forceRestart: boolean = false) => {
       if (!autoVoice && !forceSpeak) return;
+      myPCService.unlockSpeechAudio();
       myPCService.speakText(
         text,
         lang,
@@ -458,21 +486,39 @@ export const LearnModal: React.FC<LearnModalProps> = ({ settings, onClose }) => 
           onStart: () => setIsSpeaking(true),
           onEnd: () => setIsSpeaking(false),
         },
-        settings.tts_provider_id
+        settings.tts_provider_id,
+        forceRestart
       );
     },
     [autoVoice, lang, settings.tts_provider_id]
   );
 
-  // Play Checko's little chick peep greeting on initial mount and stop TTS on unmount
+  // Play Checko's little chick peep greeting on initial mount and stop TTS on genuine unmount
   useEffect(() => {
+    if ((window as any).__checkoUnmountStopTimer) {
+      clearTimeout((window as any).__checkoUnmountStopTimer);
+      (window as any).__checkoUnmountStopTimer = null;
+    }
+    myPCService.unlockSpeechAudio();
+    myPCService.save('checko_auto_voice', true);
     soundManager.playSound('checko_crow');
-    const greeting = activeTier?.checkoGreeting[lang] || activeTier?.checkoGreeting.en || '';
-    triggerCheckoSpeech(greeting);
+
     return () => {
-      myPCService.stopSpeech();
+      lastSpokenKeyRef.current = '';
+      (window as any).__checkoUnmountStopTimer = window.setTimeout(() => {
+        myPCService.stopSpeech();
+        (window as any).__checkoUnmountStopTimer = null;
+      }, 80);
     };
   }, []);
+
+  // Automatically pronounce Checko's message on first open of Learn screen and whenever his displayed bubble text or lesson state changes
+  useEffect(() => {
+    if (!currentBubbleText) return;
+    if (lastSpokenKeyRef.current === spokenStateKey) return;
+    lastSpokenKeyRef.current = spokenStateKey;
+    triggerCheckoSpeech(currentBubbleText, true, false);
+  }, [spokenStateKey, currentBubbleText, triggerCheckoSpeech]);
 
   // Auto-focus the default "Continue" button on Screen 1 ('levels') so pressing OK on TV remote continues immediately!
   useEffect(() => {
@@ -523,10 +569,8 @@ export const LearnModal: React.FC<LearnModalProps> = ({ settings, onClose }) => 
     } else {
       setLearnCursorSquare(activeStep.playerColor === 'b' ? 'e7' : 'e2');
     }
-
-    const promptText = activeStep.bubble[lang] || activeStep.bubble.en;
-    triggerCheckoSpeech(promptText);
-  }, [viewMode, activeLessonId, activeStepIdx, activeStep, lang, triggerCheckoSpeech]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewMode, activeLessonId, activeStepIdx]);
 
   // Keep the active lesson pill visible in the switcher strip
   useEffect(() => {
@@ -601,6 +645,9 @@ export const LearnModal: React.FC<LearnModalProps> = ({ settings, onClose }) => 
       setActiveLessonId(targetLesson.id);
       myPCService.save('checko_last_lesson', targetLesson.id);
       setActiveStepIdx(0);
+      setStepStatus('prompt');
+      setCheckoMood('idle');
+      setCustomNotice(null);
       setViewMode('lesson');
     }
   };
@@ -661,6 +708,8 @@ export const LearnModal: React.FC<LearnModalProps> = ({ settings, onClose }) => 
     setSelectedCategoryId(catId);
     setActiveLessonId(target.id);
     setActiveStepIdx(0);
+    setStepStatus('prompt');
+    setCheckoMood('idle');
     setCustomNotice(null);
     myPCService.save('checko_selected_tier', target.tierId);
     myPCService.save('checko_selected_category', catId);
@@ -683,7 +732,7 @@ export const LearnModal: React.FC<LearnModalProps> = ({ settings, onClose }) => 
     setCustomNotice(null);
     setLearnFocusZone('board');
     clearAllSpatialFocus();
-    triggerCheckoSpeech(activeStep.bubble[lang]);
+    triggerCheckoSpeech(activeStep.bubble[lang] || activeStep.bubble.en, false, true);
   };
 
   const handleShowHint = () => {
@@ -693,7 +742,7 @@ export const LearnModal: React.FC<LearnModalProps> = ({ settings, onClose }) => 
     setCustomNotice(null);
     setLearnFocusZone('board');
     clearAllSpatialFocus();
-    triggerCheckoSpeech(activeStep.hint[lang], true);
+    triggerCheckoSpeech(activeStep.hint[lang] || activeStep.hint.en, true, true);
   };
 
   // Validate user's move on the lesson board
@@ -705,12 +754,15 @@ export const LearnModal: React.FC<LearnModalProps> = ({ settings, onClose }) => 
 
     if (!isExpected) {
       soundManager.playSound('checko_wrong');
+      const wasAlreadyWrong = stepStatus === 'wrong';
       setStepStatus('wrong');
       setCheckoMood('wrong');
       setCustomNotice(null);
       setSelectedSquare(null);
       setValidMoves([]);
-      triggerCheckoSpeech(activeStep.hint[lang]);
+      if (wasAlreadyWrong) {
+        triggerCheckoSpeech(activeStep.hint[lang] || activeStep.hint.en);
+      }
       return;
     }
 
@@ -733,7 +785,6 @@ export const LearnModal: React.FC<LearnModalProps> = ({ settings, onClose }) => 
       setCheckoMood('happy');
       setCustomNotice(null);
       soundManager.playSound('checko_correct');
-      triggerCheckoSpeech(activeStep.success[lang]);
 
       if (activeStepIdx + 1 >= activeLesson.steps.length) {
         setCompletedLessons((prev) => {
@@ -800,6 +851,9 @@ export const LearnModal: React.FC<LearnModalProps> = ({ settings, onClose }) => 
   const handleAdvanceNext = () => {
     setLearnFocusZone('board');
     clearAllSpatialFocus();
+    setStepStatus('prompt');
+    setCheckoMood('idle');
+    setCustomNotice(null);
     if (activeStepIdx + 1 < activeLesson.steps.length) {
       soundManager.playSound('click');
       setActiveStepIdx((prev) => prev + 1);
@@ -956,16 +1010,6 @@ export const LearnModal: React.FC<LearnModalProps> = ({ settings, onClose }) => 
     };
   });
 
-  const currentBubbleText = customNotice
-    ? customNotice
-    : viewMode !== 'lesson'
-    ? activeTier?.checkoGreeting[lang] || activeTier?.checkoGreeting.en || ''
-    : stepStatus === 'correct'
-    ? activeStep?.success[lang] || activeStep?.success.en || ''
-    : stepStatus === 'wrong'
-    ? activeStep?.hint[lang] || activeStep?.hint.en || ''
-    : activeStep?.bubble[lang] || activeStep?.bubble.en || '';
-
   const displayedArrows: BoardArrow[] =
     stepStatus === 'correct' ? [] : activeStep?.arrows || [];
 
@@ -1081,7 +1125,7 @@ export const LearnModal: React.FC<LearnModalProps> = ({ settings, onClose }) => 
                 size="md"
                 onClick={() => {
                   soundManager.playSound('checko_crow');
-                  triggerCheckoSpeech(currentBubbleText, true);
+                  triggerCheckoSpeech(currentBubbleText, true, true);
                 }}
               />
               <p className="flex-1 text-sm sm:text-base font-bold text-white leading-snug">
@@ -1279,7 +1323,7 @@ export const LearnModal: React.FC<LearnModalProps> = ({ settings, onClose }) => 
                   mood={customNotice ? 'wrong' : 'happy'}
                   isSpeaking={isSpeaking}
                   size="sm"
-                  onClick={() => triggerCheckoSpeech(currentBubbleText, true)}
+                  onClick={() => triggerCheckoSpeech(currentBubbleText, true, true)}
                 />
                 <p className="text-xs sm:text-sm font-bold text-amber-100 leading-snug">
                   “{currentBubbleText}”
@@ -1502,7 +1546,7 @@ export const LearnModal: React.FC<LearnModalProps> = ({ settings, onClose }) => 
                   size="lg"
                   onClick={() => {
                     soundManager.playSound('checko_crow');
-                    triggerCheckoSpeech(currentBubbleText, true);
+                    triggerCheckoSpeech(currentBubbleText, true, true);
                   }}
                 />
 
@@ -1522,7 +1566,7 @@ export const LearnModal: React.FC<LearnModalProps> = ({ settings, onClose }) => 
 
                     <button
                       type="button"
-                      onClick={() => triggerCheckoSpeech(currentBubbleText, true)}
+                      onClick={() => triggerCheckoSpeech(currentBubbleText, true, true)}
                       className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-600 text-amber-300 text-xs font-bold transition-colors cursor-pointer"
                     >
                       <Volume2 size={14} />

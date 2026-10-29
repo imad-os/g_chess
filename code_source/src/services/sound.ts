@@ -102,6 +102,14 @@ class SoundService {
     return this.soundPack;
   }
 
+  public getAudioContext(): AudioContext | null {
+    if (!this.initialized) {
+      this.init();
+    }
+    this.resumeContext();
+    return this.ctx;
+  }
+
   public resumeContext() {
     if (this.ctx && this.ctx.state === 'suspended') {
       this.ctx.resume().catch(() => {});

@@ -201,7 +201,7 @@ export const LEARN_UI_TEXT: Record<
   },
 };
 
-export const LEARN_TIERS: LearnTier[] = [
+export let LEARN_TIERS: LearnTier[] = [
   {
     id: 'beginner',
     eloRange: '0 – 400 Elo',
@@ -224,18 +224,18 @@ export const LEARN_TIERS: LearnTier[] = [
     id: 'novice',
     eloRange: '400 – 800 Elo',
     badgeColor: 'from-sky-500 to-blue-600',
-    title: L('Novice Tactician', 'Tacticien Novice', 'Táctico Novato', 'تكتيكي ناشئ'),
+    title: L('Novice Tactician', 'Novice Tacticien', 'Táctico Novato', 'ممارس ناشئ'),
     levelWords: L(
-      'Forks, Pins, Skewers & Mates',
-      'Fourchettes, Clouages et Mats',
-      'Dobletes, Clavadas y Mates',
-      'الشوكة والربط والسيخ والمايت'
+      'Captures, Forks, Pins & Skewers',
+      'Prises, fourchettes, clouages et enfilades',
+      'Capturas, ataques dobles, clavadas y enfiladas',
+      'اقتناص القطع والشوكة والربط والسيخ'
     ),
     checkoGreeting: L(
-      'Now that you know the moves, let us hunt enemy pieces with sharp tactics!',
-      'Maintenant que vous connaissez les règles, chassons les pièces avec des tactiques !',
-      '¡Ahora que conoces las reglas, ganemos piezas con tácticas!',
-      'الآن بعد أن عرفت حركة القطع، لنتعلم التكتيكات الذكية لربح القطع!'
+      "Let's sharpen your tactics! Win enemy pieces with forks, pins, and skewers!",
+      'Aiguisons votre tactique ! Gagnez des pièces avec des fourchettes et des clouages !',
+      '¡Afilemos tu táctica! Gana piezas con ataques dobles, clavadas y enfiladas.',
+      'هيا نطور مهاراتك التكتيكية بالربط والشوكة والسيخ!'
     ),
   },
   {
@@ -244,34 +244,34 @@ export const LEARN_TIERS: LearnTier[] = [
     badgeColor: 'from-amber-500 to-orange-600',
     title: L('Intermediate Player', 'Joueur Intermédiaire', 'Jugador Intermedio', 'لاعب متوسط'),
     levelWords: L(
-      'Openings, Combinations & Endgames',
-      'Ouvertures, Combinaisons et Finales',
-      'Aperturas, Combinaciones y Finales',
-      'الافتتاحيات والتوليفات والنهايات'
+      'Openings & Checkmate Patterns',
+      'Ouvertures et schémas de mat',
+      'Aperturas y patrones de mate',
+      'مبادئ الافتتاح وأنماط الكش مات'
     ),
     checkoGreeting: L(
-      'Welcome to Intermediate! Here we master famous openings, combinations, and king endgames!',
-      'Bienvenue au niveau Intermédiaire ! Maîtrisons les ouvertures et les finales !',
-      '¡Bienvenido al nivel Intermedio! ¡Dominemos aperturas, combinaciones y finales!',
-      'مرحباً بك في المستوى المتوسط! هنا نتقن الافتتاحيات الشهيرة والنهايات!'
+      'Control the center squares and hunt the enemy King with checkmate patterns!',
+      'Contrôlez le centre et chassez le Roi adverse avec des schémas de mat !',
+      '¡Controla el centro y ataca al Rey enemigo con patrones de mate!',
+      'سيطر على وسط الرقعة وحاصر ملك الخصم بأنماط الكش مات!'
     ),
   },
   {
     id: 'club',
     eloRange: '1200 – 1500 Elo',
-    badgeColor: 'from-purple-500 to-rose-600',
-    title: L('Club Contender', 'Joueur de Club', 'Competidor de Club', 'منافس الأندية'),
+    badgeColor: 'from-purple-500 to-indigo-600',
+    title: L('Club Contender', 'Joueur de Club', 'Jugador de Club', 'منافس الأندية (1500)'),
     levelWords: L(
-      'Sacrifices, Strategy & Rook Endgames',
-      'Sacrifices, Stratégie et Finales de Tours',
-      'Sacrificios, Estrategia y Finales de Torres',
-      'التضحيات والاستراتيجية ونهايات الرخاخ'
+      'Strategy, Sacrifices & Endgames',
+      'Stratégie, sacrifices et finales',
+      'Estrategia, sacrificios y finales',
+      'الاستراتيجية والتضحيات ونهايات اللعب'
     ),
     checkoGreeting: L(
-      'Ready for 1500 Elo? Let us master Greek Gift sacrifices, Lucena, Philidor, and deep strategy!',
-      'Prêt pour 1500 Elo ? Étudions les sacrifices, Lucena, Philidor et la stratégie !',
-      '¿Listo para 1500 Elo? ¡Estudiemos sacrificios, Lucena, Philidor y estrategia!',
-      'هل أنت مستعد لمستوى 1500؟ لندرس التضحيات الهجومية ونهايات لوسينا وفيليدور!'
+      'Welcome to the 1500 Elo class! Master pawn structures, sacrifices, and endgames!',
+      'Bienvenue au niveau 1500 Elo ! Maîtrisez les structures, sacrifices et finales !',
+      '¡Bienvenido al nivel 1500 Elo! Domina estructuras, sacrificios y finales.',
+      'مرحباً بك في مستوى 1500! أتقن الاستراتيجية والتضحيات ونهايات اللعب!'
     ),
   },
 ];
@@ -448,6 +448,7 @@ export async function loadRuntimeLessonsData(): Promise<LessonsJsonPayload> {
     if (customRaw) {
       const parsed = JSON.parse(customRaw);
       if (parsed && Array.isArray(parsed.tiers) && Array.isArray(parsed.lessons)) {
+        LEARN_TIERS = parsed.tiers;
         LEARN_LESSONS = parsed.lessons;
         return {
           ...parsed,
@@ -469,6 +470,7 @@ export async function loadRuntimeLessonsData(): Promise<LessonsJsonPayload> {
     if (res.ok) {
       const data = await res.json();
       if (data && Array.isArray(data.tiers) && Array.isArray(data.lessons)) {
+        LEARN_TIERS = data.tiers;
         LEARN_LESSONS = data.lessons;
         const nextPayload: LessonsJsonPayload = {
           ...data,
